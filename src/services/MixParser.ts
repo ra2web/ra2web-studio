@@ -20,7 +20,6 @@ export interface MixEntryInfo {
 }
 
 export class MixParser {
-  private static readonly ROOT_MIX_MAX_ENTRIES = 120_000
   private static readonly rootMixCache = new WeakMap<File, Promise<{
     bytes: Uint8Array
     mix: MixFile
@@ -34,10 +33,9 @@ export class MixParser {
       const bytes = new Uint8Array(await file.arrayBuffer())
       let parsedMix: ParsedMix | undefined
       try {
-        // Validate bounds once per root archive using hardened parser limits.
+        // Validate bounds once per root archive using a hardened parser.
         parsedMix = parseMix(bytes, {
           validateBounds: true,
-          maxEntries: this.ROOT_MIX_MAX_ENTRIES,
         })
       } catch {
         parsedMix = undefined
