@@ -127,7 +127,7 @@ const FileTree: React.FC<FileTreeProps> = ({
     length: file.length,
     path: prefix ? `${prefix}${file.filename}` : `${mixName}/${file.filename}`,
     mixName,
-    isMixFile: file.extension.toLowerCase() === 'mix',
+    isMixFile: ['mix', 'mmx', 'yro'].includes(file.extension.toLowerCase()),
   })
 
   const buildWorkspaceFileList = (): FileItem[] => {

@@ -66,7 +66,7 @@ An online **RA2-compatible** MIX file editor built for **RA2WEB**. Supports view
 ```bash
 npm install
 npm run dev
-# Open http://localhost:5173
+# Open http://localhost:3000
 ```
 
 ### Production Build
