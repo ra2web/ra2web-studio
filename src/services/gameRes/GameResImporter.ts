@@ -65,6 +65,60 @@ function walkEmFsFiles(fs: any, dir: string, output: string[]): void {
   }
 }
 
+async function walkDirectoryFiles(
+  dirHandle: any,
+  output: Array<{ entryName: string; file: File }>,
+  prefix: string = '',
+): Promise<void> {
+  for await (const [entryName, handle] of dirHandle.entries()) {
+    const fullName = prefix ? `${prefix}/${entryName}` : entryName
+    if (handle.kind === 'file') {
+      const file = await handle.getFile()
+      output.push({ entryName: fullName, file })
+      continue
+    }
+    if (handle.kind === 'directory') {
+      await walkDirectoryFiles(handle, output, fullName)
+    }
+  }
+}
+
+type DedupableImportEntry = {
+  normalizedName: string
+  sourcePath: string
+}
+
+function dedupeFlattenedEntries<T extends DedupableImportEntry>(
+  entries: T[],
+  result: GameResImportResult,
+  options: ImportOptions,
+): T[] {
+  const deduped: T[] = []
+  const seenByName = new Map<string, string>()
+  for (const entry of entries) {
+    const key = entry.normalizedName.toLowerCase()
+    const conflictWith = seenByName.get(key)
+    if (!conflictWith) {
+      seenByName.set(key, entry.sourcePath)
+      deduped.push(entry)
+      continue
+    }
+    result.skipped++
+    const conflictMessage = `${entry.normalizedName}: 路径扁平化后文件名冲突，已跳过 (${entry.sourcePath} 与 ${conflictWith} 冲突)`
+    result.errors.push(conflictMessage)
+    emitProgress(options, {
+      stage: 'import',
+      message: `已跳过重名文件 ${entry.normalizedName}`,
+      currentItem: entry.normalizedName,
+      importedCount: result.imported,
+      skippedCount: result.skipped,
+      totalCount: entries.length,
+      errorMessage: conflictMessage,
+    })
+  }
+  return deduped
+}
+
 interface ImportProgressMeta {
   currentIndex: number
   totalCount: number
@@ -111,15 +165,19 @@ async function importFrom7zArchive(
     const extractedFiles: string[] = []
     walkEmFsFiles(sevenZip.FS, '/', extractedFiles)
 
+    const archiveNameKey = archiveName.toLowerCase()
     const extractedEntries = extractedFiles
       .map((entryPath) => ({
-        entryPath,
+        sourcePath: entryPath,
         normalizedName: normalizeResourceFilename(entryPath),
       }))
-      .filter((entry) => entry.normalizedName && entry.normalizedName !== archiveName)
+      .filter((entry): entry is { sourcePath: string; normalizedName: string } => (
+        !!entry.normalizedName && entry.normalizedName.toLowerCase() !== archiveNameKey
+      ))
 
-    const importableEntries = extractedEntries.filter((entry) => shouldImport(entry.normalizedName))
-    result.skipped += extractedEntries.length - importableEntries.length
+    const importableCandidates = extractedEntries.filter((entry) => shouldImport(entry.normalizedName))
+    result.skipped += extractedEntries.length - importableCandidates.length
+    const importableEntries = dedupeFlattenedEntries(importableCandidates, result, options)
 
     for (let i = 0; i < importableEntries.length; i++) {
       const entry = importableEntries[i]
@@ -131,7 +189,7 @@ async function importFrom7zArchive(
       })
 
       try {
-        const entryData = sevenZip.FS.readFile(entry.entryPath)
+        const entryData = sevenZip.FS.readFile(entry.sourcePath)
         const imported = new File([entryData], entry.normalizedName)
         await importOneFile(imported, bucket, options, result, entry.normalizedName, {
           currentIndex: i + 1,
@@ -303,23 +361,26 @@ export class GameResImporter {
       })
 
       const fileEntries: Array<{ entryName: string; file: File }> = []
-      for await (const [entryName, handle] of dirHandle.entries()) {
-        if (handle.kind !== 'file') continue
-        const file = await handle.getFile()
-        fileEntries.push({ entryName, file })
-      }
+      await walkDirectoryFiles(dirHandle, fileEntries)
 
       emitProgress(options, {
         stage: 'extract',
         message: '目录导入无需解压，跳过解压步骤',
       })
 
-      const importableEntries = fileEntries.filter((entry) => shouldImport(entry.entryName))
-      result.skipped += fileEntries.length - importableEntries.length
+      const importableCandidates = fileEntries
+        .map((entry) => ({
+          ...entry,
+          sourcePath: entry.entryName,
+          normalizedName: normalizeResourceFilename(entry.entryName),
+        }))
+        .filter((entry) => shouldImport(entry.normalizedName))
+      result.skipped += fileEntries.length - importableCandidates.length
+      const importableEntries = dedupeFlattenedEntries(importableCandidates, result, options)
 
       for (let i = 0; i < importableEntries.length; i++) {
         const entry = importableEntries[i]
-        await importOneFile(entry.file, bucket, options, result, entry.entryName, {
+        await importOneFile(entry.file, bucket, options, result, entry.normalizedName, {
           currentIndex: i + 1,
           totalCount: importableEntries.length,
         })
@@ -385,12 +446,19 @@ export class GameResImporter {
         message: '文件导入无需解压，跳过解压步骤',
       })
 
-      const importableFiles = files.filter((file) => shouldImport(file.name))
-      result.skipped += files.length - importableFiles.length
+      const importableCandidates = files
+        .map((file) => ({
+          file,
+          sourcePath: file.name,
+          normalizedName: normalizeResourceFilename(file.name),
+        }))
+        .filter((entry) => shouldImport(entry.normalizedName))
+      result.skipped += files.length - importableCandidates.length
+      const importableFiles = dedupeFlattenedEntries(importableCandidates, result, options)
 
       for (let i = 0; i < importableFiles.length; i++) {
         const file = importableFiles[i]
-        await importOneFile(file, bucket, options, result, undefined, {
+        await importOneFile(file.file, bucket, options, result, file.normalizedName, {
           currentIndex: i + 1,
           totalCount: importableFiles.length,
         })
@@ -523,12 +591,19 @@ export class GameResImporter {
       })
       const zip = await JSZip.loadAsync(await archiveFile.arrayBuffer())
       const entries = Object.values(zip.files).filter((entry) => !entry.dir)
-      const importableEntries = entries.filter((entry) => shouldImport(normalizeResourceFilename(entry.name)))
-      result.skipped += entries.length - importableEntries.length
+      const importableCandidates = entries
+        .map((entry) => ({
+          entry,
+          sourcePath: entry.name,
+          normalizedName: normalizeResourceFilename(entry.name),
+        }))
+        .filter((entry) => shouldImport(entry.normalizedName))
+      result.skipped += entries.length - importableCandidates.length
+      const importableEntries = dedupeFlattenedEntries(importableCandidates, result, options)
 
       for (let i = 0; i < importableEntries.length; i++) {
         const entry = importableEntries[i]
-        const normalized = normalizeResourceFilename(entry.name)
+        const normalized = entry.normalizedName
         emitProgress(options, {
           stage: 'extract',
           message: `正在解压 ${normalized}...`,
@@ -536,7 +611,7 @@ export class GameResImporter {
           percentage: toPercent(i + 1, importableEntries.length),
         })
         try {
-          const blob = await entry.async('blob')
+          const blob = await entry.entry.async('blob')
           const importedFile = new File([blob], normalized)
           await importOneFile(importedFile, bucket, options, result, normalized, {
             currentIndex: i + 1,

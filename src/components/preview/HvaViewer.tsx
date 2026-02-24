@@ -11,6 +11,7 @@ type MixFileData = { file: File; info: MixFileInfo }
 const HvaViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resourceContext?: ResourceContext | null }> = ({ selectedFile, mixFiles }) => {
   const { t } = useLocale()
   const mountRef = useRef<HTMLDivElement>(null)
+  const applyFrameRef = useRef<(frame: number) => void>(() => {})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [frame, setFrame] = useState(0)
@@ -23,6 +24,9 @@ const HvaViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
     let controls: OrbitControls | null = null
     let animationId = 0
     let groups: THREE.Object3D[] = []
+    let onResize: (() => void) | null = null
+
+    applyFrameRef.current = () => {}
 
     async function load() {
       setLoading(true)
@@ -99,7 +103,7 @@ const HvaViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
         controls = new OrbitControls(camera, renderer.domElement)
         controls.enableDamping = true
 
-        const onResize = () => {
+        onResize = () => {
           if (!renderer || !camera || !mount) return
           const w = mount.clientWidth, h = mount.clientHeight
           renderer.setSize(w, h)
@@ -115,9 +119,7 @@ const HvaViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
         }
         loop()
 
-        // Keep in closure for frame changes
-        ;(HvaViewer as any)._applyFrame = (fi: number) => applyFrame(fi)
-        ;(HvaViewer as any)._cleanupResize = onResize
+        applyFrameRef.current = (fi: number) => applyFrame(fi)
       } catch (e: any) {
         setError(e?.message || 'Failed to render HVA')
       } finally {
@@ -128,7 +130,9 @@ const HvaViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
 
     return () => {
       cancelAnimationFrame(animationId)
-      window.removeEventListener('resize', (HvaViewer as any)._cleanupResize || (() => {}))
+      if (onResize) {
+        window.removeEventListener('resize', onResize)
+      }
       controls?.dispose()
       renderer?.dispose()
       if (renderer?.domElement?.parentElement) renderer.domElement.parentElement.removeChild(renderer.domElement)
@@ -137,17 +141,13 @@ const HvaViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
       renderer = null
       controls = null
       groups = []
-      delete (HvaViewer as any)._applyFrame
-      delete (HvaViewer as any)._cleanupResize
+      applyFrameRef.current = () => {}
     }
-  }, [selectedFile, mixFiles])
+  }, [selectedFile, mixFiles, applyFrameRef])
 
   useEffect(() => {
-    const fn = (HvaViewer as any)._applyFrame
-    if (typeof fn === 'function') {
-      fn(Math.min(frame, maxFrame))
-    }
-  }, [frame, maxFrame])
+    applyFrameRef.current(Math.min(frame, maxFrame))
+  }, [frame, maxFrame, applyFrameRef])
 
   return (
     <div className="w-full h-full flex flex-col">
@@ -174,5 +174,4 @@ const HvaViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
 }
 
 export default HvaViewer
-
 

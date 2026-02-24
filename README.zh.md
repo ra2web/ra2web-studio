@@ -66,7 +66,7 @@
 ```bash
 npm install
 npm run dev
-# 浏览器访问 http://localhost:5173
+# 浏览器访问 http://localhost:3000
 ```
 
 ### 构建生产版本
