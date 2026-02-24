@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
+    "@mixen/core": "file:../ra2-packer/packages/core",
+    "@mixen/names": "file:../ra2-packer/packages/names",
     "@monaco-editor/react": "4.7.0",
     "@ra2web/wavefile": "^1.0.2",
     "@radix-ui/react-slot": "^1.0.2",

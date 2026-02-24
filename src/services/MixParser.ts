@@ -3,6 +3,7 @@ import { VirtualFile } from '../data/vfs/VirtualFile';
 import { DataStream } from '../data/DataStream';
 import { MixEntry } from '../data/MixEntry';
 import { GlobalMixDatabase } from './GlobalMixDatabase';
+import { parseMix, type ParsedMix } from '@mixen/core'
 
 export interface MixFileInfo {
   name: string;
@@ -19,12 +20,40 @@ export interface MixEntryInfo {
 }
 
 export class MixParser {
+  private static readonly ROOT_MIX_MAX_ENTRIES = 120_000
+  private static readonly rootMixCache = new WeakMap<File, Promise<{
+    bytes: Uint8Array
+    mix: MixFile
+    parsedMix?: ParsedMix
+  }>>()
+
+  private static loadRootMix(file: File): Promise<{ bytes: Uint8Array; mix: MixFile; parsedMix?: ParsedMix }> {
+    const cached = this.rootMixCache.get(file)
+    if (cached) return cached
+    const loading = (async () => {
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      let parsedMix: ParsedMix | undefined
+      try {
+        // Validate bounds once per root archive using hardened parser limits.
+        parsedMix = parseMix(bytes, {
+          validateBounds: true,
+          maxEntries: this.ROOT_MIX_MAX_ENTRIES,
+        })
+      } catch {
+        parsedMix = undefined
+      }
+      const mix = new MixFile(new DataStream(bytes.buffer))
+      return { bytes, mix, parsedMix }
+    })()
+    this.rootMixCache.set(file, loading)
+    return loading
+  }
+
   static async parseFile(file: File): Promise<MixFileInfo> {
     try {
       console.log('[MixParser] parseFile', { name: file.name, size: file.size })
-      const arrayBuffer = await file.arrayBuffer();
-      const dataStream = new DataStream(arrayBuffer);
-      const mixFile = new MixFile(dataStream);
+      const loaded = await this.loadRootMix(file)
+      const mixFile = loaded.mix
 
       const files: MixEntryInfo[] = [];
 
@@ -175,9 +204,8 @@ export class MixParser {
       if (filename.includes('/')) {
         return await this.extractNested(mixFile, filename)
       }
-      const arrayBuffer = await mixFile.arrayBuffer();
-      const dataStream = new DataStream(arrayBuffer);
-      const mixFileObj = new MixFile(dataStream);
+      const loaded = await this.loadRootMix(mixFile)
+      const mixFileObj = loaded.mix
 
       // 检查文件是否存在
       if (mixFileObj.containsFile(filename)) {
@@ -223,8 +251,8 @@ export class MixParser {
 
   private static async extractNested(mixFile: File, nestedPath: string): Promise<VirtualFile | null> {
     const segments = nestedPath.split('/')
-    const arrayBuffer = await mixFile.arrayBuffer()
-    let currentMix = new MixFile(new DataStream(arrayBuffer))
+    const loaded = await this.loadRootMix(mixFile)
+    let currentMix = loaded.mix
     let currentVf: VirtualFile | null = null
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i]
