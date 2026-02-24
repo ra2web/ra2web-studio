@@ -3,6 +3,8 @@ import { VirtualFile } from '../data/vfs/VirtualFile';
 import { DataStream } from '../data/DataStream';
 import { MixEntry } from '../data/MixEntry';
 import { GlobalMixDatabase } from './GlobalMixDatabase';
+import { buildMixIndex, mixIndexFromBytes, mixIndexToBytes, parseMix, type ParsedMix } from '@mixen/core';
+import { createMixVfs, type MixVfs } from '@mixen/vfs';
 
 export interface MixFileInfo {
   name: string;
@@ -18,13 +20,98 @@ export interface MixEntryInfo {
   extension: string;
 }
 
+interface CachedMixHandle {
+  bytes: Uint8Array;
+  mix: MixFile;
+  parsedMix?: ParsedMix;
+  vfs?: MixVfs;
+}
+
 export class MixParser {
+  private static readonly rootMixCache = new WeakMap<File, Promise<CachedMixHandle>>();
+
+  private static loadRootMix(file: File): Promise<CachedMixHandle> {
+    const cached = this.rootMixCache.get(file);
+    if (cached) return cached;
+
+    const loading = (async () => {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      return this.createMixHandle(bytes, file.name);
+    })();
+
+    this.rootMixCache.set(file, loading);
+    return loading;
+  }
+
+  private static createMixHandle(bytes: Uint8Array, sourceId: string): CachedMixHandle {
+    let parsedMix: ParsedMix | undefined;
+    try {
+      parsedMix = parseMix(bytes, { validateBounds: true });
+    } catch {
+      parsedMix = undefined;
+    }
+
+    let vfs: MixVfs | undefined;
+    try {
+      const indexNode = buildMixIndex({
+        bytes,
+        recursive: false,
+      });
+      const index = mixIndexFromBytes(mixIndexToBytes(indexNode));
+      vfs = createMixVfs({
+        sources: [{
+          id: sourceId,
+          index,
+          read: async (start: number, end: number) => bytes.slice(start, end),
+        }],
+        includeNested: false,
+      });
+    } catch {
+      vfs = undefined;
+    }
+
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const mix = new MixFile(new DataStream(view));
+    return { bytes, mix, parsedMix, vfs };
+  }
+
+  private static parseHashSelector(token: string, includeLegacyPrefix: boolean): number | null {
+    const patterns = includeLegacyPrefix
+      ? [/^file_([0-9A-Fa-f]{8})(?:\.[^.]+)?$/, /^([0-9A-Fa-f]{8})(?:\.[^.]+)?$/]
+      : [/^([0-9A-Fa-f]{8})(?:\.[^.]+)?$/];
+    for (const re of patterns) {
+      const match = token.match(re);
+      if (!match) continue;
+      return parseInt(match[1], 16) >>> 0;
+    }
+    return null;
+  }
+
+  private static async readEntryBytes(handle: CachedMixHandle, selector: string | number): Promise<Uint8Array | null> {
+    if (handle.vfs) {
+      try {
+        const bytes = await handle.vfs.read(selector);
+        if (bytes) return bytes;
+      } catch {}
+    }
+
+    try {
+      if (typeof selector === 'string') {
+        if (!handle.mix.containsFile(selector)) return null;
+        return handle.mix.openFile(selector).getBytes();
+      }
+      if (!handle.mix.containsId(selector)) return null;
+      return handle.mix.openById(selector).getBytes();
+    } catch {
+      return null;
+    }
+  }
+
   static async parseFile(file: File): Promise<MixFileInfo> {
     try {
       console.log('[MixParser] parseFile', { name: file.name, size: file.size })
-      const arrayBuffer = await file.arrayBuffer();
-      const dataStream = new DataStream(arrayBuffer);
-      const mixFile = new MixFile(dataStream);
+      const loaded = await this.loadRootMix(file);
+      const mixFile = loaded.mix;
 
       const files: MixEntryInfo[] = [];
 
@@ -175,42 +262,36 @@ export class MixParser {
       if (filename.includes('/')) {
         return await this.extractNested(mixFile, filename)
       }
-      const arrayBuffer = await mixFile.arrayBuffer();
-      const dataStream = new DataStream(arrayBuffer);
-      const mixFileObj = new MixFile(dataStream);
+      const root = await this.loadRootMix(mixFile);
 
       // 检查文件是否存在
-      if (mixFileObj.containsFile(filename)) {
-        const vf = mixFileObj.openFile(filename);
-        console.log('[MixParser] extractFile by name success', { filename, size: vf.getSize() })
-        return vf;
+      const byName = await this.readEntryBytes(root, filename)
+      if (byName) {
+        console.log('[MixParser] extractFile by name success', { filename, size: byName.byteLength })
+        return VirtualFile.fromBytes(byName, filename);
       }
 
       // 回退：如果文件名看起来是 8位十六进制（可带扩展名），直接按 id 尝试
-      const patterns = [
-        /^file_([0-9A-Fa-f]{8})(?:\.[^.]+)?$/, // 兼容旧占位名
-        /^([0-9A-Fa-f]{8})(?:\.[^.]+)?$/,
-      ];
-      for (const re of patterns) {
-        const m = filename.match(re);
-        if (m) {
-          const id = parseInt(m[1], 16) >>> 0;
-          if (mixFileObj.containsId(id)) {
-            const vf = mixFileObj.openById(id, filename);
-            console.log('[MixParser] extractFile by id success', { id: '0x' + id.toString(16).toUpperCase(), size: vf.getSize() })
-            return vf;
-          }
+      const id = this.parseHashSelector(filename, true)
+      if (id !== null) {
+        const byId = await this.readEntryBytes(root, id)
+        if (byId) {
+          console.log('[MixParser] extractFile by id success', { id: '0x' + id.toString(16).toUpperCase(), size: byId.byteLength })
+          return VirtualFile.fromBytes(byId, filename);
         }
       }
+
       // 尝试用全局数据库将传入名称映射为真实文件名
       try {
         const globalMap = await GlobalMixDatabase.get()
         const h = MixEntry.hashFilename(filename) >>> 0
         const alt = globalMap.get(h)
-        if (alt && mixFileObj.containsFile(alt)) {
-          const vf = mixFileObj.openFile(alt)
-          console.log('[MixParser] extractFile by global map success', { requested: filename, resolved: alt, size: vf.getSize() })
-          return vf
+        if (alt) {
+          const byAlt = await this.readEntryBytes(root, alt)
+          if (byAlt) {
+            console.log('[MixParser] extractFile by global map success', { requested: filename, resolved: alt, size: byAlt.byteLength })
+            return VirtualFile.fromBytes(byAlt, alt)
+          }
         }
       } catch {}
       console.warn('[MixParser] extractFile not found', { filename })
@@ -223,41 +304,34 @@ export class MixParser {
 
   private static async extractNested(mixFile: File, nestedPath: string): Promise<VirtualFile | null> {
     const segments = nestedPath.split('/')
-    const arrayBuffer = await mixFile.arrayBuffer()
-    let currentMix = new MixFile(new DataStream(arrayBuffer))
-    let currentVf: VirtualFile | null = null
+    let currentHandle = await this.loadRootMix(mixFile)
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i]
       const isLast = i === segments.length - 1
-      // 先按名称找
-      if (currentMix.containsFile(seg)) {
-        currentVf = currentMix.openFile(seg)
-      } else {
+      // 先按名称找（仍然保持 basename 优先）
+      let bytes = await this.readEntryBytes(currentHandle, seg)
+      if (!bytes) {
         // 尝试按 id（8位十六进制）
-        const m = seg.match(/^([0-9A-Fa-f]{8})(?:\.[^.]+)?$/)
-        if (m) {
-          const id = parseInt(m[1], 16) >>> 0
-          if (currentMix.containsId(id)) {
-            currentVf = currentMix.openById(id, seg)
-          } else {
+        const id = this.parseHashSelector(seg, false)
+        if (id !== null) {
+          bytes = await this.readEntryBytes(currentHandle, id)
+          if (!bytes) {
             // 尝试 GMD 映射
             try {
               const g = await GlobalMixDatabase.get()
               const alt = g.get(id)
-              if (alt && currentMix.containsFile(alt)) {
-                currentVf = currentMix.openFile(alt)
+              if (alt) {
+                bytes = await this.readEntryBytes(currentHandle, alt)
               }
             } catch {}
           }
         }
       }
-      if (!currentVf) return null
-      if (isLast) return currentVf
+      if (!bytes) return null
+      if (isLast) return VirtualFile.fromBytes(bytes, seg)
       // 非最后一段，需把 currentVf 作为子 MIX 继续深入
       try {
-        const subStream = currentVf.stream as DataStream
-        currentMix = new MixFile(subStream)
-        currentVf = null
+        currentHandle = this.createMixHandle(bytes, seg)
       } catch (e) {
         console.warn('[MixParser] sub container parse failed', e)
         return null
