@@ -19,12 +19,23 @@ export interface MixEntryInfo {
 }
 
 export class MixParser {
+  private static readonly rootMixCache = new WeakMap<File, Promise<MixFile>>()
+
+  private static loadRootMix(file: File): Promise<MixFile> {
+    const cached = this.rootMixCache.get(file)
+    if (cached) return cached
+    const loading = (async () => {
+      const arrayBuffer = await file.arrayBuffer()
+      return new MixFile(new DataStream(arrayBuffer))
+    })()
+    this.rootMixCache.set(file, loading)
+    return loading
+  }
+
   static async parseFile(file: File): Promise<MixFileInfo> {
     try {
       console.log('[MixParser] parseFile', { name: file.name, size: file.size })
-      const arrayBuffer = await file.arrayBuffer();
-      const dataStream = new DataStream(arrayBuffer);
-      const mixFile = new MixFile(dataStream);
+      const mixFile = await this.loadRootMix(file)
 
       const files: MixEntryInfo[] = [];
 
@@ -175,9 +186,7 @@ export class MixParser {
       if (filename.includes('/')) {
         return await this.extractNested(mixFile, filename)
       }
-      const arrayBuffer = await mixFile.arrayBuffer();
-      const dataStream = new DataStream(arrayBuffer);
-      const mixFileObj = new MixFile(dataStream);
+      const mixFileObj = await this.loadRootMix(mixFile)
 
       // 检查文件是否存在
       if (mixFileObj.containsFile(filename)) {
@@ -223,8 +232,7 @@ export class MixParser {
 
   private static async extractNested(mixFile: File, nestedPath: string): Promise<VirtualFile | null> {
     const segments = nestedPath.split('/')
-    const arrayBuffer = await mixFile.arrayBuffer()
-    let currentMix = new MixFile(new DataStream(arrayBuffer))
+    let currentMix = await this.loadRootMix(mixFile)
     let currentVf: VirtualFile | null = null
     for (let i = 0; i < segments.length; i++) {
       const seg = segments[i]
