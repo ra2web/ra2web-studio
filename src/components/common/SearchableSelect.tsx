@@ -14,6 +14,8 @@ interface SearchableSelectProps {
   onChange: (value: string) => void
   closeOnSelect?: boolean
   pinnedValues?: string[]
+  /** 自定义最外层 div 的 className，默认 'relative'。需要让 trigger 的 `h-full` 生效时，可传 'relative h-full'。 */
+  rootClassName?: string
   triggerClassName?: string
   triggerTitle?: string
   triggerAriaLabel?: string
@@ -31,6 +33,7 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
   onChange,
   closeOnSelect = true,
   pinnedValues = [],
+  rootClassName,
   triggerClassName,
   triggerTitle,
   triggerAriaLabel,
@@ -167,7 +170,7 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
   }
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className={rootClassName ?? 'relative'}>
       <button
         type="button"
         title={triggerTitle}
@@ -214,19 +217,19 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
             />
           </div>
           {pinnedOptions.length > 0 && (
-            <div className={`p-1 ${showPinnedDivider ? 'border-b border-gray-700' : ''}`}>
+            <div className={showPinnedDivider ? 'border-b border-gray-700' : ''}>
               {pinnedOptions.map((opt) => {
                 const active = opt.value === value
                 return (
                   <button
                     key={opt.value}
                     type="button"
-                    className={`w-full text-left px-2 py-1 text-xs rounded ${
-                      active ? 'bg-blue-600 text-white' : 'text-gray-200 hover:bg-gray-700'
+                    className={`block w-full text-left px-3 py-1.5 text-xs transition-colors ${
+                      active ? 'bg-blue-600 text-white' : 'text-gray-200 hover:bg-gray-700 hover:text-white'
                     }`}
                     onClick={() => handleSelect(opt.value)}
                   >
-                    <span className="truncate block">{opt.label}</span>
+                    <span className="block truncate">{opt.label}</span>
                   </button>
                 )
               })}
@@ -234,7 +237,7 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
           )}
           <div
             ref={listRef}
-            className="max-h-56 overflow-y-auto p-1"
+            className="max-h-56 overflow-y-auto"
             onScroll={(e) => {
               scrollTopRef.current = e.currentTarget.scrollTop
             }}
@@ -246,17 +249,17 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
                   <button
                     key={opt.value}
                     type="button"
-                    className={`w-full text-left px-2 py-1 text-xs rounded ${
-                      active ? 'bg-blue-600 text-white' : 'text-gray-200 hover:bg-gray-700'
+                    className={`block w-full text-left px-3 py-1.5 text-xs transition-colors ${
+                      active ? 'bg-blue-600 text-white' : 'text-gray-200 hover:bg-gray-700 hover:text-white'
                     }`}
                     onClick={() => handleSelect(opt.value)}
                   >
-                    <span className="truncate block">{opt.label}</span>
+                    <span className="block truncate">{opt.label}</span>
                   </button>
                 )
               })
             ) : (
-              <div className="px-2 py-2 text-xs text-gray-400">{noResultsText}</div>
+              <div className="px-3 py-2 text-xs text-gray-400">{noResultsText}</div>
             )}
           </div>
           {footerHint && (

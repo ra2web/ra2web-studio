@@ -133,7 +133,7 @@ const AppContextMenu: React.FC<AppContextMenuProps> = ({
       role="menu"
       tabIndex={-1}
       data-testid="app-context-menu"
-      className="fixed z-[120] min-w-[15rem] rounded-2xl border border-slate-700/90 bg-slate-950/95 p-2 text-sm text-slate-100 shadow-[0_28px_70px_rgba(0,0,0,0.48)] backdrop-blur-xl outline-none"
+      className="fixed z-[120] min-w-[15rem] rounded border border-slate-700/90 bg-slate-950/95 p-2 text-sm text-slate-100 shadow-[0_28px_70px_rgba(0,0,0,0.48)] backdrop-blur-xl outline-none"
       style={position ?? { left: target.clientX, top: target.clientY }}
       onContextMenu={(event) => event.preventDefault()}
     >
@@ -149,7 +149,7 @@ const AppContextMenu: React.FC<AppContextMenuProps> = ({
             type="button"
             role="menuitem"
             data-context-menu-command={entry.id}
-            className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors ${
+            className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left transition-colors ${
               entry.disabled
                 ? 'cursor-not-allowed text-slate-500'
                 : entry.danger

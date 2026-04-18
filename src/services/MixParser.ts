@@ -21,6 +21,10 @@ export interface MixEntryInfo {
 export class MixParser {
   private static readonly rootMixCache = new WeakMap<File, Promise<MixFile>>()
 
+  // MIX 头部最小 6 字节 (u16 count + u32 dataSize)。低于此值通常是游戏发行版里
+  // 的占位文件 (例如 RA2 中 5 字节的 MOVIESxx.MIX)，应被视为空容器。
+  private static readonly MIN_MIX_HEADER_BYTES = 6
+
   private static loadRootMix(file: File): Promise<MixFile> {
     const cached = this.rootMixCache.get(file)
     if (cached) return cached
@@ -32,9 +36,24 @@ export class MixParser {
     return loading
   }
 
+  private static isHeaderTooSmallError(error: unknown): boolean {
+    const message = String((error as { message?: unknown })?.message ?? error ?? '')
+    return (
+      message.includes('MIX file is too small')
+      || message.includes('insufficient bytes for fileCount')
+    )
+  }
+
   static async parseFile(file: File): Promise<MixFileInfo> {
     try {
       console.log('[MixParser] parseFile', { name: file.name, size: file.size })
+      if (file.size < this.MIN_MIX_HEADER_BYTES) {
+        console.info('[MixParser] empty/placeholder MIX, treating as 0 entries', {
+          name: file.name,
+          size: file.size,
+        })
+        return { name: file.name, size: file.size, files: [] }
+      }
       const mixFile = await this.loadRootMix(file)
 
       const files: MixEntryInfo[] = [];
@@ -107,13 +126,29 @@ export class MixParser {
       console.log('[MixParser] parsed mix', { name: info.name, files: info.files.length })
       return info;
     } catch (error) {
-      console.error('Failed to parse MIX file:', error);
+      if (this.isHeaderTooSmallError(error)) {
+        console.warn('[MixParser] skipping invalid/placeholder MIX', {
+          name: file.name,
+          size: file.size,
+          reason: String((error as { message?: unknown })?.message ?? error),
+        });
+        return { name: file.name, size: file.size, files: [] };
+      }
+      console.warn('Failed to parse MIX file:', file.name, error);
       throw error;
     }
   }
 
   static async parseVirtualFile(vf: VirtualFile, name: string): Promise<MixFileInfo> {
     try {
+      const size = vf.getSize()
+      if (size < this.MIN_MIX_HEADER_BYTES) {
+        console.info('[MixParser] empty/placeholder nested MIX, treating as 0 entries', {
+          name,
+          size,
+        })
+        return { name, size, files: [] }
+      }
       const dataStream = vf.stream as DataStream
       const mixFile = new MixFile(dataStream)
 
@@ -174,7 +209,14 @@ export class MixParser {
 
       return { name, size: vf.getSize(), files }
     } catch (error) {
-      console.error('Failed to parse MIX virtual file:', error)
+      if (this.isHeaderTooSmallError(error)) {
+        console.warn('[MixParser] skipping invalid/placeholder nested MIX', {
+          name,
+          reason: String((error as { message?: unknown })?.message ?? error),
+        })
+        return { name, size: vf.getSize(), files: [] }
+      }
+      console.warn('Failed to parse MIX virtual file:', name, error)
       throw error
     }
   }

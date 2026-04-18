@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, File, Folder, Package } from 'lucide-react'
+import { ChevronDown, ChevronRight, File, Folder, Search } from 'lucide-react'
 import { useLocale } from '../i18n/LocaleContext'
 import type { ProjectTreeNode } from '../types/studio'
 import { isMixLikeFile } from '../services/gameRes/patterns'
@@ -15,9 +15,6 @@ type FlattenedNode = {
 }
 
 interface ProjectExplorerProps {
-  title: string
-  description?: string
-  projectName: string | null
   tree: ProjectTreeNode[]
   selectedPath: string | null
   onSelectPath: (path: string, kind: 'file' | 'directory') => void
@@ -78,9 +75,6 @@ function flattenAllNodes(nodes: ProjectTreeNode[], depth = 0, output: FlattenedN
 }
 
 const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
-  title,
-  description,
-  projectName,
   tree,
   selectedPath,
   onSelectPath,
@@ -124,29 +118,30 @@ const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
 
   return (
     <div className="h-full flex flex-col">
-      <div className="border-b border-gray-700 p-3">
-        <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">{title}</div>
-        {description && <div className="mt-1 text-xs text-gray-500">{description}</div>}
-        <div className="mt-2">
-          <input
-            data-testid="project-tree-search-input"
-            type="text"
-            className="w-full rounded border border-gray-600 bg-gray-700 px-2 py-1 text-xs text-gray-100"
-            placeholder={searchPlaceholder}
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-          />
-        </div>
-        {projectName && (
-          <div className="mt-2 flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-800/80 px-2 py-1 text-[11px] text-gray-400">
-            <Package size={12} className="text-blue-300" />
-            <span className="truncate">{projectName}</span>
-          </div>
-        )}
-      </div>
+      <label className="group flex items-center border-b border-gray-700 px-3 transition-colors focus-within:bg-gray-900/60 hover:bg-gray-800/60">
+        <Search
+          size={14}
+          className="mr-2 flex-shrink-0 text-gray-400 group-focus-within:text-blue-300"
+        />
+        <input
+          data-testid="project-tree-search-input"
+          type="text"
+          className="min-w-0 flex-1 bg-transparent py-2 text-xs text-gray-100 outline-none placeholder:text-gray-500"
+          placeholder={searchPlaceholder}
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+        />
+      </label>
 
       <div className="flex border-b border-gray-700 bg-gray-800 text-xs font-semibold uppercase tracking-wide text-gray-500">
-        <div className="flex-1 min-w-0 px-3 py-2 text-left">{t('fileTree.filename')}</div>
+        <div
+          className="flex flex-1 min-w-0 items-center gap-2 px-2 py-2 text-left"
+          style={{ paddingLeft: 12 }}
+        >
+          {/* 与文件行的 chevron 占位等宽，保证表头与图标列对齐 */}
+          <span className="w-[18px] flex-shrink-0" aria-hidden />
+          <span className="truncate">{t('fileTree.filename')}</span>
+        </div>
         <div className="w-16 px-2 py-2 text-center">{t('fileTree.type')}</div>
         <div className="w-20 px-3 py-2 text-right">{t('fileTree.size')}</div>
       </div>
@@ -212,7 +207,7 @@ const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
                   )}
                 </div>
                 <div className="w-16 px-2 py-1 text-center text-xs text-gray-400">
-                  {isDirectory ? t('common.directory' as any) : (node.extension || '-')}
+                  {isDirectory ? 'dir' : (node.extension || '-')}
                 </div>
                 <div className="w-20 px-3 py-1 text-right text-xs text-gray-400">
                   {isDirectory ? '-' : formatFileSize(node.size)}

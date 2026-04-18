@@ -1,19 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Archive,
   ArchiveRestore,
   Boxes,
-  Download,
-  FilePlus2,
-  FolderOpen,
   Languages,
-  PackagePlus,
-  Pencil,
   Plus,
   Search,
   Settings,
-  Trash2,
-  Upload,
 } from 'lucide-react'
 import { useLocale } from '../i18n/LocaleContext'
 import SearchableSelect from './common/SearchableSelect'
@@ -29,23 +21,17 @@ interface ToolbarProps {
   onSearchQueryChange: (query: string) => void
   onSearchActivate?: () => void
   onSearchClear?: () => void
-  mixFiles: string[]
   loading?: boolean
-  onExportTopMix?: () => void
-  onExportCurrentMix?: () => void
-  onOpenCurrentMixImportPicker?: () => void
-  onReimportBaseDirectory: () => void | Promise<void>
-  onOpenBaseArchivePicker?: () => void
-  onOpenProjectArchivePicker?: () => void
-  onCreateProject?: () => void
-  onRenameProject?: () => void
-  onDeleteProject?: () => void
-  onExportProjectZip?: () => void
-  onAddSelectionToProject?: () => void
-  canAddSelectionToProject?: boolean
   projects: ProjectSummary[]
   activeProjectName: string | null
   onActiveProjectChange?: (projectName: string) => void
+  /** 创建新项目（项目模式下，作为项目选择器旁的快捷按钮）。 */
+  onCreateProject?: () => void
+  /**
+   * 渲染在搜索框正下方的下拉内容（例如全局搜索结果面板）。
+   * 由父组件按需控制是否展示；为 null/undefined 时不渲染。
+   */
+  searchDropdownSlot?: React.ReactNode
 }
 
 type ToolbarIconButtonProps = {
@@ -66,10 +52,10 @@ const ToolbarIconButton: React.FC<ToolbarIconButtonProps> = ({
   onClick,
 }) => {
   const className = danger
-    ? 'inline-flex h-10 w-10 items-center justify-center rounded-xl border border-red-500/40 bg-red-900/35 text-red-100 transition-colors hover:bg-red-800/60 disabled:cursor-not-allowed disabled:opacity-50'
+    ? 'inline-flex h-full w-11 items-center justify-center text-red-300 transition-colors hover:bg-red-900/40 hover:text-red-100 disabled:cursor-not-allowed disabled:opacity-40'
     : active
-      ? 'inline-flex h-10 w-10 items-center justify-center rounded-xl border border-blue-400/70 bg-blue-600 text-white shadow-[0_0_0_1px_rgba(96,165,250,0.22)] transition-colors disabled:cursor-not-allowed disabled:opacity-50'
-      : 'inline-flex h-10 w-10 items-center justify-center rounded-xl border border-gray-700 bg-gray-800/90 text-gray-200 transition-colors hover:bg-gray-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-50'
+      ? 'inline-flex h-full w-11 items-center justify-center bg-blue-600 text-white transition-colors disabled:cursor-not-allowed disabled:opacity-40'
+      : 'inline-flex h-full w-11 items-center justify-center text-gray-300 transition-colors hover:bg-gray-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-40'
 
   return (
     <button
@@ -80,7 +66,7 @@ const ToolbarIconButton: React.FC<ToolbarIconButtonProps> = ({
       onClick={onClick}
       disabled={disabled}
     >
-      <Icon size={17} />
+      <Icon size={16} />
       <span className="sr-only">{label}</span>
     </button>
   )
@@ -94,23 +80,12 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onSearchQueryChange,
   onSearchActivate,
   onSearchClear,
-  mixFiles,
   loading,
-  onExportTopMix,
-  onExportCurrentMix,
-  onOpenCurrentMixImportPicker,
-  onReimportBaseDirectory,
-  onOpenBaseArchivePicker,
-  onOpenProjectArchivePicker,
-  onCreateProject,
-  onRenameProject,
-  onDeleteProject,
-  onExportProjectZip,
-  onAddSelectionToProject,
-  canAddSelectionToProject = false,
   projects,
   activeProjectName,
   onActiveProjectChange,
+  onCreateProject,
+  searchDropdownSlot,
 }) => {
   const { t, locale, setLocale } = useLocale()
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -138,142 +113,64 @@ const Toolbar: React.FC<ToolbarProps> = ({
     : t('toolbar.projectMode')
 
   return (
-    <div className="h-16 border-b border-gray-700 bg-gray-800 px-4">
-      <div className="grid h-full grid-cols-[minmax(0,1fr)_minmax(18rem,34rem)_auto] items-center gap-4">
-        <div className="min-w-0 overflow-x-auto">
-          <div className="flex min-w-max items-center gap-1.5 pr-2">
-            {studioMode === 'base' && (
-              <>
-                <ToolbarIconButton
-                  icon={FolderOpen}
-                  label={t('toolbar.reimportBaseArchives')}
-                  onClick={() => onOpenBaseArchivePicker?.()}
-                  disabled={!!loading}
-                />
-                <ToolbarIconButton
-                  icon={Upload}
-                  label={t('toolbar.reimportBaseDir')}
-                  onClick={() => void onReimportBaseDirectory()}
-                  disabled={!!loading}
-                />
-                <ToolbarIconButton
-                  icon={Download}
-                  label={t('toolbar.exportTopMix')}
-                  onClick={() => onExportTopMix?.()}
-                  disabled={!mixFiles.length || !!loading}
-                />
-                <ToolbarIconButton
-                  icon={Archive}
-                  label={t('toolbar.exportCurrentMix')}
-                  onClick={() => onExportCurrentMix?.()}
-                  disabled={!mixFiles.length || !!loading}
-                />
-                <ToolbarIconButton
-                  icon={PackagePlus}
-                  label={t('toolbar.addToProject')}
-                  onClick={() => onAddSelectionToProject?.()}
-                  disabled={!!loading || !canAddSelectionToProject}
-                />
-              </>
-            )}
-
-            {studioMode === 'projects' && (
-              <>
-                {projects.length > 0 ? (
-                  <SearchableSelect
-                    value={activeProjectName ?? projects[0]?.name ?? ''}
-                    options={projectOptions}
-                    onChange={(next) => onActiveProjectChange?.(next)}
-                    triggerClassName="inline-flex h-10 min-w-[15rem] max-w-[22rem] items-center gap-2 rounded-xl border border-blue-500/30 bg-gradient-to-r from-gray-800 via-gray-800 to-slate-800 px-3 text-left text-sm text-gray-100 shadow-[0_8px_24px_rgba(0,0,0,0.18)] transition-colors hover:border-blue-400/50 hover:bg-gray-700"
-                    triggerTitle={currentProjectLabel}
-                    triggerAriaLabel={currentProjectLabel}
-                    renderTriggerContent={(selected) => (
-                      <>
-                        <Boxes size={17} className="flex-shrink-0 text-blue-300" />
-                        <span className="min-w-0 flex-1 truncate font-medium">
-                          {selected?.label ?? t('toolbar.noProjects')}
-                        </span>
-                      </>
-                    )}
-                    menuClassName="z-50 w-80 rounded-xl border border-gray-600 bg-gray-800 shadow-2xl"
-                    searchPlaceholder={t('toolbar.searchProjectPlaceholder')}
-                    noResultsText={t('toolbar.noProjects')}
-                    footerHint=""
-                  />
-                ) : (
-                  <div
-                    className="inline-flex h-10 min-w-[15rem] items-center gap-2 rounded-xl border border-gray-700 bg-gray-800/90 px-3 text-sm text-gray-400"
-                    aria-label={t('toolbar.noProjects')}
-                    title={t('toolbar.noProjects')}
-                  >
-                    <Boxes size={17} className="flex-shrink-0" />
-                    <span className="truncate">{t('toolbar.noProjects')}</span>
-                  </div>
+    <div className="relative z-50 h-11 border-b border-gray-700 bg-gray-800">
+      <div className="flex h-full items-stretch">
+        {studioMode === 'projects' && (
+          <div className="flex h-full items-center border-r border-gray-700">
+            {projects.length > 0 ? (
+              <SearchableSelect
+                value={activeProjectName ?? projects[0]?.name ?? ''}
+                options={projectOptions}
+                onChange={(next) => onActiveProjectChange?.(next)}
+                rootClassName="relative h-full"
+                triggerClassName="inline-flex h-full w-[20rem] max-w-[28rem] items-center gap-2 px-3 text-left text-sm text-gray-100 transition-colors hover:bg-gray-700"
+                triggerTitle={currentProjectLabel}
+                triggerAriaLabel={currentProjectLabel}
+                renderTriggerContent={(selected) => (
+                  <>
+                    <Boxes size={16} className="flex-shrink-0 text-blue-300" />
+                    <span className="min-w-0 flex-1 truncate font-medium">
+                      {selected?.label ?? t('toolbar.noProjects')}
+                    </span>
+                  </>
                 )}
-                <ToolbarIconButton
-                  icon={Plus}
-                  label={t('toolbar.createProject')}
-                  onClick={() => onCreateProject?.()}
-                  disabled={!!loading}
-                />
-                <ToolbarIconButton
-                  icon={Pencil}
-                  label={t('toolbar.renameProject')}
-                  onClick={() => onRenameProject?.()}
-                  disabled={!!loading || !activeProjectName}
-                />
-                <ToolbarIconButton
-                  icon={Trash2}
-                  label={t('toolbar.deleteProject')}
-                  onClick={() => onDeleteProject?.()}
-                  disabled={!!loading || !activeProjectName}
-                  danger
-                />
-                <ToolbarIconButton
-                  icon={Archive}
-                  label={t('toolbar.exportProjectZip')}
-                  onClick={() => onExportProjectZip?.()}
-                  disabled={!!loading || !activeProjectName}
-                />
-                <ToolbarIconButton
-                  icon={FilePlus2}
-                  label={t('toolbar.importProjectFiles')}
-                  onClick={() => onOpenProjectArchivePicker?.()}
-                  disabled={!!loading || !activeProjectName}
-                />
-                <ToolbarIconButton
-                  icon={Download}
-                  label={t('toolbar.exportTopMix')}
-                  onClick={() => onExportTopMix?.()}
-                  disabled={!mixFiles.length || !!loading || !activeProjectName}
-                />
-                <ToolbarIconButton
-                  icon={ArchiveRestore}
-                  label={t('toolbar.exportCurrentMix')}
-                  onClick={() => onExportCurrentMix?.()}
-                  disabled={!mixFiles.length || !!loading || !activeProjectName}
-                />
-                <ToolbarIconButton
-                  icon={PackagePlus}
-                  label={t('toolbar.importToCurrentMix')}
-                  onClick={() => onOpenCurrentMixImportPicker?.()}
-                  disabled={!mixFiles.length || !!loading || !activeProjectName}
-                />
-              </>
+                menuClassName="z-50 w-[20rem] rounded border border-gray-600 bg-gray-800 shadow-2xl overflow-hidden"
+                searchPlaceholder={t('toolbar.searchProjectPlaceholder')}
+                noResultsText={t('toolbar.noProjects')}
+                footerHint=""
+              />
+            ) : (
+              <div
+                className="inline-flex h-full w-[20rem] items-center gap-2 px-3 text-sm text-gray-400"
+                aria-label={t('toolbar.noProjects')}
+                title={t('toolbar.noProjects')}
+              >
+                <Boxes size={16} className="flex-shrink-0" />
+                <span className="truncate">{t('toolbar.noProjects')}</span>
+              </div>
             )}
+            <div className="flex h-full items-center border-l border-gray-700">
+              <ToolbarIconButton
+                icon={Plus}
+                label={t('toolbar.createProject')}
+                onClick={() => onCreateProject?.()}
+                disabled={!!loading}
+              />
+            </div>
           </div>
-        </div>
+        )}
 
-        <div className="min-w-0">
+        {/* 占位填充：把搜索栏推到右侧紧贴按钮组 */}
+        <div className="min-w-0 flex-1" aria-hidden />
+
+        <div className="relative h-full w-[28rem] flex-shrink-0 border-l border-gray-700">
           <label
-            className={`group flex h-11 items-center rounded-2xl border px-3 transition-all ${
-              searchActive
-                ? 'border-blue-400/70 bg-gray-950 shadow-[0_0_0_1px_rgba(96,165,250,0.25)]'
-                : 'border-gray-700 bg-gray-900/90 hover:border-gray-500'
+            className={`group flex h-full items-center px-3 transition-colors ${
+              searchActive ? 'bg-gray-900/70' : 'hover:bg-gray-800/60'
             }`}
           >
             <Search
-              size={17}
+              size={16}
               className={`mr-2 flex-shrink-0 transition-colors ${
                 searchActive ? 'text-blue-300' : 'text-gray-400 group-hover:text-gray-300'
               }`}
@@ -294,13 +191,21 @@ const Toolbar: React.FC<ToolbarProps> = ({
               aria-label={t('search.title')}
               className="min-w-0 flex-1 bg-transparent text-sm text-gray-100 outline-none placeholder:text-gray-500"
             />
-            <span className="ml-3 hidden rounded-md border border-gray-700 bg-gray-800 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.2em] text-gray-500 md:inline">
+            <span className="ml-3 hidden text-[10px] uppercase tracking-[0.2em] text-gray-500 md:inline">
               Esc
             </span>
           </label>
+          {searchDropdownSlot && (
+            <div
+              className="absolute left-0 right-0 top-full z-50"
+              data-context-kind="global-shell"
+            >
+              {searchDropdownSlot}
+            </div>
+          )}
         </div>
 
-        <div className="flex items-center gap-1.5 justify-self-end">
+        <div className="flex h-full items-center border-l border-gray-700">
           <ToolbarIconButton
             icon={ArchiveRestore}
             label={t('toolbar.baseMode')}
@@ -314,7 +219,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
             onClick={() => onStudioModeChange('projects')}
           />
 
-          <div className="relative" ref={settingsMenuRef}>
+          <div className="relative h-full" ref={settingsMenuRef}>
             <ToolbarIconButton
               icon={Settings}
               label={t('toolbar.settings')}
@@ -322,7 +227,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
               disabled={!!loading}
             />
             {settingsOpen && (
-              <div className="absolute right-0 top-full z-20 mt-2 w-72 rounded-xl border border-gray-600 bg-gray-800 shadow-2xl">
+              <div className="absolute right-0 top-full z-20 w-72 rounded border border-gray-600 bg-gray-800 shadow-2xl">
                 <div className="border-b border-gray-700 px-3 py-2">
                   <div className="text-xs font-semibold text-gray-200">{t('toolbar.systemConfig')}</div>
                   <div className="mt-1 text-[11px] text-gray-400">{t('toolbar.baseFileManage')}</div>

@@ -228,7 +228,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 px-4">
-      <div className="w-full max-w-3xl bg-gray-900 border border-gray-700 rounded-lg shadow-2xl overflow-hidden">
+      <div className="w-full max-w-3xl bg-gray-900 border border-gray-700 rounded shadow-2xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
           <div className="min-w-0">
             <div className="text-sm text-gray-400">{t('export.title')}</div>

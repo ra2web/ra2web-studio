@@ -22,6 +22,15 @@ export class MixFile {
   }
 
   private parseHeader(): void {
+    // 任何一种合法 MIX 头都至少需要 6 字节 (TD/RA 非加密：u16 count + u32 size)。
+    // 小于该尺寸的输入 (例如 RA2 安装里 5 字节的 MOVIESxx.MIX 占位文件) 会让
+    // 后续 readUint16/readUint32 越界，抛出难以定位的 RangeError，因此提前拦截。
+    if (this.stream.byteLength < 6) {
+      throw new Error(
+        `MIX file is too small to contain a valid header (${this.stream.byteLength} bytes)`
+      );
+    }
+
     const flags = this.stream.readUint32();
 
     // Original logic: t = 0 == (e & ~(r.Checksum | r.Encrypted));
@@ -81,6 +90,9 @@ export class MixFile {
   }
 
   private parseTdHeader(e: DataStream): number {
+    if (e.position + 6 > e.byteLength) {
+      throw new Error('Invalid MIX header: insufficient bytes for fileCount + dataSize')
+    }
     const fileCount = e.readUint16();
     const declaredDataSize = e.readUint32();
     const tableBytes = fileCount * MixEntry.size

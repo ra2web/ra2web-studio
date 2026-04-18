@@ -42,7 +42,7 @@ const ImportProgressPanel: React.FC<ImportProgressPanelProps> = ({
   const normalizedPercent = typeof percentage === 'number' ? clampPercent(percentage) : null
 
   return (
-    <div className="mt-4 rounded-lg border border-gray-700 bg-gray-900/50 p-4">
+    <div className="mt-4 rounded border border-gray-700 bg-gray-900/50 p-4">
       <div className="text-sm font-semibold text-gray-200">{t('importProgress.stepsTitle')}</div>
       <div className="mt-3 grid gap-1">
         {steps.map((step) => (

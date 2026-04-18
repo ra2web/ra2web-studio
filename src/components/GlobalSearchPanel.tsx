@@ -1,5 +1,5 @@
 import React from 'react'
-import { Archive, Boxes, FolderPlus, Search } from 'lucide-react'
+import { Archive, Boxes, FolderPlus } from 'lucide-react'
 import { useLocale } from '../i18n/LocaleContext'
 import type { GlobalSearchResult } from '../types/studio'
 
@@ -24,39 +24,26 @@ const GlobalSearchPanel: React.FC<GlobalSearchPanelProps> = ({
   const normalizedQuery = query.trim()
   const visibleResults = normalizedQuery ? results : []
 
+  const showCountStrip = !!normalizedQuery && !loading && visibleResults.length > 0
+  const emptyMessage = loading
+    ? t('search.indexing')
+    : normalizedQuery
+      ? t('search.emptyTitle')
+      : t('search.emptyHint')
+
   return (
     <div
-      className="relative z-10 flex w-[min(56rem,calc(100%-1rem))] max-h-[min(70vh,42rem)] flex-col overflow-hidden rounded-2xl border border-gray-700 bg-gray-900 shadow-[0_24px_80px_rgba(0,0,0,0.45)]"
+      className="flex w-full max-h-[min(70vh,42rem)] flex-col overflow-hidden rounded-b border-x border-b border-gray-700 bg-gray-900 shadow-[0_24px_80px_rgba(0,0,0,0.45)]"
       data-context-kind="global-shell"
       data-testid="global-search-overlay"
     >
-      <div className="border-b border-gray-700 bg-gradient-to-r from-gray-900 via-gray-900 to-slate-900/70 px-5 py-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-blue-300/80">
-              <Search size={14} />
-              <span>{t('search.title')}</span>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              <h3 className="min-w-0 truncate text-lg font-semibold text-white">
-                {normalizedQuery || t('search.title')}
-              </h3>
-              <span className="rounded-full border border-gray-700 bg-gray-800 px-3 py-1 text-xs text-gray-300">
-                {loading ? t('search.indexing') : t('search.resultCount', { count: String(visibleResults.length) })}
-              </span>
-            </div>
-            <p className="mt-2 text-sm text-gray-400">
-              {normalizedQuery ? t('search.recursiveHint') : t('search.emptyHint')}
-            </p>
-          </div>
-
-          <div className="hidden rounded-full border border-gray-700 bg-gray-800/90 px-3 py-1 text-[11px] text-gray-400 lg:block">
-            {t('search.recursiveHint')}
-          </div>
+      {showCountStrip && (
+        <div className="border-b border-gray-800 bg-gray-900 px-4 py-1.5 text-[11px] text-gray-500">
+          {t('search.resultCount', { count: String(visibleResults.length) })}
         </div>
-      </div>
+      )}
 
-      <div className="flex-1 overflow-y-auto overscroll-contain">
+      <div className="min-h-0 overflow-y-auto overscroll-contain">
         {visibleResults.length > 0 ? (
           visibleResults.map((result) => (
             <div
@@ -106,7 +93,7 @@ const GlobalSearchPanel: React.FC<GlobalSearchPanelProps> = ({
                     <button
                       type="button"
                       onClick={() => onAddToProject(result)}
-                      className="inline-flex items-center gap-1 rounded-lg bg-gray-700 px-2.5 py-1.5 text-xs text-gray-100 transition-colors hover:bg-gray-600"
+                      className="inline-flex items-center gap-1 rounded bg-gray-700 px-2.5 py-1.5 text-xs text-gray-100 transition-colors hover:bg-gray-600"
                       title={activeProjectName
                         ? t('search.addToActiveProject', { name: activeProjectName })
                         : t('search.addToProject')}
@@ -118,7 +105,7 @@ const GlobalSearchPanel: React.FC<GlobalSearchPanelProps> = ({
                   <button
                     type="button"
                     onClick={() => onOpenResult(result)}
-                    className="rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs text-white transition-colors hover:bg-blue-500"
+                    className="rounded bg-blue-600 px-2.5 py-1.5 text-xs text-white transition-colors hover:bg-blue-500"
                   >
                     {t('search.openResult')}
                   </button>
@@ -127,14 +114,8 @@ const GlobalSearchPanel: React.FC<GlobalSearchPanelProps> = ({
             </div>
           ))
         ) : (
-          <div className="flex h-full items-center justify-center px-6 text-gray-500">
-            <div className="text-center">
-              <Search size={44} className="mx-auto mb-3 opacity-60" />
-              <div className="text-sm text-gray-300">
-                {normalizedQuery ? t('search.emptyTitle') : t('search.title')}
-              </div>
-              <div className="mt-1 text-xs text-gray-500">{t('search.emptyHint')}</div>
-            </div>
+          <div className="px-5 py-6 text-center text-xs text-gray-500">
+            {emptyMessage}
           </div>
         )}
       </div>

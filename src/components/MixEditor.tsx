@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import Toolbar from './Toolbar'
+import ActionSidebar from './ActionSidebar'
 import FileTree from './FileTree'
 import ProjectExplorer from './ProjectExplorer'
 import MixExplorer from './MixExplorer'
@@ -1071,8 +1072,12 @@ const MixEditor: React.FC = () => {
 
   const ensureWritableProject = useCallback(async (): Promise<string | null> => {
     if (activeProjectName) return activeProjectName
-    if (typeof window === 'undefined') return null
-    const proposedName = window.prompt(t('mixEditor.createProjectPrompt'), t('mixEditor.defaultProjectName'))
+    const proposedName = await dialog.prompt({
+      title: t('toolbar.createProject'),
+      message: t('mixEditor.createProjectPrompt'),
+      defaultValue: t('mixEditor.defaultProjectName'),
+      placeholder: t('mixEditor.defaultProjectName'),
+    })
     if (proposedName == null) return null
     const createdName = await ProjectService.createProject(proposedName)
     const config = GameResConfig.load()
@@ -1081,11 +1086,15 @@ const MixEditor: React.FC = () => {
       lastImportAt: config.lastImportAt,
     })
     return createdName
-  }, [activeProjectName, t])
+  }, [activeProjectName, dialog, t])
 
   const handleCreateProject = useCallback(async () => {
-    if (typeof window === 'undefined') return
-    const proposedName = window.prompt(t('mixEditor.createProjectPrompt'), t('mixEditor.defaultProjectName'))
+    const proposedName = await dialog.prompt({
+      title: t('toolbar.createProject'),
+      message: t('mixEditor.createProjectPrompt'),
+      defaultValue: t('mixEditor.defaultProjectName'),
+      placeholder: t('mixEditor.defaultProjectName'),
+    })
     if (proposedName == null) return
     try {
       const createdName = await ProjectService.createProject(proposedName)
@@ -1100,8 +1109,13 @@ const MixEditor: React.FC = () => {
   }, [dialog, reloadStudioData, t])
 
   const handleRenameProject = useCallback(async () => {
-    if (!activeProjectName || typeof window === 'undefined') return
-    const proposedName = window.prompt(t('mixEditor.renameProjectPrompt', { name: activeProjectName }), activeProjectName)
+    if (!activeProjectName) return
+    const proposedName = await dialog.prompt({
+      title: t('toolbar.renameProject'),
+      message: t('mixEditor.renameProjectPrompt', { name: activeProjectName }),
+      defaultValue: activeProjectName,
+      placeholder: activeProjectName,
+    })
     if (proposedName == null) return
     try {
       const renamedProject = await ProjectService.renameProject(activeProjectName, proposedName)
@@ -1146,6 +1160,92 @@ const MixEditor: React.FC = () => {
       })
     })
   }, [reloadStudioData, runWithPktDiscardGuard])
+
+  // 项目内"新建文件/文件夹"时的父目录：根据当前选中决定
+  const projectCreateParentDir = useMemo(() => {
+    if (!projectSelection) return ''
+    if (projectSelection.kind === 'project-directory') return projectSelection.relativePath
+    if (projectSelection.kind === 'project-file') {
+      const idx = projectSelection.relativePath.lastIndexOf('/')
+      return idx >= 0 ? projectSelection.relativePath.slice(0, idx) : ''
+    }
+    return ''
+  }, [projectSelection])
+
+  const validateProjectEntryName = useCallback((value: string): string | null => {
+    const trimmed = value.trim()
+    if (!trimmed) return t('mixEditor.invalidEntryName')
+    if (trimmed.startsWith('.')) return t('mixEditor.invalidEntryName')
+    if (trimmed.includes('/') || trimmed.includes('\\')) return t('mixEditor.invalidEntryName')
+    return null
+  }, [t])
+
+  const handleCreateProjectFolder = useCallback(async () => {
+    if (!activeProjectName) return
+    const parentDisplay = projectCreateParentDir || t('mixEditor.promptInRootHint')
+    const name = await dialog.prompt({
+      title: t('mixEditor.promptCreateFolderTitle'),
+      message: t('mixEditor.promptCreateFolderMessage', { path: parentDisplay }),
+      placeholder: t('mixEditor.promptCreateFolderPlaceholder'),
+      validate: validateProjectEntryName,
+    })
+    if (name == null) return
+    const targetPath = projectCreateParentDir ? `${projectCreateParentDir}/${name}` : name
+    try {
+      await ProjectService.ensureProjectDirectory(activeProjectName, targetPath)
+      await reloadStudioData(undefined, {
+        skipUnsavedGuard: true,
+        studioMode: 'projects',
+        activeProjectName,
+        projectSelectionPath: targetPath,
+      })
+    } catch (error: any) {
+      await dialog.alert({
+        message: t('mixEditor.createFolderFailed', { error: error?.message || String(error) }),
+      })
+    }
+  }, [
+    activeProjectName,
+    dialog,
+    projectCreateParentDir,
+    reloadStudioData,
+    t,
+    validateProjectEntryName,
+  ])
+
+  const handleCreateProjectFile = useCallback(async () => {
+    if (!activeProjectName) return
+    const parentDisplay = projectCreateParentDir || t('mixEditor.promptInRootHint')
+    const name = await dialog.prompt({
+      title: t('mixEditor.promptCreateFileTitle'),
+      message: t('mixEditor.promptCreateFileMessage', { path: parentDisplay }),
+      placeholder: t('mixEditor.promptCreateFilePlaceholder'),
+      validate: validateProjectEntryName,
+    })
+    if (name == null) return
+    const targetPath = projectCreateParentDir ? `${projectCreateParentDir}/${name}` : name
+    try {
+      const emptyFile = new File([], name, { type: 'application/octet-stream' })
+      await ProjectService.writeProjectFile(activeProjectName, targetPath, emptyFile)
+      await reloadStudioData(undefined, {
+        skipUnsavedGuard: true,
+        studioMode: 'projects',
+        activeProjectName,
+        projectSelectionPath: targetPath,
+      })
+    } catch (error: any) {
+      await dialog.alert({
+        message: t('mixEditor.createFileFailed', { error: error?.message || String(error) }),
+      })
+    }
+  }, [
+    activeProjectName,
+    dialog,
+    projectCreateParentDir,
+    reloadStudioData,
+    t,
+    validateProjectEntryName,
+  ])
 
   const handleExportProjectZip = useCallback(async () => {
     if (!activeProjectName) return
@@ -1339,7 +1439,12 @@ const MixEditor: React.FC = () => {
 
   const canEditSelectedEntry = useMemo(() => {
     if (studioMode !== 'projects' || !projectSelection) return false
-    return projectSelection.kind === 'project-file' || projectSelection.kind === 'mix-entry'
+    // project-directory 也算可重命名/删除：rename/delete handler 内部走目录分支。
+    return (
+      projectSelection.kind === 'project-file'
+      || projectSelection.kind === 'project-directory'
+      || projectSelection.kind === 'mix-entry'
+    )
   }, [projectSelection, studioMode])
 
   const canAddSelectionToProject = useMemo(() => {
@@ -1770,16 +1875,25 @@ const MixEditor: React.FC = () => {
   }, [handleImportFilesToCurrentMix, openFilePicker])
 
   const handleRenameSelectedFileInCurrentMix = useCallback(async () => {
-    if (typeof window === 'undefined') return
     const allowed = await confirmDiscardPktEdits()
     if (!allowed) return
     setLoading(true)
     setProgressMessage(t('mixEditor.renamingFile'))
     try {
-      if (studioMode === 'projects' && projectSelection?.kind === 'project-file' && activeProjectName) {
+      // 项目模式：file 或 directory 的重命名都走 ProjectService.renameProjectEntry
+      if (
+        studioMode === 'projects'
+        && activeProjectName
+        && (projectSelection?.kind === 'project-file' || projectSelection?.kind === 'project-directory')
+      ) {
         const oldPath = projectSelection.relativePath
         const oldName = getResourcePathBasename(oldPath)
-        const renameInput = window.prompt(t('mixEditor.renamePrompt', { name: oldName }), oldName)
+        const renameInput = await dialog.prompt({
+          title: t('contextMenu.renameFile'),
+          message: t('mixEditor.renamePrompt', { name: oldName }),
+          defaultValue: oldName,
+          placeholder: oldName,
+        })
         if (renameInput == null) return
         const trimmed = renameInput.trim()
         if (!trimmed) {
@@ -1805,6 +1919,7 @@ const MixEditor: React.FC = () => {
         return
       }
 
+      if (typeof window === 'undefined') return
       if (!currentContainer || !selectedLeafName) return
       const currentEntries = await readContainerEntries(currentContainer)
       let selectedIndex = currentEntries.findIndex((entry) => sameMixEntryName(entry.filename, selectedLeafName))
@@ -1912,7 +2027,12 @@ const MixEditor: React.FC = () => {
     setLoading(true)
     setProgressMessage(t('mixEditor.deletingFile'))
     try {
-      if (studioMode === 'projects' && projectSelection?.kind === 'project-file' && activeProjectName) {
+      // 项目模式：file 或 directory 的删除都走 ProjectService.deleteProjectEntry（递归）
+      if (
+        studioMode === 'projects'
+        && activeProjectName
+        && (projectSelection?.kind === 'project-file' || projectSelection?.kind === 'project-directory')
+      ) {
         const targetName = getResourcePathBasename(projectSelection.relativePath)
         const confirmed = await dialog.confirmDanger({
           title: t('mixEditor.confirmDelete'),
@@ -2519,25 +2639,29 @@ const MixEditor: React.FC = () => {
           onSearchQueryChange={handleSearchQueryChange}
           onSearchActivate={handleSearchActivate}
           onSearchClear={handleSearchClear}
-          mixFiles={toolbarMixNames}
           loading={loading}
-          onExportTopMix={handleExportTopMix}
-          onExportCurrentMix={handleExportCurrentMix}
-          onOpenCurrentMixImportPicker={openCurrentMixImportPicker}
-          onReimportBaseDirectory={handleReimportBaseDirectory}
-          onOpenBaseArchivePicker={openBaseArchivePicker}
-          onOpenProjectArchivePicker={openProjectArchivePicker}
-          onCreateProject={handleCreateProject}
-          onRenameProject={handleRenameProject}
-          onDeleteProject={handleDeleteProject}
-          onExportProjectZip={handleExportProjectZip}
-          onAddSelectionToProject={() => {
-            void handleAddSelectionToProject()
-          }}
-          canAddSelectionToProject={canAddSelectionToProject}
           projects={projects}
           activeProjectName={activeProjectName}
           onActiveProjectChange={handleActiveProjectChange}
+          onCreateProject={handleCreateProject}
+          searchDropdownSlot={searchViewOpen ? (
+            <GlobalSearchPanel
+              query={searchQuery}
+              results={filteredSearchResults}
+              loading={searchLoading}
+              activeProjectName={activeProjectName}
+              onOpenResult={(result) => {
+                void handleOpenSearchResult(result)
+              }}
+              onAddToProject={(result) => {
+                void handleAddSelectionToProject({
+                  topLevelOwner: result.topLevelOwner,
+                  containerChain: result.containerChain,
+                  selectedLeafName: result.displayName,
+                })
+              }}
+            />
+          ) : null}
         />
       )}
 
@@ -2578,7 +2702,7 @@ const MixEditor: React.FC = () => {
               )}
             </div>
 
-            <div className="absolute right-5 bottom-5 w-[min(30rem,90vw)] rounded-lg border border-gray-500/40 bg-black/45 backdrop-blur-sm shadow-2xl">
+            <div className="absolute right-5 bottom-5 w-[min(30rem,90vw)] rounded border border-gray-500/40 bg-black/45 backdrop-blur-sm shadow-2xl">
               <div className="px-3 py-2 border-b border-gray-500/30 text-xs font-semibold tracking-wide text-gray-200">
                 Loaded Resources
               </div>
@@ -2606,7 +2730,7 @@ const MixEditor: React.FC = () => {
         ) : (
           <div className="flex-1 flex items-center justify-center p-8">
             <div
-              className="max-w-2xl w-full bg-gray-800 border border-gray-700 rounded-lg p-6"
+              className="max-w-2xl w-full bg-gray-800 border border-gray-700 rounded p-6"
               data-context-kind="import-shell"
             >
               <h2 className="text-xl font-semibold mb-3">{t('mixEditor.importGameRes')}</h2>
@@ -2644,6 +2768,26 @@ const MixEditor: React.FC = () => {
         )
       ) : (
         <div className="flex-1 flex min-h-0 relative">
+          <ActionSidebar
+            studioMode={studioMode}
+            loading={loading}
+            mixFiles={toolbarMixNames}
+            activeProjectName={activeProjectName}
+            onOpenBaseArchivePicker={openBaseArchivePicker}
+            onReimportBaseDirectory={handleReimportBaseDirectory}
+            onExportTopMix={handleExportTopMix}
+            onExportCurrentMix={handleExportCurrentMix}
+            onAddSelectionToProject={() => {
+              void handleAddSelectionToProject()
+            }}
+            canAddSelectionToProject={canAddSelectionToProject}
+            onRenameProject={handleRenameProject}
+            onDeleteProject={handleDeleteProject}
+            onExportProjectZip={handleExportProjectZip}
+            onOpenProjectArchivePicker={openProjectArchivePicker}
+            onCreateProjectFolder={handleCreateProjectFolder}
+            onCreateProjectFile={handleCreateProjectFile}
+          />
           {studioMode === 'base' ? (
             <div className="w-80 bg-gray-800 border-r border-gray-700">
               <FileTree
@@ -2666,11 +2810,6 @@ const MixEditor: React.FC = () => {
             <div className="flex bg-gray-800 border-r border-gray-700">
               <div className="w-80 min-w-[20rem]">
                 <ProjectExplorer
-                  title={t('mixEditor.projectManagerTitle')}
-                  description={activeProjectName
-                    ? t('mixEditor.projectManagerDesc', { name: activeProjectName })
-                    : t('mixEditor.projectEmptyDesc')}
-                  projectName={activeProjectName}
                   tree={projectTree}
                   selectedPath={selectedProjectPath}
                   onSelectPath={handleProjectTreeSelect}
@@ -2777,33 +2916,17 @@ const MixEditor: React.FC = () => {
             </div>
           </div>
 
-          {searchViewOpen && (
-            <div className="absolute inset-0 z-30 flex items-start justify-center p-4 pt-5">
-              <button
-                type="button"
-                className="absolute inset-0 bg-black/10"
-                aria-label={t('common.close')}
-                onClick={handleSearchClear}
-              />
-              <GlobalSearchPanel
-                query={searchQuery}
-                results={filteredSearchResults}
-                loading={searchLoading}
-                activeProjectName={activeProjectName}
-                onOpenResult={(result) => {
-                  void handleOpenSearchResult(result)
-                }}
-                onAddToProject={(result) => {
-                  void handleAddSelectionToProject({
-                    topLevelOwner: result.topLevelOwner,
-                    containerChain: result.containerChain,
-                    selectedLeafName: result.displayName,
-                  })
-                }}
-              />
-            </div>
-          )}
         </div>
+      )}
+
+      {/* 全局搜索激活时的全屏点击关闭背板（搜索面板本身挂在 Toolbar 搜索框下方，z-50 高于此背板） */}
+      {resourceReady && searchViewOpen && (
+        <button
+          type="button"
+          className="fixed inset-0 z-40 bg-black/10"
+          aria-label={t('common.close')}
+          onClick={handleSearchClear}
+        />
       )}
 
       <ExportDialog
