@@ -1,10 +1,15 @@
 import React, { useEffect, useState } from 'react'
-import { MixParser, MixFileInfo } from '../../services/MixParser'
+import { DataStream } from '../../data/DataStream'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
+import type { PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
-type MixFileData = { file: File; info: MixFileInfo }
-
-const DatViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resourceContext?: ResourceContext | null }> = ({ selectedFile, mixFiles }) => {
+const DatViewer: React.FC<{
+  selectedFile?: string
+  mixFiles?: Array<{ file: File; info: any }>
+  target?: PreviewTarget | null
+  resourceContext?: ResourceContext | null
+}> = ({ selectedFile, mixFiles, target }) => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isLmd, setIsLmd] = useState(false)
@@ -12,6 +17,11 @@ const DatViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
   const [names, setNames] = useState<string[]>([])
   const [query, setQuery] = useState('')
   const [hexDump, setHexDump] = useState<string>('')
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -22,15 +32,11 @@ const DatViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
       setNames([])
       setHexDump('')
       try {
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('Invalid path')
-        const mixName = selectedFile.substring(0, slash)
-        const inner = selectedFile.substring(slash + 1)
-        const mix = mixFiles.find(m => m.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-        const vf = await MixParser.extractFile(mix.file, inner)
-        if (!vf) throw new Error('File not found in MIX')
-        const s = vf.stream
+        if (!source.resolved) return
+        const bytes = await source.resolved.readBytes()
+        const buffer = new ArrayBuffer(bytes.byteLength)
+        new Uint8Array(buffer).set(bytes)
+        const s = new DataStream(buffer)
         s.seek(0)
         const id = s.readString(32)
         s.seek(32)
@@ -48,7 +54,6 @@ const DatViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
             setNames(arr)
           }
         } else {
-          const bytes = vf.getBytes()
           const viewLen = Math.min(bytes.length, 4096)
           let out: string[] = []
           for (let off = 0; off < viewLen; off += 16) {
@@ -69,9 +74,16 @@ const DatViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
         if (!cancelled) setLoading(false)
       }
     }
-    loadDat()
+    if (source.resolved) {
+      void loadDat()
+    }
     return () => { cancelled = true }
-  }, [selectedFile, mixFiles])
+  }, [source.resolved])
+
+  useEffect(() => {
+    setLoading(source.loading)
+    setError(source.error)
+  }, [source.error, source.loading])
 
   if (loading) return <div className="h-full w-full flex items-center justify-center text-gray-400">加载中...</div>
   if (error) return <div className="p-3 text-red-400 text-sm">{error}</div>
@@ -126,5 +138,3 @@ const DatViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
 }
 
 export default DatViewer
-
-

@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { MixParser, MixFileInfo } from '../../services/MixParser'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
-
-type MixFileData = { file: File; info: MixFileInfo }
+import type { PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
 function formatFileSize(bytes: number): string {
   if (bytes <= 0) return '0 B'
@@ -24,16 +24,22 @@ function getTypeLabel(extension: string): string {
 }
 
 const MixDirectoryViewer: React.FC<{
-  selectedFile: string
-  mixFiles: MixFileData[]
+  selectedFile?: string
+  mixFiles?: Array<{ file: File; info: MixFileInfo }>
+  target?: PreviewTarget | null
   resourceContext?: ResourceContext | null
   onEnterCurrentMix?: () => void
   canEnterCurrentMix?: boolean
-}> = ({ selectedFile, mixFiles, onEnterCurrentMix, canEnterCurrentMix = false }) => {
+}> = ({ selectedFile, mixFiles, target, onEnterCurrentMix, canEnterCurrentMix = false }) => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [containerName, setContainerName] = useState('')
   const [items, setItems] = useState<MixFileInfo['files']>([])
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
 
   useEffect(() => {
     let disposed = false
@@ -41,24 +47,23 @@ const MixDirectoryViewer: React.FC<{
       setLoading(true)
       setError(null)
       try {
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('无效路径')
-        const rootMixName = selectedFile.substring(0, slash)
-        const innerPath = selectedFile.substring(slash + 1)
-        const rootMix = mixFiles.find((m) => m.info.name === rootMixName)
-        if (!rootMix) throw new Error('未找到顶层 MIX')
-
-        const vf = await MixParser.extractFile(rootMix.file, innerPath)
-        if (!vf) throw new Error('无法读取 MIX 文件内容')
-
-        const parsed = await MixParser.parseVirtualFile(vf, innerPath.split('/').pop() || innerPath)
+        if (!source.resolved) return
+        const bytes = await source.resolved.readBytes()
+        const buffer = new ArrayBuffer(bytes.byteLength)
+        new Uint8Array(buffer).set(bytes)
+        const parsed = await MixParser.parseFile(
+          new File(
+            [buffer],
+            source.resolved?.name || 'archive.mix',
+          ),
+        )
         if (disposed) return
 
-        setContainerName(parsed.name || innerPath)
+        setContainerName(parsed.name || source.resolved?.name || '')
         setItems(parsed.files)
       } catch (e: any) {
         if (!disposed) {
-          setContainerName(selectedFile.split('/').pop() || selectedFile)
+          setContainerName(source.resolved?.name || selectedFile || '')
           setItems([])
           setError(e?.message || '读取 MIX 目录失败')
         }
@@ -66,11 +71,13 @@ const MixDirectoryViewer: React.FC<{
         if (!disposed) setLoading(false)
       }
     }
-    load()
+    if (source.resolved) {
+      void load()
+    }
     return () => {
       disposed = true
     }
-  }, [selectedFile, mixFiles])
+  }, [selectedFile, source.resolved])
 
   const sortedItems = useMemo(
     () => [...items].sort((a, b) => a.filename.localeCompare(b.filename, undefined, { sensitivity: 'base' })),
@@ -99,7 +106,7 @@ const MixDirectoryViewer: React.FC<{
           直接进入本MIX
         </span>
         <span className="truncate text-gray-500">
-          {containerName || (selectedFile.split('/').pop() || selectedFile)} · {sortedItems.length} 项
+          {containerName || (source.resolved?.name || selectedFile || '')} · {sortedItems.length} 项
         </span>
       </div>
 

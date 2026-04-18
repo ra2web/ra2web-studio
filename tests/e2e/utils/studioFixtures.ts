@@ -77,7 +77,7 @@ export async function seedStudioWorkspace(page: Page) {
     }
 
     localStorage.setItem('ra2web-studio.gameResConfig', JSON.stringify({
-      activeModName: null,
+      activeProjectName: null,
       lastImportAt: Date.now(),
     }))
   }, files)

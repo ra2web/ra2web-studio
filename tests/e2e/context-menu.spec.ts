@@ -13,24 +13,27 @@ test('shows custom menu on import shell and closes on shift-right-click', async 
   await expect(page.getByTestId('app-context-menu')).toHaveCount(0)
 })
 
-test('supports workspace and editable context menus after seeded load', async ({ page }) => {
+test('supports base-mode and editable context menus after seeded load', async ({ page }) => {
   await seedStudioWorkspace(page)
+  await page.getByRole('button', { name: /基座文件|Base Files/ }).click()
 
   const pktRow = page.locator('[data-context-kind="file-tree-row"]').filter({ hasText: 'sample.pkt' })
   await pktRow.click({ button: 'right' })
   await expect(pktRow).toHaveClass(/bg-blue-600/)
   await expect(page.locator('[data-context-menu-command="rawExport"]')).toBeVisible()
-  await expect(page.locator('[data-context-menu-command="renameFile"]')).toBeVisible()
+  await expect(page.locator('[data-context-menu-command="addToProject"]')).toBeVisible()
+  await expect(page.locator('[data-context-menu-command="renameFile"]')).toHaveCount(0)
   await page.keyboard.press('Escape')
   await expect(page.getByTestId('app-context-menu')).toHaveCount(0)
 
   const shpRow = page.locator('[data-context-kind="file-tree-row"]').filter({ hasText: 'unit.shp' })
   await shpRow.click({ button: 'right' })
   await expect(page.locator('[data-context-menu-command="imageGifExport"]')).toBeVisible()
+  await expect(page.locator('[data-context-menu-command="addToProject"]')).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.getByTestId('app-context-menu')).toHaveCount(0)
 
-  const searchInput = page.locator('input[placeholder*="Search"], input[placeholder*="搜索素材"]')
+  const searchInput = page.getByTestId('file-tree-search-input')
   await searchInput.fill('sample')
   await searchInput.click({ button: 'right' })
   await expect(page.locator('[data-context-menu-command="selectAll"]')).toBeVisible()

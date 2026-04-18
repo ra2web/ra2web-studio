@@ -1,16 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 // 2D frame sampling view (no WebGL)
-import { MixParser, MixFileInfo } from '../../services/MixParser'
+import { MixFileInfo } from '../../services/MixParser'
 import { VxlFile } from '../../data/VxlFile'
 import type { Section } from '../../data/vxl/Section'
 import { PaletteParser } from '../../services/palette/PaletteParser'
 import { PaletteResolver } from '../../services/palette/PaletteResolver'
 import { loadPaletteByPath } from '../../services/palette/PaletteLoader'
+import { VirtualFile } from '../../data/vfs/VirtualFile'
 import SearchableSelect from '../common/SearchableSelect'
 import { usePaletteHotkeys } from './usePaletteHotkeys'
 import type { PaletteSelectionInfo, Rgb } from '../../services/palette/PaletteTypes'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { useLocale } from '../../i18n/LocaleContext'
+import type { PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
 type MixFileData = { file: File; info: MixFileInfo }
 
@@ -258,9 +261,15 @@ function applyDisplayScale(canvas: HTMLCanvasElement, targetWidth: number, targe
   canvas.style.imageRendering = 'pixelated'
 }
 
-const VxlViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resourceContext?: ResourceContext | null }> = ({
+const VxlViewer: React.FC<{
+  selectedFile?: string
+  mixFiles?: MixFileData[]
+  target?: PreviewTarget | null
+  resourceContext?: ResourceContext | null
+}> = ({
   selectedFile,
   mixFiles,
+  target,
   resourceContext,
 }) => {
   const { t } = useLocale()
@@ -277,6 +286,12 @@ const VxlViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
     reason: '未加载',
     resolvedPath: null,
   })
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
+  const assetPath = source.resolved?.displayPath ?? selectedFile ?? ''
 
   function render2DFrame(
     mount: HTMLDivElement,
@@ -364,11 +379,11 @@ const VxlViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
 
   // 重置帧索引为0，当切换文件时
   useEffect(() => {
-    if (selectedFile) {
-      console.log('[VxlViewer] selectedFile changed to:', selectedFile, 'frameIndex will be reset to 0')
+    if (assetPath) {
+      console.log('[VxlViewer] selected file changed to:', assetPath, 'frameIndex will be reset to 0')
       setFrameIndex(0)
     }
-  }, [selectedFile])
+  }, [assetPath])
 
   useEffect(() => {
     setFrameIndex(prev => normalizeFrameIndex(prev, XCC_FRAME_COUNT))
@@ -383,21 +398,16 @@ const VxlViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
       setLoading(true)
       setError(null)
       try {
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('Invalid path')
-        const mixName = selectedFile.substring(0, slash)
-        const inner = selectedFile.substring(slash + 1)
-        const mix = mixFiles.find(m => m.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-        const vf = await MixParser.extractFile(mix.file, inner)
-        if (!vf) throw new Error('File not found in MIX')
+        if (!source.resolved) throw new Error('File not found')
+        const bytes = await source.resolved.readBytes()
+        const vf = VirtualFile.fromBytes(bytes, source.resolved.name)
         const vxl = new VxlFile(vf)
         if (vxl.sections.length === 0) throw new Error('Failed to parse VXL')
         const hasEmbeddedPalette = vxl.embeddedPalette.length >= 48
         const decision = PaletteResolver.resolve({
-          assetPath: selectedFile,
+          assetPath,
           assetKind: 'vxl',
-          mixFiles,
+          mixFiles: mixFiles ?? [],
           resourceContext,
           manualPalettePath: palettePath || null,
           hasEmbeddedPalette,
@@ -408,7 +418,7 @@ const VxlViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
         let finalPalette: Rgb[] | null = null
 
         if (decision.resolvedPalettePath) {
-          const loaded = await loadPaletteByPath(decision.resolvedPalettePath, mixFiles)
+          const loaded = await loadPaletteByPath(decision.resolvedPalettePath, resourceContext ?? mixFiles ?? [])
           if (loaded) {
             finalPalette = loaded
           } else {
@@ -449,7 +459,7 @@ const VxlViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
     }
     load()
     return () => { disposed = true }
-  }, [selectedFile, mixFiles, palettePath, resourceContext, t])
+  }, [assetPath, mixFiles, palettePath, resourceContext, source.resolved, t])
 
   // 当帧或VXL数据改变时重新渲染
   useEffect(() => {
@@ -504,7 +514,7 @@ const VxlViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
             searchPlaceholder={t('viewer.searchPalette')}
             noResultsText={t('viewer.noMatchPalette')}
             triggerClassName="min-w-[160px] max-w-[240px] bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-xs text-left flex items-center gap-2"
-            menuClassName="absolute z-50 mt-1 w-[260px] max-w-[70vw] rounded border border-gray-700 bg-gray-800 shadow-xl"
+            menuClassName="z-50 w-[260px] max-w-[70vw] rounded border border-gray-700 bg-gray-800 shadow-xl"
           />
         </label>
         <span className="text-gray-500 truncate max-w-[300px]">
@@ -519,5 +529,3 @@ const VxlViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
 }
 
 export default VxlViewer
-
-

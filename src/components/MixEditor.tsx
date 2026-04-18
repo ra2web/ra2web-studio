@@ -2,6 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import Toolbar from './Toolbar'
 import FileTree from './FileTree'
+import ProjectExplorer from './ProjectExplorer'
+import MixExplorer from './MixExplorer'
+import GlobalSearchPanel from './GlobalSearchPanel'
 import PreviewPanel from './PreviewPanel'
 import PropertiesPanel from './PropertiesPanel'
 import ImportProgressPanel from './ImportProgressPanel'
@@ -11,9 +14,16 @@ import { VirtualFile } from '../data/vfs/VirtualFile'
 import { DataStream } from '../data/DataStream'
 import { MixFile as MixFileDataStream } from '../data/MixFile'
 import { GameResBootstrap } from '../services/gameRes/GameResBootstrap'
+import { GameResConfig } from '../services/gameRes/GameResConfig'
 import { FileSystemUtil } from '../services/gameRes/FileSystemUtil'
 import type { ResourceContext, ResourceLoadProgressEvent } from '../services/gameRes/ResourceContext'
-import { normalizeResourceFilename } from '../services/gameRes/patterns'
+import {
+  getResourcePathBasename,
+  getResourcePathExtension,
+  isMixLikeFile,
+  normalizeResourceFilename,
+  normalizeResourcePath,
+} from '../services/gameRes/patterns'
 import {
   MixArchiveBuilder,
   type MixArchiveBuilderEntry,
@@ -35,14 +45,25 @@ import {
   GAME_RES_IMPORT_STAGE_ORDER,
 } from '../services/gameRes/types'
 import type { GameResImportProgressEvent, GameResImportStepState } from '../services/gameRes/types'
-import type { PreviewEditorHandle } from './preview/types'
+import { resolvePreviewFile } from './preview/previewFileResolver'
+import type { PreviewEditorHandle, PreviewTarget } from './preview/types'
+import { ProjectService } from '../services/projects/ProjectService'
+import { GlobalSearchService } from '../services/search/GlobalSearchService'
+import type {
+  GlobalSearchResult,
+  ProjectFileEntry,
+  ProjectSelectionTarget,
+  ProjectSummary,
+  ProjectTreeNode,
+  StudioMode,
+} from '../types/studio'
 
 export interface MixFileData {
   file: File
   info: MixFileInfo
 }
 
-type BrowserMode = 'workspace' | 'repository'
+type WorkspaceStudioMode = Exclude<StudioMode, 'search'>
 type MixContainerNode = { name: string; info: MixFileInfo; fileObj: File | VirtualFile }
 type RestorableNavigationTarget = { stackNames: string[]; selectedLeafName?: string }
 type LayerLmdSummary = MixArchiveLmdSummary & { layerName: string }
@@ -79,6 +100,12 @@ function cloneBytes(bytes: Uint8Array): Uint8Array {
   return copy
 }
 
+function toOwnedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(buffer).set(bytes)
+  return buffer
+}
+
 function encodeAsciiString(text: string): Uint8Array {
   const stream = new DataStream(0)
   stream.writeString(text)
@@ -112,6 +139,15 @@ function focusEditableInput(input: HTMLInputElement | HTMLTextAreaElement): void
       // ignore browsers that do not support selection ranges for this input type
     }
   }
+}
+
+function findFirstProjectFilePath(nodes: ProjectTreeNode[]): string | null {
+  for (const node of nodes) {
+    if (node.kind === 'file') return node.path
+    const nested = findFirstProjectFilePath(node.children ?? [])
+    if (nested) return nested
+  }
+  return null
 }
 
 const NON_ERROR_STAGE_ORDER = GAME_RES_IMPORT_STAGE_ORDER.filter((stage) => stage !== 'error')
@@ -154,8 +190,14 @@ const MixEditor: React.FC = () => {
   const dialog = useAppDialog()
   const { t } = useLocale()
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
-  const [mixFiles, setMixFiles] = useState<MixFileData[]>([])
-  const [browserMode, setBrowserMode] = useState<BrowserMode>('workspace')
+  const [baseMixFiles, setBaseMixFiles] = useState<MixFileData[]>([])
+  const [projectMixFiles, setProjectMixFiles] = useState<MixFileData[]>([])
+  const [projectEntries, setProjectEntries] = useState<ProjectFileEntry[]>([])
+  const [projectTree, setProjectTree] = useState<ProjectTreeNode[]>([])
+  const [projectSelection, setProjectSelection] = useState<ProjectSelectionTarget | null>(null)
+  const [studioMode, setStudioMode] = useState<WorkspaceStudioMode>('projects')
+  const [projects, setProjects] = useState<ProjectSummary[]>([])
+  const [activeProjectName, setActiveProjectName] = useState<string | null>(null)
   const [activeTopMixName, setActiveTopMixName] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [progressMessage, setProgressMessage] = useState<string>('')
@@ -165,7 +207,8 @@ const MixEditor: React.FC = () => {
   )
   const [resourceReady, setResourceReady] = useState(false)
   const [missingRequiredFiles, setMissingRequiredFiles] = useState<string[]>([])
-  const [resourceContext, setResourceContext] = useState<ResourceContext | null>(null)
+  const [baseResourceContext, setBaseResourceContext] = useState<ResourceContext | null>(null)
+  const [projectResourceContext, setProjectResourceContext] = useState<ResourceContext | null>(null)
   const [metadataDrawerOpen, setMetadataDrawerOpen] = useState(false)
   // 导航栈：从顶层 MIX 到当前容器（可能是子 MIX）
   const [navStack, setNavStack] = useState<MixContainerNode[]>([])
@@ -179,11 +222,59 @@ const MixEditor: React.FC = () => {
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
   const [exportInitialTab, setExportInitialTab] = useState<ExportTab>('raw')
   const [contextMenuTarget, setContextMenuTarget] = useState<ContextMenuTarget | null>(null)
+  const [searchIndex, setSearchIndex] = useState<GlobalSearchResult[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchViewOpen, setSearchViewOpen] = useState(false)
+  const [searchLoading, setSearchLoading] = useState(false)
   const previewEditorRef = useRef<PreviewEditorHandle | null>(null)
+  const didBootstrapRef = useRef(false)
   const isMacLikePlatform = useMemo(() => {
     if (typeof navigator === 'undefined') return false
     return /Mac|iPhone|iPad|iPod/i.test(navigator.platform)
   }, [])
+
+  const mixFiles = useMemo(() => {
+    if (studioMode === 'base') return baseMixFiles
+    return projectMixFiles
+  }, [baseMixFiles, projectMixFiles, studioMode])
+
+  const projectEntryMap = useMemo(() => {
+    const next = new Map<string, ProjectFileEntry>()
+    for (const entry of projectEntries) {
+      next.set(normalizeResourcePath(entry.relativePath), entry)
+    }
+    return next
+  }, [projectEntries])
+
+  const resourceContext = useMemo(() => {
+    if (studioMode === 'projects') return projectResourceContext ?? baseResourceContext
+    return baseResourceContext
+  }, [baseResourceContext, projectResourceContext, studioMode])
+
+  const currentPreviewTarget = useMemo<PreviewTarget | null>(() => {
+    if (studioMode === 'projects') {
+      if (!projectSelection) return null
+      if (projectSelection.kind === 'project-directory') return null
+      return projectSelection
+    }
+    if (!selectedFile || !navStack.length) return null
+    const topLevelOwner = navStack[0]?.name
+    const entryName = selectedFile.split('/').pop() ?? ''
+    if (!topLevelOwner || !entryName) return null
+    return {
+      kind: 'base-mix-entry',
+      displayPath: selectedFile,
+      topLevelOwner,
+      containerChain: navStack.slice(1).map((node) => node.name),
+      entryName,
+      extension: selectedFile.split('.').pop()?.toLowerCase() ?? '',
+    }
+  }, [navStack, projectSelection, selectedFile, studioMode])
+
+  const filteredSearchResults = useMemo(
+    () => GlobalSearchService.filterIndex(searchIndex, searchQuery),
+    [searchIndex, searchQuery],
+  )
 
   const initializeSelection = useCallback((nextMixFiles: MixFileData[]) => {
     if (!nextMixFiles.length) {
@@ -201,6 +292,59 @@ const MixEditor: React.FC = () => {
     } else {
       setSelectedFile(null)
     }
+  }, [])
+
+  const buildProjectFileSelection = useCallback((projectName: string, relativePath: string): ProjectSelectionTarget | null => {
+    const normalizedPath = normalizeResourcePath(relativePath)
+    const entry = projectEntryMap.get(normalizedPath)
+    if (!entry || entry.kind !== 'file') return null
+    return {
+      kind: 'project-file',
+      projectName,
+      relativePath: normalizedPath,
+      displayPath: normalizedPath,
+      extension: entry.extension ?? getResourcePathExtension(normalizedPath),
+      isMixFile: isMixLikeFile(normalizedPath),
+    }
+  }, [projectEntryMap])
+
+  const selectProjectFile = useCallback((projectName: string, relativePath: string) => {
+    const nextSelection = buildProjectFileSelection(projectName, relativePath)
+    if (!nextSelection) return false
+    setProjectSelection(nextSelection)
+    setSelectedFile(nextSelection.displayPath)
+    return true
+  }, [buildProjectFileSelection])
+
+  const selectProjectDirectory = useCallback((projectName: string, relativePath: string) => {
+    const normalizedPath = normalizeResourcePath(relativePath)
+    setProjectSelection({
+      kind: 'project-directory',
+      projectName,
+      relativePath: normalizedPath,
+      displayPath: normalizedPath,
+    })
+    setSelectedFile(null)
+  }, [])
+
+  const selectProjectMixEntry = useCallback((args: {
+    projectName: string
+    owningMixPath: string
+    containerChain: string[]
+    entryName: string
+    extension?: string
+  }) => {
+    const displayPath = [args.owningMixPath, ...args.containerChain, args.entryName].join('/')
+    setProjectSelection({
+      kind: 'mix-entry',
+      projectName: args.projectName,
+      owningMixPath: args.owningMixPath,
+      displayPath,
+      containerChain: args.containerChain,
+      entryName: args.entryName,
+      extension: args.extension ?? getResourcePathExtension(args.entryName),
+    })
+    setSelectedFile(displayPath)
   }, [])
 
   const resetImportProgress = useCallback((message?: string) => {
@@ -316,26 +460,20 @@ const MixEditor: React.FC = () => {
   )
 
   const selectedFileExtension = useMemo(() => {
-    return selectedFile?.split('.').pop()?.toLowerCase() ?? ''
-  }, [selectedFile])
+    return currentPreviewTarget?.extension ?? selectedFile?.split('.').pop()?.toLowerCase() ?? ''
+  }, [currentPreviewTarget, selectedFile])
 
-  const isPktSelected = selectedFileExtension === 'pkt'
+  const isPktSelected = ['ini', 'pkt', 'txt'].includes(selectedFileExtension)
   const hasUnsavedPktChanges = useMemo(() => {
     if (!pktEditSession) return false
     return pktEditSession.draftContent !== pktEditSession.originalContent
   }, [pktEditSession])
 
-  const loadTextEntryContent = useCallback(async (filePath: string): Promise<string> => {
-    const slash = filePath.indexOf('/')
-    if (slash <= 0) throw new Error('Invalid path')
-    const mixName = filePath.substring(0, slash)
-    const inner = filePath.substring(slash + 1)
-    const mix = mixFiles.find((item) => item.info.name === mixName)
-    if (!mix) throw new Error('MIX not found')
-    const vf = await MixParser.extractFile(mix.file, inner)
-    if (!vf) throw new Error('File not found in MIX')
-    return vf.readAsString()
-  }, [mixFiles])
+  const loadTextEntryContent = useCallback(async (): Promise<string> => {
+    if (!currentPreviewTarget) throw new Error('No file selected')
+    const resolved = await resolvePreviewFile(currentPreviewTarget)
+    return resolved.readText()
+  }, [currentPreviewTarget])
 
   const discardPktEdits = useCallback(() => {
     setPktEditSession((prev) => {
@@ -404,9 +542,15 @@ const MixEditor: React.FC = () => {
     [openContainerEntry],
   )
 
-  const reloadResourceContext = useCallback(async (
+  const reloadStudioData = useCallback(async (
     restoreTarget?: RestorableNavigationTarget,
-    options?: { startup?: boolean; skipUnsavedGuard?: boolean },
+    options?: {
+      startup?: boolean
+      skipUnsavedGuard?: boolean
+      studioMode?: WorkspaceStudioMode
+      activeProjectName?: string | null
+      projectSelectionPath?: string | null
+    },
   ) => {
     const isStartup = options?.startup === true
     if (!isStartup && !options?.skipUnsavedGuard) {
@@ -422,58 +566,182 @@ const MixEditor: React.FC = () => {
     }
     setLoading(true)
     setProgressMessage(t('mixEditor.readingResources'))
+    setSearchLoading(true)
     try {
       const config = GameResBootstrap.loadConfig()
-      const ctx = await GameResBootstrap.loadContext(
-        config.activeModName,
+      const nextProjects = await ProjectService.listProjects()
+      let nextActiveProjectName = options?.activeProjectName ?? config.activeProjectName ?? activeProjectName
+      if (
+        nextActiveProjectName
+        && !nextProjects.some((project) => sameMixEntryName(project.name, nextActiveProjectName as string))
+      ) {
+        nextActiveProjectName = null
+      }
+      if (!nextActiveProjectName && nextProjects.length > 0) {
+        nextActiveProjectName = nextProjects[0].name
+      }
+
+      if (config.activeProjectName !== nextActiveProjectName) {
+        GameResConfig.save({
+          activeProjectName: nextActiveProjectName,
+          lastImportAt: config.lastImportAt,
+        })
+      }
+
+      const nextStudioMode = options?.studioMode ?? studioMode
+      const nextBaseContext = await GameResBootstrap.loadContext(
+        null,
         isStartup ? handleStartupResourceProgress : undefined,
       )
-      setResourceContext(ctx)
-      setResourceReady(ctx.readiness.ready)
-      setMissingRequiredFiles(ctx.readiness.missingRequiredFiles)
-      const nextMixFiles = ctx.toMixFileData()
-      setMixFiles(nextMixFiles)
-      if (ctx.readiness.ready) {
-        const restored = await restoreNavigation(nextMixFiles, restoreTarget)
-        if (!restored) {
-          initializeSelection(nextMixFiles)
-        }
-      } else {
+      const nextProjectContext = nextActiveProjectName
+        ? await GameResBootstrap.loadContext(nextActiveProjectName)
+        : null
+      const nextBaseMixFiles = nextBaseContext.toMixFileData()
+      const nextProjectEntries = nextActiveProjectName
+        ? await ProjectService.listProjectEntries(nextActiveProjectName)
+        : []
+      const nextProjectTree = nextActiveProjectName
+        ? await ProjectService.listProjectTree(nextActiveProjectName)
+        : []
+      const nextProjectMixFiles = nextActiveProjectName
+        ? await ProjectService.listProjectMixFiles(nextActiveProjectName)
+        : []
+      const nextVisibleMixFiles = nextStudioMode === 'base'
+        ? nextBaseMixFiles
+        : nextProjectMixFiles
+      const nextSearchIndex = await GlobalSearchService.buildIndex()
+
+      setProjects(nextProjects)
+      setActiveProjectName(nextActiveProjectName)
+      setBaseResourceContext(nextBaseContext)
+      setProjectResourceContext(nextProjectContext)
+      setBaseMixFiles(nextBaseMixFiles)
+      setProjectEntries(nextProjectEntries)
+      setProjectTree(nextProjectTree)
+      setProjectMixFiles(nextProjectMixFiles)
+      setStudioMode(nextStudioMode)
+      setSearchIndex(nextSearchIndex)
+      setResourceReady(nextBaseContext.readiness.ready)
+      setMissingRequiredFiles(nextBaseContext.readiness.missingRequiredFiles)
+
+      if (!nextBaseContext.readiness.ready) {
         setActiveTopMixName(null)
         setNavStack([])
         setSelectedFile(null)
+        setProjectSelection(null)
         setMetadataDrawerOpen(false)
+      } else {
+        if (nextStudioMode === 'projects') {
+          const requestedProjectPath = options?.projectSelectionPath
+            ? normalizeResourcePath(options.projectSelectionPath)
+            : null
+          const requestedEntry = requestedProjectPath
+            ? nextProjectEntries.find((entry) => entry.relativePath === requestedProjectPath)
+            : null
+          const restored = restoreTarget
+            ? await restoreNavigation(nextProjectMixFiles, restoreTarget)
+            : false
+
+          if (requestedEntry) {
+            if (requestedEntry.kind === 'directory') {
+              setProjectSelection({
+                kind: 'project-directory',
+                projectName: nextActiveProjectName as string,
+                relativePath: requestedEntry.relativePath,
+                displayPath: requestedEntry.relativePath,
+              })
+              setSelectedFile(null)
+            } else {
+              setProjectSelection({
+                kind: 'project-file',
+                projectName: nextActiveProjectName as string,
+                relativePath: requestedEntry.relativePath,
+                displayPath: requestedEntry.relativePath,
+                extension: requestedEntry.extension ?? getResourcePathExtension(requestedEntry.relativePath),
+                isMixFile: isMixLikeFile(requestedEntry.relativePath),
+              })
+              setSelectedFile(requestedEntry.relativePath)
+            }
+          } else if (!restored) {
+            const firstFilePath = findFirstProjectFilePath(nextProjectTree)
+            const firstFileEntry = firstFilePath
+              ? nextProjectEntries.find((entry) => entry.relativePath === firstFilePath)
+              : null
+            if (firstFileEntry && nextActiveProjectName) {
+              setProjectSelection({
+                kind: 'project-file',
+                projectName: nextActiveProjectName,
+                relativePath: firstFileEntry.relativePath,
+                displayPath: firstFileEntry.relativePath,
+                extension: firstFileEntry.extension ?? getResourcePathExtension(firstFileEntry.relativePath),
+                isMixFile: isMixLikeFile(firstFileEntry.relativePath),
+              })
+              setSelectedFile(firstFileEntry.relativePath)
+            } else {
+              setProjectSelection(null)
+              setSelectedFile(null)
+            }
+            setActiveTopMixName(null)
+            setNavStack([])
+          }
+        } else {
+          setProjectSelection(null)
+          const restored = await restoreNavigation(nextVisibleMixFiles, restoreTarget)
+          if (!restored) {
+            initializeSelection(nextVisibleMixFiles)
+          }
+        }
       }
       setProgressMessage('')
     } catch (error) {
-      console.error('Failed to load resource context:', error)
+      console.error('Failed to load studio data:', error)
       setProgressMessage(t('mixEditor.readResourcesFailed'))
+      setProjects([])
+      setActiveProjectName(null)
+      setBaseResourceContext(null)
+      setProjectResourceContext(null)
+      setBaseMixFiles([])
+      setProjectEntries([])
+      setProjectTree([])
+      setProjectMixFiles([])
+      setSearchIndex([])
       setResourceReady(false)
       setMissingRequiredFiles(['ra2.mix', 'language.mix', 'multi.mix'])
-      setMixFiles([])
       setActiveTopMixName(null)
       setNavStack([])
       setSelectedFile(null)
+      setProjectSelection(null)
       setMetadataDrawerOpen(false)
     } finally {
       setLoading(false)
+      setSearchLoading(false)
       if (isStartup) setInitialBooting(false)
     }
-  }, [confirmDiscardPktEdits, initializeSelection, restoreNavigation, t, handleStartupResourceProgress])
+  }, [
+    activeProjectName,
+    confirmDiscardPktEdits,
+    handleStartupResourceProgress,
+    initializeSelection,
+    restoreNavigation,
+    studioMode,
+    t,
+  ])
 
   useEffect(() => {
-    void reloadResourceContext(undefined, { startup: true, skipUnsavedGuard: true })
-  }, [])
+    if (didBootstrapRef.current) return
+    didBootstrapRef.current = true
+    void reloadStudioData(undefined, { startup: true, skipUnsavedGuard: true })
+  }, [reloadStudioData])
 
   useEffect(() => {
     let cancelled = false
-    if (!selectedFile || !isPktSelected) {
+    if (!currentPreviewTarget || !isPktSelected) {
       setPktEditSession(null)
       return
     }
 
     setPktEditSession({
-      filePath: selectedFile,
+      filePath: currentPreviewTarget.displayPath,
       originalContent: '',
       draftContent: '',
       loading: true,
@@ -482,10 +750,10 @@ const MixEditor: React.FC = () => {
 
     void (async () => {
       try {
-        const content = await loadTextEntryContent(selectedFile)
+        const content = await loadTextEntryContent()
         if (cancelled) return
         setPktEditSession({
-          filePath: selectedFile,
+          filePath: currentPreviewTarget.displayPath,
           originalContent: content,
           draftContent: content,
           loading: false,
@@ -494,7 +762,7 @@ const MixEditor: React.FC = () => {
       } catch (error: any) {
         if (cancelled) return
         setPktEditSession({
-          filePath: selectedFile,
+          filePath: currentPreviewTarget.displayPath,
           originalContent: '',
           draftContent: '',
           loading: false,
@@ -506,7 +774,35 @@ const MixEditor: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [isPktSelected, loadTextEntryContent, selectedFile, t])
+  }, [currentPreviewTarget, isPktSelected, loadTextEntryContent, t])
+
+  useEffect(() => {
+    if (studioMode !== 'projects' || !activeProjectName || !navStack.length || !selectedFile) return
+    const owningMixPath = navStack[0]?.name
+    if (!owningMixPath || !selectedFile.startsWith(`${owningMixPath}/`)) return
+    const containerChain = navStack.slice(1).map((node) => node.name)
+    const entryName = selectedFile.slice(`${owningMixPath}/`.length).split('/').pop() ?? ''
+    if (!entryName) return
+    setProjectSelection((prev) => {
+      if (
+        prev?.kind === 'mix-entry'
+        && prev.projectName === activeProjectName
+        && prev.owningMixPath === owningMixPath
+        && prev.displayPath === selectedFile
+      ) {
+        return prev
+      }
+      return {
+        kind: 'mix-entry',
+        projectName: activeProjectName,
+        owningMixPath,
+        displayPath: selectedFile,
+        containerChain,
+        entryName,
+        extension: getResourcePathExtension(entryName),
+      }
+    })
+  }, [activeProjectName, navStack, selectedFile, studioMode])
 
   const runWithPktDiscardGuard = useCallback(async (action: () => Promise<void> | void) => {
     const allowed = await confirmDiscardPktEdits()
@@ -552,7 +848,7 @@ const MixEditor: React.FC = () => {
       if (result.errors.length > 0) {
         await dialog.info(t('mixEditor.baseDirImportError', { errors: result.errors.slice(0, 8).join('\n') }))
       }
-      await reloadResourceContext()
+      await reloadStudioData(undefined, { skipUnsavedGuard: true, studioMode: 'base' })
     } catch (e: any) {
       if (e?.name === 'AbortError') return
       handleImportProgressEvent({
@@ -566,7 +862,7 @@ const MixEditor: React.FC = () => {
       setLoading(false)
       setProgressMessage('')
     }
-  }, [confirmDiscardPktEdits, reloadResourceContext, handleImportProgressEvent, resetImportProgress, dialog, t])
+  }, [confirmDiscardPktEdits, reloadStudioData, handleImportProgressEvent, resetImportProgress, dialog, t])
 
   const handleReimportBaseArchives = useCallback(async (files: File[]) => {
     if (!files.length) return
@@ -583,7 +879,7 @@ const MixEditor: React.FC = () => {
       if (result.errors.length > 0) {
         await dialog.info(t('mixEditor.baseArchiveImportError', { errors: result.errors.slice(0, 8).join('\n') }))
       }
-      await reloadResourceContext()
+      await reloadStudioData(undefined, { skipUnsavedGuard: true, studioMode: 'base' })
     } catch (e: any) {
       handleImportProgressEvent({
         stage: 'error',
@@ -596,58 +892,7 @@ const MixEditor: React.FC = () => {
       setLoading(false)
       setProgressMessage('')
     }
-  }, [confirmDiscardPktEdits, reloadResourceContext, handleImportProgressEvent, resetImportProgress, dialog, t])
-
-  const handleImportPatchMixes = useCallback(async (files: File[]) => {
-    if (!files.length) return
-    const allowed = await confirmDiscardPktEdits()
-    if (!allowed) return
-    setLoading(true)
-    resetImportProgress(t('importProgress.prepareImportPatch'))
-    try {
-      const result = await GameResBootstrap.importPatchFiles(
-        files,
-        setProgressMessage,
-        handleImportProgressEvent,
-      )
-      if (result.errors.length > 0) {
-        await dialog.info(t('mixEditor.patchImportError', { errors: result.errors.slice(0, 8).join('\n') }))
-      }
-      await reloadResourceContext()
-    } catch (e: any) {
-      handleImportProgressEvent({
-        stage: 'error',
-        stageLabel: t('importProgress.importFailed'),
-        message: e?.message || t('mixEditor.importPatchFailed'),
-        errorMessage: e?.message || t('mixEditor.importPatchFailed'),
-      })
-      await dialog.info(e?.message || t('mixEditor.importPatchFailed'))
-    } finally {
-      setLoading(false)
-      setProgressMessage('')
-    }
-  }, [confirmDiscardPktEdits, reloadResourceContext, handleImportProgressEvent, resetImportProgress, dialog, t])
-
-  const handleClearNonBaseResources = useCallback(async () => {
-    const allowed = await confirmDiscardPktEdits()
-    if (!allowed) return
-    const confirmed = await dialog.confirmDanger({
-      title: t('mixEditor.confirmClearPatches'),
-      message: t('mixEditor.confirmClearPatchesMsg'),
-      confirmText: t('mixEditor.confirmClear'),
-    })
-    if (!confirmed) return
-    setLoading(true)
-    try {
-      await GameResBootstrap.clearNonBaseResources(resourceContext?.activeModName ?? null)
-      await reloadResourceContext()
-    } catch (e: any) {
-      await dialog.info(e?.message || t('mixEditor.clearPatchesFailed'))
-    } finally {
-      setLoading(false)
-      setProgressMessage('')
-    }
-  }, [confirmDiscardPktEdits, resourceContext, reloadResourceContext, dialog, t])
+  }, [confirmDiscardPktEdits, reloadStudioData, handleImportProgressEvent, resetImportProgress, dialog, t])
 
   const setWorkspaceMix = useCallback((mixName: string, selectFirstFile: boolean) => {
     const mix = mixFiles.find((m) => m.info.name === mixName)
@@ -663,21 +908,86 @@ const MixEditor: React.FC = () => {
     }
   }, [mixFiles])
 
+  const openProjectMixExplorer = useCallback(async (
+    mixPath: string,
+    options?: { selectFirstEntry?: boolean },
+  ) => {
+    if (!activeProjectName) return false
+    const mixFile = await ProjectService.readProjectFile(activeProjectName, mixPath)
+    const mixInfo = await MixParser.parseFile(mixFile)
+    flushSync(() => {
+      setActiveTopMixName(mixPath)
+      setNavStack([{ name: mixPath, info: { ...mixInfo, name: mixPath }, fileObj: mixFile }])
+      if (options?.selectFirstEntry && mixInfo.files.length > 0) {
+        selectProjectMixEntry({
+          projectName: activeProjectName,
+          owningMixPath: mixPath,
+          containerChain: [],
+          entryName: mixInfo.files[0].filename,
+          extension: mixInfo.files[0].extension.toLowerCase(),
+        })
+      }
+    })
+    return true
+  }, [activeProjectName, selectProjectMixEntry])
+
   const selectFileWithGuard = useCallback(async (filePath: string): Promise<boolean> => {
     if (filePath === selectedFile) return true
     const allowed = await runWithPktDiscardGuard(() => {
+      if (studioMode === 'projects' && activeProjectName) {
+        const normalizedPath = normalizeResourcePath(filePath)
+        const projectEntry = projectEntryMap.get(normalizedPath)
+        if (projectEntry?.kind === 'directory') {
+          flushSync(() => {
+            selectProjectDirectory(activeProjectName, projectEntry.relativePath)
+          })
+          return
+        }
+        if (projectEntry?.kind === 'file') {
+          flushSync(() => {
+            selectProjectFile(activeProjectName, projectEntry.relativePath)
+          })
+          return
+        }
+        const owningMixPath = navStack[0]?.name
+        if (owningMixPath && filePath.startsWith(`${owningMixPath}/`)) {
+          const entryName = filePath.slice(`${owningMixPath}/`.length).split('/').pop() ?? ''
+          flushSync(() => {
+            selectProjectMixEntry({
+              projectName: activeProjectName,
+              owningMixPath,
+              containerChain: navStack.slice(1).map((node) => node.name),
+              entryName,
+              extension: getResourcePathExtension(entryName),
+            })
+          })
+        }
+        return
+      }
       flushSync(() => {
         setSelectedFile(filePath)
         const slash = filePath.indexOf('/')
         if (slash <= 0) return
         const mixName = filePath.substring(0, slash)
-        if (browserMode === 'repository' && mixName !== activeTopMixName) {
+        if (mixName !== activeTopMixName) {
           setWorkspaceMix(mixName, false)
         }
       })
     })
     return allowed !== false
-  }, [activeTopMixName, browserMode, runWithPktDiscardGuard, selectedFile, setWorkspaceMix])
+  }, [
+    activeProjectName,
+    activeTopMixName,
+    navStack,
+    projectEntryMap,
+    runWithPktDiscardGuard,
+    selectProjectDirectory,
+    selectProjectFile,
+    selectProjectMixEntry,
+    selectedFile,
+    setWorkspaceMix,
+    studioMode,
+  ])
 
   const setActiveMixWithGuard = useCallback(async (
     mixName: string,
@@ -692,16 +1002,6 @@ const MixEditor: React.FC = () => {
     return allowed !== false
   }, [activeTopMixName, runWithPktDiscardGuard, setWorkspaceMix])
 
-  const switchBrowserModeWithGuard = useCallback(async (mode: BrowserMode): Promise<boolean> => {
-    if (mode === browserMode) return true
-    const allowed = await runWithPktDiscardGuard(() => {
-      flushSync(() => {
-        setBrowserMode(mode)
-      })
-    })
-    return allowed !== false
-  }, [browserMode, runWithPktDiscardGuard])
-
   const openBaseArchivePicker = useCallback(() => {
     openFilePicker(
       {
@@ -714,17 +1014,147 @@ const MixEditor: React.FC = () => {
     )
   }, [handleReimportBaseArchives, openFilePicker])
 
-  const openPatchPicker = useCallback(() => {
+  const handleImportProjectArchives = useCallback(async (files: File[]) => {
+    if (!files.length || !activeProjectName) return
+    const allowed = await confirmDiscardPktEdits()
+    if (!allowed) return
+    setLoading(true)
+    resetImportProgress(t('mixEditor.importingProjectFiles'))
+    try {
+      const result = await GameResBootstrap.importProjectFiles(
+        files,
+        activeProjectName,
+        setProgressMessage,
+        handleImportProgressEvent,
+      )
+      if (result.errors.length > 0) {
+        await dialog.info(t('mixEditor.projectImportError', { errors: result.errors.slice(0, 8).join('\n') }))
+      }
+      await reloadStudioData(undefined, {
+        skipUnsavedGuard: true,
+        studioMode: 'projects',
+        activeProjectName,
+      })
+    } catch (e: any) {
+      handleImportProgressEvent({
+        stage: 'error',
+        stageLabel: t('importProgress.importFailed'),
+        message: e?.message || t('mixEditor.importProjectFailed'),
+        errorMessage: e?.message || t('mixEditor.importProjectFailed'),
+      })
+      await dialog.info(e?.message || t('mixEditor.importProjectFailed'))
+    } finally {
+      setLoading(false)
+      setProgressMessage('')
+    }
+  }, [
+    activeProjectName,
+    confirmDiscardPktEdits,
+    dialog,
+    handleImportProgressEvent,
+    reloadStudioData,
+    resetImportProgress,
+    t,
+  ])
+
+  const openProjectArchivePicker = useCallback(() => {
     openFilePicker(
       {
-        accept: '.mix,.mmx,.yro',
+        accept: '.zip,.7z,.exe,.tgz,.tar.gz,.mix,.mmx,.yro,.ini,.txt,.pkt,.csf,.pcx,.shp,.vxl,.hva,.wav,.bik,.map,.mpr',
         multiple: true,
       },
       (files) => {
-        void handleImportPatchMixes(files)
+        void handleImportProjectArchives(files)
       },
     )
-  }, [handleImportPatchMixes, openFilePicker])
+  }, [handleImportProjectArchives, openFilePicker])
+
+  const ensureWritableProject = useCallback(async (): Promise<string | null> => {
+    if (activeProjectName) return activeProjectName
+    if (typeof window === 'undefined') return null
+    const proposedName = window.prompt(t('mixEditor.createProjectPrompt'), t('mixEditor.defaultProjectName'))
+    if (proposedName == null) return null
+    const createdName = await ProjectService.createProject(proposedName)
+    const config = GameResConfig.load()
+    GameResConfig.save({
+      activeProjectName: createdName,
+      lastImportAt: config.lastImportAt,
+    })
+    return createdName
+  }, [activeProjectName, t])
+
+  const handleCreateProject = useCallback(async () => {
+    if (typeof window === 'undefined') return
+    const proposedName = window.prompt(t('mixEditor.createProjectPrompt'), t('mixEditor.defaultProjectName'))
+    if (proposedName == null) return
+    try {
+      const createdName = await ProjectService.createProject(proposedName)
+      await reloadStudioData(undefined, {
+        skipUnsavedGuard: true,
+        studioMode: 'projects',
+        activeProjectName: createdName,
+      })
+    } catch (error: any) {
+      await dialog.info(error?.message || t('mixEditor.createProjectFailed'))
+    }
+  }, [dialog, reloadStudioData, t])
+
+  const handleRenameProject = useCallback(async () => {
+    if (!activeProjectName || typeof window === 'undefined') return
+    const proposedName = window.prompt(t('mixEditor.renameProjectPrompt', { name: activeProjectName }), activeProjectName)
+    if (proposedName == null) return
+    try {
+      const renamedProject = await ProjectService.renameProject(activeProjectName, proposedName)
+      await reloadStudioData(undefined, {
+        skipUnsavedGuard: true,
+        studioMode: 'projects',
+        activeProjectName: renamedProject,
+      })
+    } catch (error: any) {
+      await dialog.info(error?.message || t('mixEditor.renameProjectFailed'))
+    }
+  }, [activeProjectName, dialog, reloadStudioData, t])
+
+  const handleDeleteProject = useCallback(async () => {
+    if (!activeProjectName) return
+    const confirmed = await dialog.confirmDanger({
+      title: t('mixEditor.confirmDeleteProject'),
+      message: t('mixEditor.confirmDeleteProjectMsg', { name: activeProjectName }),
+      confirmText: t('common.confirm'),
+    })
+    if (!confirmed) return
+    try {
+      await ProjectService.deleteProject(activeProjectName)
+      const remainingProjects = projects.filter((project) => !sameMixEntryName(project.name, activeProjectName))
+      const nextProjectName = remainingProjects[0]?.name ?? null
+      await reloadStudioData(undefined, {
+        skipUnsavedGuard: true,
+        studioMode: nextProjectName ? 'projects' : 'base',
+        activeProjectName: nextProjectName,
+      })
+    } catch (error: any) {
+      await dialog.info(error?.message || t('mixEditor.deleteProjectFailed'))
+    }
+  }, [activeProjectName, dialog, projects, reloadStudioData, t])
+
+  const handleActiveProjectChange = useCallback((projectName: string) => {
+    void runWithPktDiscardGuard(async () => {
+      await reloadStudioData(undefined, {
+        skipUnsavedGuard: true,
+        studioMode: 'projects',
+        activeProjectName: projectName,
+      })
+    })
+  }, [reloadStudioData, runWithPktDiscardGuard])
+
+  const handleExportProjectZip = useCallback(async () => {
+    if (!activeProjectName) return
+    try {
+      await ProjectService.downloadProjectZip(activeProjectName)
+    } catch (error: any) {
+      await dialog.info(error?.message || t('mixEditor.exportProjectZipFailed'))
+    }
+  }, [activeProjectName, dialog, t])
 
   const handleFileSelect = useCallback((filePath: string) => {
     void selectFileWithGuard(filePath)
@@ -738,34 +1168,54 @@ const MixEditor: React.FC = () => {
     setMetadataDrawerOpen(false)
   }, [])
 
-  const handleBrowserModeChange = useCallback((mode: BrowserMode) => {
-    void switchBrowserModeWithGuard(mode)
-  }, [switchBrowserModeWithGuard])
+  const handleStudioModeChange = useCallback((mode: StudioMode) => {
+    if (mode === 'search') {
+      setSearchViewOpen(true)
+      return
+    }
+    void runWithPktDiscardGuard(() => {
+      flushSync(() => {
+        setStudioMode(mode)
+        setSearchViewOpen(false)
+      })
+      if (mode === 'base') {
+        initializeSelection(baseMixFiles)
+        return
+      }
+      setNavStack([])
+      setActiveTopMixName(null)
+      if (activeProjectName) {
+        const firstProjectFile = findFirstProjectFilePath(projectTree)
+        if (firstProjectFile) {
+          selectProjectFile(activeProjectName, firstProjectFile)
+        } else {
+          setProjectSelection(null)
+          setSelectedFile(null)
+        }
+      }
+    })
+  }, [activeProjectName, baseMixFiles, initializeSelection, projectTree, runWithPktDiscardGuard, selectProjectFile])
+
+  const handleSearchActivate = useCallback(() => {
+    setSearchViewOpen(true)
+  }, [])
+
+  const handleSearchQueryChange = useCallback((value: string) => {
+    setSearchQuery(value)
+    setSearchViewOpen(true)
+  }, [])
+
+  const handleSearchClear = useCallback(() => {
+    setSearchQuery('')
+    setSearchViewOpen(false)
+  }, [])
 
   const handleActiveMixChange = useCallback((mixName: string) => {
     void setActiveMixWithGuard(mixName, true)
   }, [setActiveMixWithGuard])
 
-  const workspaceMixFiles = useMemo(() => {
-    if (!mixFiles.length) return []
-    if (!activeTopMixName) return [mixFiles[0]]
-    const active = mixFiles.find((m) => m.info.name === activeTopMixName)
-    return active ? [active] : [mixFiles[0]]
-  }, [mixFiles, activeTopMixName])
-
-  const mixSourceLabelByName = useMemo(() => {
-    const map: Record<string, string> = {}
-    if (!resourceContext) return map
-    for (const archive of resourceContext.archives) {
-      if (map[archive.info.name]) continue
-      if (archive.bucket === 'base') map[archive.info.name] = 'base'
-      else if (archive.bucket === 'patch') map[archive.info.name] = 'patch'
-      else map[archive.info.name] = archive.modName ? `mod:${archive.modName}` : 'mod'
-    }
-    return map
-  }, [resourceContext])
-
   useEffect(() => {
+    if (studioMode !== 'base') return
     if (!mixFiles.length) {
       setActiveTopMixName(null)
       return
@@ -773,7 +1223,7 @@ const MixEditor: React.FC = () => {
     if (!activeTopMixName || !mixFiles.some((m) => m.info.name === activeTopMixName)) {
       setActiveTopMixName(mixFiles[0].info.name)
     }
-  }, [mixFiles, activeTopMixName])
+  }, [mixFiles, activeTopMixName, studioMode])
 
   const currentContainer = navStack.length > 0 ? navStack[navStack.length - 1] : null
   const currentPrefix = useMemo(() => navStack.map(n => n.name).join('/'), [navStack])
@@ -814,15 +1264,29 @@ const MixEditor: React.FC = () => {
       // 自动选择子容器中的第一个文件
       if (childInfo.files.length > 0) {
         const newPrefix = newStack.map(n => n.name).join('/')
-        setSelectedFile(`${newPrefix}/${childInfo.files[0].filename}`)
+        if (studioMode === 'projects' && activeProjectName) {
+          selectProjectMixEntry({
+            projectName: activeProjectName,
+            owningMixPath: newStack[0].name,
+            containerChain: newStack.slice(1).map((node) => node.name),
+            entryName: childInfo.files[0].filename,
+            extension: childInfo.files[0].extension.toLowerCase(),
+          })
+        } else {
+          setSelectedFile(`${newPrefix}/${childInfo.files[0].filename}`)
+        }
       } else {
         const newPrefix = newStack.map(n => n.name).join('/')
-        setSelectedFile(`${newPrefix}/`)
+        if (studioMode === 'projects' && activeProjectName) {
+          selectProjectFile(activeProjectName, newStack[0].name)
+        } else {
+          setSelectedFile(`${newPrefix}/`)
+        }
       }
     } catch (e) {
       console.error('Drill down failed:', e)
     }
-  }, [confirmDiscardPktEdits, currentContainer, navStack])
+  }, [activeProjectName, confirmDiscardPktEdits, currentContainer, navStack, selectProjectFile, selectProjectMixEntry, studioMode])
 
   const handleBreadcrumbClick = useCallback((index: number) => {
     if (index < 0 || index >= navStack.length) return
@@ -832,12 +1296,26 @@ const MixEditor: React.FC = () => {
       const top = newStack[newStack.length - 1]
       if (top && top.info.files.length > 0) {
         const prefix = newStack.map(n => n.name).join('/')
-        setSelectedFile(`${prefix}/${top.info.files[0].filename}`)
+        if (studioMode === 'projects' && activeProjectName) {
+          selectProjectMixEntry({
+            projectName: activeProjectName,
+            owningMixPath: newStack[0].name,
+            containerChain: newStack.slice(1).map((node) => node.name),
+            entryName: top.info.files[0].filename,
+            extension: top.info.files[0].extension.toLowerCase(),
+          })
+        } else {
+          setSelectedFile(`${prefix}/${top.info.files[0].filename}`)
+        }
       } else {
-        setSelectedFile(null)
+        if (studioMode === 'projects' && activeProjectName) {
+          selectProjectFile(activeProjectName, newStack[0].name)
+        } else {
+          setSelectedFile(null)
+        }
       }
     })
-  }, [navStack, runWithPktDiscardGuard])
+  }, [activeProjectName, navStack, runWithPktDiscardGuard, selectProjectFile, selectProjectMixEntry, studioMode])
 
   const handleNavigateUp = useCallback(() => {
     if (navStack.length <= 1) return
@@ -851,15 +1329,78 @@ const MixEditor: React.FC = () => {
   }, [selectedFile])
 
   const canEnterCurrentMix = useMemo(() => {
+    if (studioMode === 'projects' && projectSelection?.kind === 'project-file') {
+      return projectSelection.isMixFile
+    }
     if (!selectedLeafName) return false
     const ext = selectedLeafName.split('.').pop()?.toLowerCase() || ''
     return ext === 'mix' || ext === 'mmx' || ext === 'yro'
-  }, [selectedLeafName])
+  }, [projectSelection, selectedLeafName, studioMode])
 
   const canEditSelectedEntry = useMemo(() => {
-    if (!currentContainer || !selectedLeafName) return false
-    return currentContainer.info.files.some((entry) => sameMixEntryName(entry.filename, selectedLeafName))
-  }, [currentContainer, selectedLeafName])
+    if (studioMode !== 'projects' || !projectSelection) return false
+    return projectSelection.kind === 'project-file' || projectSelection.kind === 'mix-entry'
+  }, [projectSelection, studioMode])
+
+  const canAddSelectionToProject = useMemo(() => {
+    if (studioMode === 'base' && navStack.length > 0) return true
+    return contextMenuTarget?.kind === 'search-result' && contextMenuTarget.searchScope === 'base'
+  }, [contextMenuTarget, navStack.length, studioMode])
+
+  const handleAddSelectionToProject = useCallback(async (
+    target?: {
+      topLevelOwner?: string
+      containerChain?: string[]
+      selectedLeafName?: string
+    },
+  ) => {
+    const projectName = await ensureWritableProject()
+    if (!projectName) return
+    const topLevelOwner = target?.topLevelOwner ?? navStack[0]?.name
+    if (!topLevelOwner) return
+    try {
+      const containerChain = target?.containerChain ?? []
+      const leafName = target?.selectedLeafName ?? selectedLeafName ?? ''
+      const shouldCopyLeaf = Boolean(leafName)
+        && (containerChain.length > 0 || !sameMixEntryName(leafName, topLevelOwner))
+
+      if (shouldCopyLeaf) {
+        const topFile = await FileSystemUtil.readImportedFile('base', topLevelOwner)
+        const nestedPath = [...containerChain, leafName].join('/')
+        const vf = await MixParser.extractFile(topFile, nestedPath)
+        if (!vf) {
+          throw new Error(t('mixEditor.selectedEntryNotFound'))
+        }
+        const leafFilename = normalizeResourceFilename(getResourcePathBasename(leafName))
+        if (!leafFilename) {
+          throw new Error(t('mixEditor.invalidFilename'))
+        }
+        await ProjectService.writeProjectFile(
+          projectName,
+          leafFilename,
+          new File([toOwnedArrayBuffer(cloneBytes(vf.getBytes()))], leafFilename, { type: 'application/octet-stream' }),
+        )
+        await reloadStudioData(undefined, {
+          skipUnsavedGuard: true,
+          studioMode: 'projects',
+          activeProjectName: projectName,
+          projectSelectionPath: leafFilename,
+        })
+        return
+      }
+
+      const targetPath = normalizeResourcePath(topLevelOwner)
+      await ProjectService.copyBaseFileToProject(projectName, topLevelOwner, targetPath)
+      await reloadStudioData(undefined, {
+        skipUnsavedGuard: true,
+        studioMode: 'projects',
+        activeProjectName: projectName,
+        projectSelectionPath: targetPath,
+      })
+    } catch (error: any) {
+      await dialog.info(error?.message || t('mixEditor.addToProjectFailed'))
+    }
+  }, [dialog, ensureWritableProject, navStack, reloadStudioData, selectedLeafName, t])
 
   const showInitialLoadingSplash = (
     !resourceReady
@@ -872,9 +1413,14 @@ const MixEditor: React.FC = () => {
     : 0
 
   const handleEnterCurrentMix = useCallback(() => {
-    if (!canEnterCurrentMix || !selectedLeafName) return
+    if (!canEnterCurrentMix) return
+    if (studioMode === 'projects' && projectSelection?.kind === 'project-file') {
+      void openProjectMixExplorer(projectSelection.relativePath, { selectFirstEntry: true })
+      return
+    }
+    if (!selectedLeafName) return
     void handleDrillDown(selectedLeafName)
-  }, [canEnterCurrentMix, selectedLeafName, handleDrillDown])
+  }, [canEnterCurrentMix, handleDrillDown, openProjectMixExplorer, projectSelection, selectedLeafName, studioMode])
 
   const readFileObjBytes = useCallback(async (fileObj: File | VirtualFile): Promise<Uint8Array> => {
     if (fileObj instanceof File) {
@@ -983,20 +1529,55 @@ const MixEditor: React.FC = () => {
     if (nextSelectedLeafName) {
       restoreTarget.selectedLeafName = nextSelectedLeafName
     }
-    await reloadResourceContext(restoreTarget, { skipUnsavedGuard: true })
+    await reloadStudioData(restoreTarget, {
+      skipUnsavedGuard: true,
+      studioMode,
+      activeProjectName,
+    })
 
     return {
       currentLmdSummary: currentLmd.summary,
       parentLmdSummaries: rebuiltTop.parentLmdSummaries,
     }
-  }, [navStack, rebuildTopMixBytesFromCurrent, reloadResourceContext, resolveTopArchiveSource])
+  }, [activeProjectName, navStack, rebuildTopMixBytesFromCurrent, reloadStudioData, resolveTopArchiveSource, studioMode])
 
   const handleSaveSelectedPktFile = useCallback(async () => {
-    if (!currentContainer || !selectedLeafName || !pktEditSession || pktEditSession.loading) return
+    if (!pktEditSession || pktEditSession.loading) return
     if (!hasUnsavedPktChanges) return
     setLoading(true)
     setProgressMessage(t('mixEditor.savingFile'))
     try {
+      if (studioMode === 'projects' && projectSelection?.kind === 'project-file' && activeProjectName) {
+        const fileName = getResourcePathBasename(projectSelection.relativePath)
+        await ProjectService.writeProjectFile(
+          activeProjectName,
+          projectSelection.relativePath,
+          new File([toOwnedArrayBuffer(encodeAsciiString(pktEditSession.draftContent))], fileName, {
+            type: 'text/plain',
+          }),
+        )
+        await reloadStudioData(undefined, {
+          skipUnsavedGuard: true,
+          studioMode: 'projects',
+          activeProjectName,
+          projectSelectionPath: projectSelection.relativePath,
+        })
+        setPktEditSession((prev) => {
+          if (!prev || prev.filePath !== pktEditSession.filePath) return prev
+          return {
+            ...prev,
+            originalContent: prev.draftContent,
+            error: null,
+          }
+        })
+        await dialog.info({
+          title: t('mixEditor.saveComplete'),
+          message: t('mixEditor.saveSummary', { name: fileName }),
+        })
+        return
+      }
+
+      if (!currentContainer || !selectedLeafName) return
       const currentEntries = await readContainerEntries(currentContainer)
       const selectedIndex = currentEntries.findIndex((entry) => sameMixEntryName(entry.filename, selectedLeafName))
       if (selectedIndex < 0) {
@@ -1036,14 +1617,18 @@ const MixEditor: React.FC = () => {
     }
   }, [
     buildLmdSummaryLines,
+    activeProjectName,
     currentContainer,
     dialog,
     hasUnsavedPktChanges,
     persistCurrentContainerEntries,
     pktEditSession,
+    projectSelection,
     readContainerEntries,
+    reloadStudioData,
     selectedFile,
     selectedLeafName,
+    studioMode,
     t,
   ])
 
@@ -1185,12 +1770,42 @@ const MixEditor: React.FC = () => {
   }, [handleImportFilesToCurrentMix, openFilePicker])
 
   const handleRenameSelectedFileInCurrentMix = useCallback(async () => {
-    if (!currentContainer || !selectedLeafName || typeof window === 'undefined') return
+    if (typeof window === 'undefined') return
     const allowed = await confirmDiscardPktEdits()
     if (!allowed) return
     setLoading(true)
     setProgressMessage(t('mixEditor.renamingFile'))
     try {
+      if (studioMode === 'projects' && projectSelection?.kind === 'project-file' && activeProjectName) {
+        const oldPath = projectSelection.relativePath
+        const oldName = getResourcePathBasename(oldPath)
+        const renameInput = window.prompt(t('mixEditor.renamePrompt', { name: oldName }), oldName)
+        if (renameInput == null) return
+        const trimmed = renameInput.trim()
+        if (!trimmed) {
+          await dialog.info(t('mixEditor.invalidFilename'))
+          return
+        }
+        const parentSlash = oldPath.lastIndexOf('/')
+        const parentDir = parentSlash >= 0 ? oldPath.slice(0, parentSlash) : ''
+        const targetPath = trimmed.includes('/')
+          ? normalizeResourcePath(trimmed)
+          : normalizeResourcePath(parentDir ? `${parentDir}/${trimmed}` : trimmed)
+        const nextPath = await ProjectService.renameProjectEntry(activeProjectName, oldPath, targetPath)
+        await reloadStudioData(undefined, {
+          skipUnsavedGuard: true,
+          studioMode: 'projects',
+          activeProjectName,
+          projectSelectionPath: nextPath,
+        })
+        await dialog.info({
+          title: t('mixEditor.renameComplete'),
+          message: t('mixEditor.renameSummary', { from: oldName, to: getResourcePathBasename(nextPath) }),
+        })
+        return
+      }
+
+      if (!currentContainer || !selectedLeafName) return
       const currentEntries = await readContainerEntries(currentContainer)
       let selectedIndex = currentEntries.findIndex((entry) => sameMixEntryName(entry.filename, selectedLeafName))
       if (selectedIndex < 0) {
@@ -1277,23 +1892,48 @@ const MixEditor: React.FC = () => {
       setProgressMessage('')
     }
   }, [
+    activeProjectName,
     confirmDiscardPktEdits,
     currentContainer,
-    selectedLeafName,
-    readContainerEntries,
-    persistCurrentContainerEntries,
     buildLmdSummaryLines,
     dialog,
+    persistCurrentContainerEntries,
+    projectSelection,
+    readContainerEntries,
+    reloadStudioData,
+    selectedLeafName,
+    studioMode,
     t,
   ])
 
   const handleDeleteSelectedFileInCurrentMix = useCallback(async () => {
-    if (!currentContainer || !selectedLeafName) return
     const allowed = await confirmDiscardPktEdits()
     if (!allowed) return
     setLoading(true)
     setProgressMessage(t('mixEditor.deletingFile'))
     try {
+      if (studioMode === 'projects' && projectSelection?.kind === 'project-file' && activeProjectName) {
+        const targetName = getResourcePathBasename(projectSelection.relativePath)
+        const confirmed = await dialog.confirmDanger({
+          title: t('mixEditor.confirmDelete'),
+          message: t('mixEditor.confirmDeleteMsg', { name: targetName }),
+          confirmText: t('common.confirm'),
+        })
+        if (!confirmed) return
+        await ProjectService.deleteProjectEntry(activeProjectName, projectSelection.relativePath)
+        await reloadStudioData(undefined, {
+          skipUnsavedGuard: true,
+          studioMode: 'projects',
+          activeProjectName,
+        })
+        await dialog.info({
+          title: t('mixEditor.deleteComplete'),
+          message: t('mixEditor.deleteSummary', { name: targetName }),
+        })
+        return
+      }
+
+      if (!currentContainer || !selectedLeafName) return
       const currentEntries = await readContainerEntries(currentContainer)
       const selectedIndex = currentEntries.findIndex((entry) => sameMixEntryName(entry.filename, selectedLeafName))
       if (selectedIndex < 0) {
@@ -1331,13 +1971,17 @@ const MixEditor: React.FC = () => {
       setProgressMessage('')
     }
   }, [
+    activeProjectName,
     confirmDiscardPktEdits,
     currentContainer,
-    selectedLeafName,
-    readContainerEntries,
-    persistCurrentContainerEntries,
     buildLmdSummaryLines,
     dialog,
+    persistCurrentContainerEntries,
+    projectSelection,
+    readContainerEntries,
+    reloadStudioData,
+    selectedLeafName,
+    studioMode,
     t,
   ])
 
@@ -1362,6 +2006,77 @@ const MixEditor: React.FC = () => {
     }
   }, [currentContainer, readFileObjBytes])
 
+  const handleOpenSearchResult = useCallback(async (result: GlobalSearchResult) => {
+    const targetMode: WorkspaceStudioMode = result.scope === 'base' ? 'base' : 'projects'
+    const restoreTarget: RestorableNavigationTarget | undefined = result.resultKind === 'mix-entry'
+      ? {
+          stackNames: [result.topLevelOwner, ...result.containerChain],
+          selectedLeafName: result.displayName,
+        }
+      : undefined
+    const allowed = await confirmDiscardPktEdits()
+    if (!allowed) return
+
+    if (result.scope === 'base') {
+      flushSync(() => {
+        setSearchViewOpen(false)
+        setStudioMode('base')
+      })
+      if (result.resultKind === 'project-file') {
+        const mixName = result.topLevelOwner
+        if (isMixLikeFile(mixName)) {
+          const switched = await setActiveMixWithGuard(mixName, true)
+          if (!switched) return
+        } else {
+          initializeSelection(baseMixFiles)
+        }
+        return
+      }
+      const restored = await restoreNavigation(baseMixFiles, restoreTarget)
+      if (!restored) initializeSelection(baseMixFiles)
+      return
+    }
+
+    if (result.projectName && result.projectName === activeProjectName) {
+      flushSync(() => {
+        setSearchViewOpen(false)
+        setStudioMode('projects')
+      })
+      if (result.resultKind === 'project-file') {
+        selectProjectFile(result.projectName, result.path)
+        if (isMixLikeFile(result.path)) {
+          await openProjectMixExplorer(result.path)
+        }
+        return
+      }
+      const restored = await restoreNavigation(projectMixFiles, restoreTarget)
+      if (!restored && result.owningProjectPath) {
+        selectProjectFile(result.projectName, result.owningProjectPath)
+        await openProjectMixExplorer(result.owningProjectPath)
+      }
+      return
+    }
+
+    setSearchViewOpen(false)
+    await reloadStudioData(restoreTarget, {
+      skipUnsavedGuard: true,
+      studioMode: targetMode,
+      activeProjectName: result.scope === 'project' ? (result.projectName ?? null) : activeProjectName,
+      projectSelectionPath: result.resultKind === 'project-file' ? result.path : result.owningProjectPath,
+    })
+  }, [
+    activeProjectName,
+    baseMixFiles,
+    confirmDiscardPktEdits,
+    initializeSelection,
+    openProjectMixExplorer,
+    projectMixFiles,
+    reloadStudioData,
+    restoreNavigation,
+    selectProjectFile,
+    setActiveMixWithGuard,
+  ])
+
   const canSaveSelectedPktFile = isPktSelected
     && canEditSelectedEntry
     && !!pktEditSession
@@ -1372,6 +2087,24 @@ const MixEditor: React.FC = () => {
     setExportInitialTab(initialTab)
     setExportDialogOpen(true)
   }, [])
+
+  const handleOpenRawExport = useCallback(async () => {
+    if (studioMode === 'projects' && currentPreviewTarget) {
+      const resolved = await resolvePreviewFile(currentPreviewTarget)
+      const bytes = await resolved.readBytes()
+      triggerBrowserDownload(bytesToBlob(bytes, 'application/octet-stream'), resolved.name)
+      return
+    }
+    openExportDialog('raw')
+  }, [currentPreviewTarget, openExportDialog, studioMode])
+
+  const handleOpenImageExport = useCallback(async () => {
+    if (studioMode === 'projects') {
+      await dialog.info('项目视角下的 SHP 图片/GIF 导出还在接入新模型，当前请先使用原始导出。')
+      return
+    }
+    openExportDialog('static')
+  }, [dialog, openExportDialog, studioMode])
 
   const closeContextMenu = useCallback(() => {
     setContextMenuTarget(null)
@@ -1424,10 +2157,10 @@ const MixEditor: React.FC = () => {
     const monacoEditor = previewEditorRef.current
 
     return {
-      browserMode,
+      studioMode,
       resourceReady,
       loading,
-      hasMixFiles: mixFiles.length > 0,
+      hasMixFiles: studioMode === 'projects' ? navStack.length > 0 : mixFiles.length > 0,
       hasFileSelection: Boolean(contextMenuTarget?.filePath ?? selectedFile),
       fileExtension: targetExt,
       canEnterMixTarget:
@@ -1438,8 +2171,7 @@ const MixEditor: React.FC = () => {
       canSaveTarget: canSaveSelectedPktFile,
       hasUnsavedChanges: hasUnsavedPktChanges,
       metadataDrawerOpen,
-      canNavigateUp: browserMode === 'workspace' && navStack.length > 1,
-      targetMixIsActive: Boolean(contextMenuTarget?.mixName && contextMenuTarget.mixName === activeTopMixName),
+      canNavigateUp: navStack.length > 1,
       editableReadOnly:
         contextMenuTarget?.editableKind === 'input'
           ? Boolean(inputElement?.readOnly || inputElement?.disabled)
@@ -1452,10 +2184,14 @@ const MixEditor: React.FC = () => {
         contextMenuTarget?.editableKind === 'input'
           ? Boolean(inputElement?.value?.length)
           : true,
+      editableCanCopyWithoutSelection: contextMenuTarget?.editableKind === 'monaco',
+      hasProjects: projects.length > 0,
+      hasActiveProject: Boolean(activeProjectName),
+      canAddToProject: canAddSelectionToProject,
     }
   }, [
-    activeTopMixName,
-    browserMode,
+    activeProjectName,
+    canAddSelectionToProject,
     canEditSelectedEntry,
     canEnterCurrentMix,
     canSaveSelectedPktFile,
@@ -1465,8 +2201,10 @@ const MixEditor: React.FC = () => {
     metadataDrawerOpen,
     mixFiles.length,
     navStack.length,
+    projects.length,
     resourceReady,
     selectedFile,
+    studioMode,
   ])
 
   const contextMenuEntries = useMemo(() => {
@@ -1508,7 +2246,7 @@ const MixEditor: React.FC = () => {
     if (target.kind === 'editable-text' && target.editableKind === 'monaco') {
       // Let Monaco finish applying any cursor/selection updates from this right click
       // before we snapshot editor state into the custom menu.
-      queueMicrotask(() => {
+      requestAnimationFrame(() => {
         setContextMenuTarget(target)
       })
       return
@@ -1536,8 +2274,17 @@ const MixEditor: React.FC = () => {
         case 'reimportBaseDirectory':
           await handleReimportBaseDirectory()
           return
-        case 'importPatchMix':
-          openPatchPicker()
+        case 'createProject':
+          await handleCreateProject()
+          return
+        case 'renameProject':
+          await handleRenameProject()
+          return
+        case 'deleteProject':
+          await handleDeleteProject()
+          return
+        case 'importProjectFiles':
+          openProjectArchivePicker()
           return
         case 'importToCurrentMix':
           openCurrentMixImportPicker()
@@ -1548,31 +2295,29 @@ const MixEditor: React.FC = () => {
         case 'exportCurrentMix':
           await handleExportCurrentMix()
           return
-        case 'clearPatches':
-          await handleClearNonBaseResources()
+        case 'exportProjectZip':
+          await handleExportProjectZip()
           return
-        case 'switchToWorkspace':
-          await switchBrowserModeWithGuard('workspace')
+        case 'switchToBase':
+          handleStudioModeChange('base')
           return
-        case 'switchToRepository':
-          await switchBrowserModeWithGuard('repository')
+        case 'switchToProjects':
+          handleStudioModeChange('projects')
+          return
+        case 'switchToSearch':
+          handleStudioModeChange('search')
           return
         case 'navigateUp':
           handleNavigateUp()
           return
-        case 'setActiveMix':
-          if (target?.mixName) {
-            await setActiveMixWithGuard(target.mixName, false)
-          }
-          return
         case 'rawExport':
           if (await ensureTargetFileSelected()) {
-            openExportDialog('raw')
+            await handleOpenRawExport()
           }
           return
         case 'imageGifExport':
           if (await ensureTargetFileSelected()) {
-            openExportDialog('static')
+            await handleOpenImageExport()
           }
           return
         case 'enterCurrentMix':
@@ -1608,6 +2353,35 @@ const MixEditor: React.FC = () => {
             await handleDiscardSelectedPktFile()
           }
           return
+        case 'addToProject': {
+          if (target?.kind === 'search-result') {
+            await handleAddSelectionToProject({
+              topLevelOwner: target.topLevelOwner,
+              containerChain: target.containerChain,
+              selectedLeafName: target.filePath?.split('/').pop(),
+            })
+            return
+          }
+          await handleAddSelectionToProject()
+          return
+        }
+        case 'openSearchResult':
+          if (target?.kind === 'search-result' && target.topLevelOwner && target.filePath) {
+            await handleOpenSearchResult({
+              id: `context:${target.filePath}`,
+              scope: target.searchScope ?? 'base',
+              resultKind: target.resultKind ?? 'mix-entry',
+              projectName: target.projectName,
+              topLevelOwner: target.topLevelOwner,
+              path: target.filePath,
+              containerChain: target.containerChain ?? [],
+              isNestedMixHit: Boolean(target.containerChain?.length),
+              extension: target.filePath.split('.').pop()?.toLowerCase() ?? '',
+              size: 0,
+              displayName: target.filePath.split('/').pop() ?? target.filePath,
+            })
+          }
+          return
         case 'undo':
         case 'redo':
         case 'cut':
@@ -1637,27 +2411,97 @@ const MixEditor: React.FC = () => {
     closeContextMenu,
     contextMenuTarget,
     executeInputContextCommand,
-    handleClearNonBaseResources,
+    handleAddSelectionToProject,
     handleCloseMetadataDrawer,
+    handleCreateProject,
     handleDeleteSelectedFileInCurrentMix,
+    handleDeleteProject,
     handleDiscardSelectedPktFile,
     handleEnterCurrentMix,
     handleExportCurrentMix,
+    handleExportProjectZip,
     handleExportTopMix,
     handleOpenMetadataDrawer,
+    handleOpenSearchResult,
     handleReimportBaseDirectory,
+    handleRenameProject,
     handleRenameSelectedFileInCurrentMix,
     handleSaveSelectedPktFile,
+    handleStudioModeChange,
     handleNavigateUp,
+    handleOpenImageExport,
+    handleOpenRawExport,
     openBaseArchivePicker,
     openCurrentMixImportPicker,
-    openExportDialog,
-    openPatchPicker,
+    openProjectArchivePicker,
     selectFileWithGuard,
     selectedFile,
-    setActiveMixWithGuard,
-    switchBrowserModeWithGuard,
   ])
+
+  const selectedProjectPath = useMemo(() => {
+    if (projectSelection?.kind === 'project-file' || projectSelection?.kind === 'project-directory') {
+      return projectSelection.relativePath
+    }
+    if (projectSelection?.kind === 'mix-entry') {
+      return projectSelection.owningMixPath
+    }
+    return null
+  }, [projectSelection])
+
+  const selectedMixEntryName = useMemo(() => {
+    if (projectSelection?.kind !== 'mix-entry') return null
+    return projectSelection.entryName
+  }, [projectSelection])
+
+  const toolbarMixNames = useMemo(() => {
+    if (studioMode === 'base') {
+      return baseMixFiles.map((mix) => mix.file.name)
+    }
+    return navStack.length > 0 ? [navStack[0].name] : []
+  }, [baseMixFiles, navStack, studioMode])
+
+  const handleProjectTreeSelect = useCallback((path: string, kind: 'file' | 'directory') => {
+    if (!activeProjectName) return
+    void runWithPktDiscardGuard(() => {
+      if (kind === 'directory') {
+        selectProjectDirectory(activeProjectName, path)
+        return
+      }
+      selectProjectFile(activeProjectName, path)
+    })
+  }, [activeProjectName, runWithPktDiscardGuard, selectProjectDirectory, selectProjectFile])
+
+  const handleOpenProjectMixTree = useCallback((path: string) => {
+    if (!activeProjectName) return
+    void runWithPktDiscardGuard(async () => {
+      selectProjectFile(activeProjectName, path)
+      await openProjectMixExplorer(path)
+    })
+  }, [activeProjectName, openProjectMixExplorer, runWithPktDiscardGuard, selectProjectFile])
+
+  const handleProjectMixEntrySelect = useCallback((entryName: string) => {
+    if (!activeProjectName || !navStack.length) return
+    void runWithPktDiscardGuard(() => {
+      selectProjectMixEntry({
+        projectName: activeProjectName,
+        owningMixPath: navStack[0].name,
+        containerChain: navStack.slice(1).map((node) => node.name),
+        entryName,
+        extension: getResourcePathExtension(entryName),
+      })
+    })
+  }, [activeProjectName, navStack, runWithPktDiscardGuard, selectProjectMixEntry])
+
+  const handleCloseProjectMixExplorer = useCallback(() => {
+    const rootMixPath = navStack[0]?.name
+    void runWithPktDiscardGuard(() => {
+      setNavStack([])
+      setActiveTopMixName(null)
+      if (activeProjectName && rootMixPath) {
+        selectProjectFile(activeProjectName, rootMixPath)
+      }
+    })
+  }, [activeProjectName, navStack, runWithPktDiscardGuard, selectProjectFile])
 
   return (
     <div
@@ -1668,20 +2512,32 @@ const MixEditor: React.FC = () => {
       {/* 顶部工具栏（仅资源就绪后显示） */}
       {resourceReady && (
         <Toolbar
-          mixFiles={mixFiles.map(mix => mix.file.name)}
+          studioMode={studioMode}
+          onStudioModeChange={handleStudioModeChange}
+          searchQuery={searchQuery}
+          searchActive={searchViewOpen}
+          onSearchQueryChange={handleSearchQueryChange}
+          onSearchActivate={handleSearchActivate}
+          onSearchClear={handleSearchClear}
+          mixFiles={toolbarMixNames}
           loading={loading}
           onExportTopMix={handleExportTopMix}
           onExportCurrentMix={handleExportCurrentMix}
           onOpenCurrentMixImportPicker={openCurrentMixImportPicker}
           onReimportBaseDirectory={handleReimportBaseDirectory}
           onOpenBaseArchivePicker={openBaseArchivePicker}
-          onOpenPatchPicker={openPatchPicker}
-          onClearNonBaseResources={handleClearNonBaseResources}
-          resourceReady={resourceReady}
-          resourceSummary={
-            progressMessage ||
-            t('mixEditor.resourceReadyDetail', { count: mixFiles.length })
-          }
+          onOpenProjectArchivePicker={openProjectArchivePicker}
+          onCreateProject={handleCreateProject}
+          onRenameProject={handleRenameProject}
+          onDeleteProject={handleDeleteProject}
+          onExportProjectZip={handleExportProjectZip}
+          onAddSelectionToProject={() => {
+            void handleAddSelectionToProject()
+          }}
+          canAddSelectionToProject={canAddSelectionToProject}
+          projects={projects}
+          activeProjectName={activeProjectName}
+          onActiveProjectChange={handleActiveProjectChange}
         />
       )}
 
@@ -1787,29 +2643,60 @@ const MixEditor: React.FC = () => {
           </div>
         )
       ) : (
-        <div className="flex-1 flex min-h-0">
-          {/* 左侧文件树 */}
-          <div className="w-80 bg-gray-800 border-r border-gray-700">
-            <FileTree
-              mixFiles={mixFiles}
-              workspaceMixFiles={workspaceMixFiles}
-              browserMode={browserMode}
-              onBrowserModeChange={handleBrowserModeChange}
-              activeMixName={activeTopMixName}
-              onActiveMixChange={handleActiveMixChange}
-              mixSourceLabelByName={mixSourceLabelByName}
-              selectedFile={selectedFile}
-              onFileSelect={handleFileSelect}
-              // rootless container view when we have a current container
-              container={browserMode === 'workspace' && currentContainer ? { info: currentContainer.info, name: currentContainer.name } : undefined}
-              rootless={browserMode === 'workspace' && !!currentContainer}
-              navPrefix={currentPrefix}
-              onDrillDown={handleDrillDown}
-              onNavigateUp={browserMode === 'workspace' && navStack.length > 1 ? handleNavigateUp : undefined}
-            />
-          </div>
+        <div className="flex-1 flex min-h-0 relative">
+          {studioMode === 'base' ? (
+            <div className="w-80 bg-gray-800 border-r border-gray-700">
+              <FileTree
+                title={t('mixEditor.baseManagerTitle')}
+                description={t('mixEditor.baseManagerDesc')}
+                mixFiles={mixFiles}
+                activeMixName={activeTopMixName}
+                onActiveMixChange={handleActiveMixChange}
+                selectedFile={selectedFile}
+                onFileSelect={handleFileSelect}
+                container={currentContainer ? { info: currentContainer.info, name: currentContainer.name } : undefined}
+                navPrefix={currentPrefix}
+                onDrillDown={handleDrillDown}
+                onNavigateUp={navStack.length > 1 ? handleNavigateUp : undefined}
+                emptyText={t('fileTree.baseEmpty')}
+                searchPlaceholder={t('fileTree.searchBasePlaceholder')}
+              />
+            </div>
+          ) : (
+            <div className="flex bg-gray-800 border-r border-gray-700">
+              <div className="w-80 min-w-[20rem]">
+                <ProjectExplorer
+                  title={t('mixEditor.projectManagerTitle')}
+                  description={activeProjectName
+                    ? t('mixEditor.projectManagerDesc', { name: activeProjectName })
+                    : t('mixEditor.projectEmptyDesc')}
+                  projectName={activeProjectName}
+                  tree={projectTree}
+                  selectedPath={selectedProjectPath}
+                  onSelectPath={handleProjectTreeSelect}
+                  onOpenMix={handleOpenProjectMixTree}
+                  emptyText={t('fileTree.projectEmpty')}
+                  searchPlaceholder={t('fileTree.searchProjectPlaceholder')}
+                />
+              </div>
+              {navStack.length > 0 && activeProjectName && (
+                <div className="w-80 min-w-[20rem]">
+                  <MixExplorer
+                    mixPath={navStack[0].name}
+                    navStack={navStack.map((node) => ({ name: node.name, info: node.info }))}
+                    selectedEntryName={selectedMixEntryName}
+                    onSelectEntry={handleProjectMixEntrySelect}
+                    onDrillDown={(entryName) => {
+                      void handleDrillDown(entryName)
+                    }}
+                    onNavigateUp={navStack.length > 1 ? handleNavigateUp : undefined}
+                    onClose={handleCloseProjectMixExplorer}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
-          {/* 中间预览区域 */}
           <div className="flex-1 min-w-0 min-h-0 bg-gray-900 overflow-hidden relative">
             {metadataDrawerOpen && (
               <button
@@ -1822,8 +2709,9 @@ const MixEditor: React.FC = () => {
             <PreviewPanel
               selectedFile={selectedFile}
               mixFiles={mixFiles}
-              breadcrumbs={navStack.map(n => n.name)}
-              onBreadcrumbClick={handleBreadcrumbClick}
+              target={currentPreviewTarget}
+              breadcrumbs={projectSelection?.kind === 'mix-entry' || studioMode === 'base' ? navStack.map(n => n.name) : undefined}
+              onBreadcrumbClick={projectSelection?.kind === 'mix-entry' || studioMode === 'base' ? handleBreadcrumbClick : undefined}
               resourceContext={resourceContext}
               onOpenMetadataDrawer={handleOpenMetadataDrawer}
               metadataDrawerOpen={metadataDrawerOpen}
@@ -1850,8 +2738,12 @@ const MixEditor: React.FC = () => {
                 })
               }}
               onBeforeViewChange={async () => confirmDiscardPktEdits()}
-              onOpenRawExport={() => openExportDialog('raw')}
-              onOpenImageExport={() => openExportDialog('static')}
+              onOpenRawExport={() => {
+                void handleOpenRawExport()
+              }}
+              onOpenImageExport={() => {
+                void handleOpenImageExport()
+              }}
               onEditorReady={(handle) => {
                 previewEditorRef.current = handle
               }}
@@ -1878,11 +2770,39 @@ const MixEditor: React.FC = () => {
                   <PropertiesPanel
                     selectedFile={selectedFile}
                     mixFiles={mixFiles}
+                    target={currentPreviewTarget}
                   />
                 </div>
               </div>
             </div>
           </div>
+
+          {searchViewOpen && (
+            <div className="absolute inset-0 z-30 flex items-start justify-center p-4 pt-5">
+              <button
+                type="button"
+                className="absolute inset-0 bg-black/10"
+                aria-label={t('common.close')}
+                onClick={handleSearchClear}
+              />
+              <GlobalSearchPanel
+                query={searchQuery}
+                results={filteredSearchResults}
+                loading={searchLoading}
+                activeProjectName={activeProjectName}
+                onOpenResult={(result) => {
+                  void handleOpenSearchResult(result)
+                }}
+                onAddToProject={(result) => {
+                  void handleAddSelectionToProject({
+                    topLevelOwner: result.topLevelOwner,
+                    containerChain: result.containerChain,
+                    selectedLeafName: result.displayName,
+                  })
+                }}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -1904,12 +2824,32 @@ const MixEditor: React.FC = () => {
       />
 
       {/* 底部状态栏 */}
-      <div className="h-8 bg-gray-800 border-t border-gray-700 flex items-center px-4 text-sm text-gray-400">
-        {t('mixEditor.appTitle')}
-        {resourceReady && mixFiles.length > 0 && (
-          <span className="ml-4">
-            {t('mixEditor.mixCount', { mixCount: mixFiles.length, fileCount: mixFiles.reduce((sum, mix) => sum + mix.info.files.length, 0) })}
-          </span>
+      <div className="h-8 bg-gray-800 border-t border-gray-700 flex items-center gap-4 px-4 text-sm text-gray-400 overflow-x-auto">
+        <span className="flex-shrink-0">{t('mixEditor.appTitle')}</span>
+        {resourceReady && (
+          <>
+            <span className="flex-shrink-0">
+              {t(`toolbar.${studioMode === 'base' ? 'baseMode' : 'projectMode'}` as any)}
+            </span>
+            {studioMode === 'projects' && activeProjectName && (
+              <span className="flex-shrink-0">
+                {activeProjectName}
+              </span>
+            )}
+            {searchViewOpen && searchQuery.trim().length > 0 && (
+              <span className="flex-shrink-0">
+                {t('mixEditor.searchReadyDetail', { count: filteredSearchResults.length })}
+              </span>
+            )}
+            {mixFiles.length > 0 && (
+              <span className="flex-shrink-0">
+                {t('mixEditor.mixCount', {
+                  mixCount: mixFiles.length,
+                  fileCount: mixFiles.reduce((sum, mix) => sum + mix.info.files.length, 0),
+                })}
+              </span>
+            )}
+          </>
         )}
       </div>
     </div>

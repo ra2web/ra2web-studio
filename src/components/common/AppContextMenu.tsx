@@ -15,10 +15,12 @@ import {
   Redo2,
   RotateCcw,
   Save,
+  Search,
   Scissors,
   Trash2,
   Undo2,
   Upload,
+  Boxes,
 } from 'lucide-react'
 import type { ContextMenuCommandId, ContextMenuEntry, ContextMenuIconName, ContextMenuTarget } from './contextMenuModel'
 import { computeContextMenuPosition } from './contextMenuModel'
@@ -50,6 +52,8 @@ const iconByName: Record<ContextMenuIconName, React.ComponentType<{ className?: 
   upload: Upload,
   'arrow-up': ArrowUp,
   panel: PanelLeft,
+  search: Search,
+  box: Boxes,
 }
 
 const AppContextMenu: React.FC<AppContextMenuProps> = ({

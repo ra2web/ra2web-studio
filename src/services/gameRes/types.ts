@@ -65,6 +65,16 @@ export interface ImportedResourceFile {
   modName?: string
 }
 
+export interface ImportedResourceTreeEntry {
+  bucket: ResourceBucket
+  kind: 'file' | 'directory'
+  path: string
+  name: string
+  size: number
+  lastModified: number
+  modName?: string
+}
+
 export interface GameResImportResult {
   imported: number
   skipped: number
@@ -78,6 +88,6 @@ export interface ResourceReadiness {
 }
 
 export interface GameResPersistedConfig {
-  activeModName: string | null
+  activeProjectName: string | null
   lastImportAt: number | null
 }

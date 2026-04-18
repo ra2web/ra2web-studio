@@ -1,10 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { MixParser, MixFileInfo } from '../../services/MixParser'
+import { MixFileInfo } from '../../services/MixParser'
 import { BikTranscoder } from '../../services/video/BikTranscoder'
 import { BikCacheStore } from '../../services/video/BikCacheStore'
 import { buildBikCacheKey } from '../../services/video/BikCacheKey'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { useLocale } from '../../i18n/LocaleContext'
+import type { PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
 type MixFileData = { file: File; info: MixFileInfo }
 
@@ -27,10 +29,11 @@ function roundMs(value: number): number {
 const LARGE_FILE_WARNING_THRESHOLD = 32 * 1024 * 1024
 
 const BikViewer: React.FC<{
-  selectedFile: string
-  mixFiles: MixFileData[]
+  selectedFile?: string
+  mixFiles?: MixFileData[]
+  target?: PreviewTarget | null
   resourceContext?: ResourceContext | null
-}> = ({ selectedFile, mixFiles }) => {
+}> = ({ selectedFile, mixFiles, target }) => {
   const { t } = useLocale()
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [loading, setLoading] = useState(false)
@@ -41,6 +44,12 @@ const BikViewer: React.FC<{
   const [sourceSize, setSourceSize] = useState(0)
   const [convertedSize, setConvertedSize] = useState(0)
   const [cacheStatus, setCacheStatus] = useState('')
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
+  const assetPath = source.resolved?.displayPath ?? selectedFile ?? ''
 
   useEffect(() => {
     let cancelled = false
@@ -77,16 +86,9 @@ const BikViewer: React.FC<{
       const warmupPromise = BikTranscoder.warmup().catch(() => {})
       try {
         const extractStart = performance.now()
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('Invalid path')
-        const mixName = selectedFile.substring(0, slash)
-        const inner = selectedFile.substring(slash + 1)
-        const mix = mixFiles.find((m) => m.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-
-        const vf = await MixParser.extractFile(mix.file, inner)
-        if (!vf) throw new Error('Failed to extract BIK from MIX')
-        const rawBytes = vf.getBytes()
+        if (!source.resolved) throw new Error('Failed to read BIK file')
+        const rawBytes = await source.resolved.readBytes()
+        const inner = source.resolved.name
         extractMs = performance.now() - extractStart
         if (cancelled) return
 
@@ -96,7 +98,7 @@ const BikViewer: React.FC<{
         setPhaseText(t('bik.computingCacheKey'))
         const keyStart = performance.now()
         const cacheKey = await buildBikCacheKey({
-          mixName,
+          mixName: assetPath,
           innerPath: inner,
           bytes: rawBytes,
         })
@@ -154,7 +156,7 @@ const BikViewer: React.FC<{
         })
       } catch (e: any) {
         if (!cancelled) {
-          setError(e?.message || t('bik.previewFailed'))
+          setError(e?.message || source.error || t('bik.previewFailed'))
           setPhaseText('')
           setCacheStatus('')
         }
@@ -172,7 +174,7 @@ const BikViewer: React.FC<{
       cleanupVideo()
       if (createdUrl) URL.revokeObjectURL(createdUrl)
     }
-  }, [selectedFile, mixFiles, t])
+  }, [assetPath, source.error, source.resolved, t])
 
   const largeFile = sourceSize >= LARGE_FILE_WARNING_THRESHOLD
 
@@ -180,7 +182,7 @@ const BikViewer: React.FC<{
     <div className="w-full h-full flex flex-col">
       <div className="px-3 py-2 text-xs text-gray-400 border-b border-gray-700 flex items-center justify-between gap-3">
         <span>{t('bik.previewCaption')}</span>
-        <span className="text-gray-500 truncate">{selectedFile.split('/').pop() || selectedFile}</span>
+        <span className="text-gray-500 truncate">{source.resolved?.name || selectedFile}</span>
       </div>
 
       <div className="flex-1 p-4 overflow-auto">
@@ -238,4 +240,3 @@ const BikViewer: React.FC<{
 }
 
 export default BikViewer
-

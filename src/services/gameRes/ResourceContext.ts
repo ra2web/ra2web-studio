@@ -40,7 +40,7 @@ export interface ResourceStandaloneFile {
 }
 
 export class ResourceContext {
-  public readonly activeModName: string | null
+  public readonly activeProjectName: string | null
   public readonly importedFiles: ImportedResourceFile[]
   public readonly archives: ResourceMixFile[]
   public readonly standaloneFiles: ResourceStandaloneFile[]
@@ -49,13 +49,13 @@ export class ResourceContext {
   public readonly readiness: ResourceReadiness
 
   constructor(args: {
-    activeModName: string | null
+    activeProjectName: string | null
     importedFiles: ImportedResourceFile[]
     archives: ResourceMixFile[]
     standaloneFiles: ResourceStandaloneFile[]
     discoveredPalettePaths: string[]
   }) {
-    this.activeModName = args.activeModName
+    this.activeProjectName = args.activeProjectName
     this.importedFiles = args.importedFiles
     this.archives = [...args.archives].sort((a, b) => b.priority - a.priority)
     this.standaloneFiles = [...args.standaloneFiles].sort((a, b) => b.priority - a.priority)
@@ -112,10 +112,10 @@ export class ResourceContext {
   }
 
   static async load(
-    activeModName: string | null,
+    activeProjectName: string | null,
     onProgress?: (event: ResourceLoadProgressEvent) => void,
   ): Promise<ResourceContext> {
-    const importedFiles = await FileSystemUtil.listAllImportedFiles(activeModName)
+    const importedFiles = await FileSystemUtil.listAllImportedFiles(activeProjectName)
     const archives: ResourceMixFile[] = []
     const standaloneFiles: ResourceStandaloneFile[] = []
     const totalCount = importedFiles.length
@@ -157,7 +157,10 @@ export class ResourceContext {
           priority: getArchivePriority(item.name, item.bucket),
           modName: item.modName,
           file,
-          info,
+          info: {
+            ...info,
+            name: item.name,
+          },
         })
         loadedCount++
         onProgress?.({
@@ -204,7 +207,7 @@ export class ResourceContext {
       totalCount,
     })
     return new ResourceContext({
-      activeModName,
+      activeProjectName,
       importedFiles,
       archives,
       standaloneFiles,

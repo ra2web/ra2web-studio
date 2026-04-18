@@ -5,15 +5,26 @@ import { ResourceContext, type ResourceLoadProgressEvent } from './ResourceConte
 import type { GameResImportProgressEvent, GameResImportResult } from './types'
 
 export class GameResBootstrap {
+  private static isArchiveSource(filename: string): boolean {
+    const lower = filename.toLowerCase()
+    return (
+      lower.endsWith('.zip')
+      || lower.endsWith('.7z')
+      || lower.endsWith('.exe')
+      || lower.endsWith('.tgz')
+      || lower.endsWith('.tar.gz')
+    )
+  }
+
   static loadConfig() {
     return GameResConfig.load()
   }
 
   static async loadContext(
-    activeModName: string | null,
+    activeProjectName: string | null,
     onProgress?: (event: ResourceLoadProgressEvent) => void,
   ): Promise<ResourceContext> {
-    return ResourceContext.load(activeModName, onProgress)
+    return ResourceContext.load(activeProjectName, onProgress)
   }
 
   static async reimportBaseFromDirectory(
@@ -66,10 +77,56 @@ export class GameResBootstrap {
     return GameResImporter.importFiles(files, 'patch', { onProgress, onProgressEvent, modName: null })
   }
 
-  static async clearNonBaseResources(activeModName: string | null): Promise<void> {
+  static async importProjectFiles(
+    files: File[],
+    projectName: string,
+    onProgress?: (message: string) => void,
+    onProgressEvent?: (event: GameResImportProgressEvent) => void,
+  ): Promise<GameResImportResult> {
+    const merged: GameResImportResult = {
+      imported: 0,
+      skipped: 0,
+      errors: [],
+      importedNames: [],
+    }
+    for (const file of files) {
+      const options: ImportOptions = {
+        onProgress,
+        onProgressEvent,
+        modName: projectName,
+        preservePaths: true,
+        allowAllFiles: true,
+      }
+      const result = this.isArchiveSource(file.name)
+        ? await GameResImporter.importArchive(file, 'mod', options)
+        : await GameResImporter.importFiles([file], 'mod', options)
+      merged.imported += result.imported
+      merged.skipped += result.skipped
+      merged.errors.push(...result.errors)
+      merged.importedNames.push(...result.importedNames)
+    }
+    return merged
+  }
+
+  static async importProjectDirectory(
+    dirHandle: any,
+    projectName: string,
+    onProgress?: (message: string) => void,
+    onProgressEvent?: (event: GameResImportProgressEvent) => void,
+  ): Promise<GameResImportResult> {
+    return GameResImporter.importDirectory(dirHandle, 'mod', {
+      onProgress,
+      onProgressEvent,
+      modName: projectName,
+      preservePaths: true,
+      allowAllFiles: true,
+    })
+  }
+
+  static async clearNonBaseResources(activeProjectName: string | null): Promise<void> {
     await FileSystemUtil.clearBucket('patch')
-    if (activeModName) {
-      await FileSystemUtil.clearBucket('mod', activeModName)
+    if (activeProjectName) {
+      await FileSystemUtil.clearBucket('mod', activeProjectName)
     }
   }
 }

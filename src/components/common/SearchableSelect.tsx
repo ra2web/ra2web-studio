@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown } from 'lucide-react'
 
 export type SearchableSelectOption = {
@@ -14,6 +15,10 @@ interface SearchableSelectProps {
   closeOnSelect?: boolean
   pinnedValues?: string[]
   triggerClassName?: string
+  triggerTitle?: string
+  triggerAriaLabel?: string
+  renderTriggerContent?: (selected: SearchableSelectOption | null, open: boolean) => React.ReactNode
+  hideChevron?: boolean
   menuClassName?: string
   searchPlaceholder?: string
   noResultsText?: string
@@ -27,17 +32,27 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
   closeOnSelect = true,
   pinnedValues = [],
   triggerClassName,
+  triggerTitle,
+  triggerAriaLabel,
+  renderTriggerContent,
+  hideChevron = false,
   menuClassName,
   searchPlaceholder = '搜索...',
   noResultsText = '无匹配项',
   footerHint = 'Esc 关闭，可搜索',
 }) => {
   const rootRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const scrollTopRef = useRef(0)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; minWidth: number }>({
+    top: 0,
+    left: 0,
+    minWidth: 280,
+  })
 
   const selectedOption = useMemo(
     () => options.find((opt) => opt.value === value) ?? options[0] ?? null,
@@ -75,8 +90,12 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
   useEffect(() => {
     if (!open) return
     const onDocumentMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (rootRef.current?.contains(target) || menuRef.current?.contains(target)) {
+        return
+      }
       if (!rootRef.current) return
-      if (!rootRef.current.contains(event.target as Node)) {
+      if (!rootRef.current.contains(target)) {
         setOpen(false)
       }
     }
@@ -90,6 +109,32 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
     return () => {
       document.removeEventListener('mousedown', onDocumentMouseDown)
       document.removeEventListener('keydown', onDocumentKeyDown)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+
+    const updateMenuPosition = () => {
+      const trigger = rootRef.current
+      if (!trigger || typeof window === 'undefined') return
+      const rect = trigger.getBoundingClientRect()
+      const estimatedWidth = Math.max(rect.width, 320)
+      const padding = 12
+      const maxLeft = Math.max(padding, window.innerWidth - estimatedWidth - padding)
+      setMenuPosition({
+        top: rect.bottom + 8,
+        left: Math.min(Math.max(rect.left, padding), maxLeft),
+        minWidth: rect.width,
+      })
+    }
+
+    updateMenuPosition()
+    window.addEventListener('resize', updateMenuPosition)
+    window.addEventListener('scroll', updateMenuPosition, true)
+    return () => {
+      window.removeEventListener('resize', updateMenuPosition)
+      window.removeEventListener('scroll', updateMenuPosition, true)
     }
   }, [open])
 
@@ -125,6 +170,8 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
     <div ref={rootRef} className="relative">
       <button
         type="button"
+        title={triggerTitle}
+        aria-label={triggerAriaLabel}
         className={
           triggerClassName
           || 'min-w-[180px] max-w-[280px] bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-left flex items-center gap-2'
@@ -134,15 +181,26 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
           if (!open) setQuery('')
         }}
       >
-        <span className="truncate flex-1">{selectedOption?.label ?? ''}</span>
-        <ChevronDown size={14} className="text-gray-400" />
+        {renderTriggerContent ? (
+          renderTriggerContent(selectedOption, open)
+        ) : (
+          <span className="truncate flex-1">{selectedOption?.label ?? ''}</span>
+        )}
+        {!hideChevron && <ChevronDown size={14} className="text-gray-400" />}
       </button>
 
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
         <div
+          ref={menuRef}
+          style={{
+            position: 'fixed',
+            top: menuPosition.top,
+            left: menuPosition.left,
+            minWidth: menuPosition.minWidth,
+          }}
           className={
             menuClassName
-            || 'absolute z-50 mt-1 w-[280px] max-w-[70vw] rounded border border-gray-700 bg-gray-800 shadow-xl'
+            || 'z-50 w-[280px] max-w-[70vw] rounded border border-gray-700 bg-gray-800 shadow-xl'
           }
         >
           <div className="p-2 border-b border-gray-700">
@@ -206,7 +264,8 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
               {footerHint}
             </div>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )

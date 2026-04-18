@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { MixParser, MixFileInfo } from '../../services/MixParser'
+import { MixFileInfo } from '../../services/MixParser'
 import { WavFile } from '../../data/WavFile'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
+import type { PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
 type MixFileData = { file: File; info: MixFileInfo }
 
@@ -18,10 +20,11 @@ function formatFileSize(bytes: number): string {
 }
 
 const WavViewer: React.FC<{
-  selectedFile: string
-  mixFiles: MixFileData[]
+  selectedFile?: string
+  mixFiles?: MixFileData[]
+  target?: PreviewTarget | null
   resourceContext?: ResourceContext | null
-}> = ({ selectedFile, mixFiles }) => {
+}> = ({ selectedFile, mixFiles, target }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -30,6 +33,12 @@ const WavViewer: React.FC<{
   const [fileSize, setFileSize] = useState(0)
   const [decodedSize, setDecodedSize] = useState(0)
   const [isImaAdpcm, setIsImaAdpcm] = useState(false)
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
+  const assetPath = source.resolved?.displayPath ?? selectedFile ?? ''
 
   useEffect(() => {
     let cancelled = false
@@ -57,16 +66,8 @@ const WavViewer: React.FC<{
       setIsImaAdpcm(false)
 
       try {
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('Invalid path')
-        const mixName = selectedFile.substring(0, slash)
-        const inner = selectedFile.substring(slash + 1)
-        const mix = mixFiles.find((m) => m.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-
-        const vf = await MixParser.extractFile(mix.file, inner)
-        if (!vf) throw new Error('File not found in MIX')
-        const rawBytes = vf.getBytes()
+        if (!source.resolved) throw new Error('File not found')
+        const rawBytes = await source.resolved.readBytes()
         const wav = new WavFile(rawBytes)
         const adpcm = wav.isRawImaAdpcm()
         const decodedBytes = wav.getData()
@@ -85,7 +86,7 @@ const WavViewer: React.FC<{
         setIsImaAdpcm(adpcm)
       } catch (e: any) {
         if (!cancelled) {
-          setError(e?.message || 'WAV 读取/解码失败')
+          setError(e?.message || source.error || 'WAV 读取/解码失败')
         }
       } finally {
         if (!cancelled) {
@@ -103,14 +104,14 @@ const WavViewer: React.FC<{
         URL.revokeObjectURL(createdUrl)
       }
     }
-  }, [selectedFile, mixFiles])
+  }, [assetPath, source.error, source.resolved])
 
   return (
     <div className="w-full h-full flex flex-col">
       <div className="px-3 py-2 text-xs text-gray-400 border-b border-gray-700 flex items-center justify-between gap-3">
         <span>WAV 预览（音频播放）</span>
         <span className="text-gray-500 truncate">
-          {selectedFile.split('/').pop() || selectedFile}
+          {source.resolved?.name || selectedFile}
           {isImaAdpcm ? ' · IMA ADPCM -> PCM' : ' · PCM/标准WAV'}
         </span>
       </div>
@@ -162,4 +163,3 @@ const WavViewer: React.FC<{
 }
 
 export default WavViewer
-

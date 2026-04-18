@@ -1,17 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { MixParser, MixFileInfo } from '../../services/MixParser'
+import { MixFileInfo } from '../../services/MixParser'
 import { TmpFile } from '../../data/TmpFile'
 import { ShpFile } from '../../data/ShpFile'
 import { PaletteParser } from '../../services/palette/PaletteParser'
 import { PaletteResolver } from '../../services/palette/PaletteResolver'
 import { loadPaletteByPath } from '../../services/palette/PaletteLoader'
 import { IndexedColorRenderer } from '../../services/palette/IndexedColorRenderer'
+import { VirtualFile } from '../../data/vfs/VirtualFile'
 import HexViewer from './HexViewer'
 import SearchableSelect from '../common/SearchableSelect'
 import { usePaletteHotkeys } from './usePaletteHotkeys'
 import type { PaletteSelectionInfo, Rgb } from '../../services/palette/PaletteTypes'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { useLocale } from '../../i18n/LocaleContext'
+import type { PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
 type MixFileData = { file: File; info: MixFileInfo }
 
@@ -204,9 +207,15 @@ function composeTmpToIndexed(tmp: TmpFile): TmpComposite {
   }
 }
 
-const TmpViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resourceContext?: ResourceContext | null }> = ({
+const TmpViewer: React.FC<{
+  selectedFile?: string
+  mixFiles?: MixFileData[]
+  target?: PreviewTarget | null
+  resourceContext?: ResourceContext | null
+}> = ({
   selectedFile,
   mixFiles,
+  target,
   resourceContext,
 }) => {
   const { t } = useLocale()
@@ -221,6 +230,12 @@ const TmpViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
     reason: '未加载',
     resolvedPath: null,
   })
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
+  const assetPath = source.resolved?.displayPath ?? selectedFile ?? ''
   const [info, setInfo] = useState<{
     mode: 'tmp' | 'shp-fallback'
     width: number
@@ -241,24 +256,18 @@ const TmpViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
       setFallbackToHex(false)
       setInfo(null)
       try {
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('Invalid path')
-        const mixName = selectedFile.substring(0, slash)
-        const inner = selectedFile.substring(slash + 1)
-        const mix = mixFiles.find((m) => m.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-
-        const vf = await MixParser.extractFile(mix.file, inner)
-        if (!vf) throw new Error('File not found in MIX')
+        if (!source.resolved) throw new Error('File not found')
+        const bytes = await source.resolved.readBytes()
+        const vf = VirtualFile.fromBytes(bytes, source.resolved.name)
 
         const resolvePalette = async (
           assetKind: 'tmp' | 'shp',
           assetSize?: { width?: number; height?: number },
         ) => {
           const decision = PaletteResolver.resolve({
-            assetPath: selectedFile,
+            assetPath,
             assetKind,
-            mixFiles,
+            mixFiles: mixFiles ?? [],
             resourceContext,
             manualPalettePath: palettePath || null,
             assetWidth: assetSize?.width ?? null,
@@ -269,7 +278,7 @@ const TmpViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
           let palette: Rgb[] | null = null
           let selection: PaletteSelectionInfo = decision.selection
           if (decision.resolvedPalettePath) {
-            const loaded = await loadPaletteByPath(decision.resolvedPalettePath, mixFiles)
+            const loaded = await loadPaletteByPath(decision.resolvedPalettePath, resourceContext ?? mixFiles ?? [])
             if (loaded) {
               palette = loaded
             } else {
@@ -419,7 +428,7 @@ const TmpViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
         }
       } catch (e: any) {
         if (!cancelled) {
-          const errorMessage = e?.message || 'Failed to render TMP'
+          const errorMessage = e?.message || source.error || 'Failed to render TMP'
           if (
             errorMessage.includes('TMP tile count out of range')
             || errorMessage.includes('Unsupported TMP block geometry')
@@ -443,7 +452,7 @@ const TmpViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
     return () => {
       cancelled = true
     }
-  }, [selectedFile, mixFiles, palettePath, resourceContext, t])
+  }, [assetPath, mixFiles, palettePath, resourceContext, source.error, source.resolved, t])
 
   const paletteOptions = useMemo(
     () => [{ value: '', label: t('viewer.paletteAutoRule') }, ...paletteList.map((p) => ({ value: p, label: p.split('/').pop() || p }))],

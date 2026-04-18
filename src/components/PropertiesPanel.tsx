@@ -3,11 +3,15 @@ import { Info, Palette, Layers, FileText } from 'lucide-react'
 import { MixFileData } from './MixEditor'
 import { MixParser } from '../services/MixParser'
 import { CsfFile } from '../data/CsfFile'
+import { VirtualFile } from '../data/vfs/VirtualFile'
 import { useLocale } from '../i18n/LocaleContext'
+import { resolvePreviewFile } from './preview/previewFileResolver'
+import type { PreviewTarget } from './preview/types'
 
 interface PropertiesPanelProps {
   selectedFile: string | null
   mixFiles: MixFileData[]
+  target?: PreviewTarget | null
 }
 
 interface ParsedPath {
@@ -34,8 +38,9 @@ function parseSelectedPath(filePath: string): ParsedPath | null {
   return { mixName, innerPath, filename }
 }
 
-const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedFile, mixFiles }) => {
+const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedFile, mixFiles, target }) => {
   const { t } = useLocale()
+  const [resolvedSize, setResolvedSize] = useState<number | null>(null)
   const [csfMetadata, setCsfMetadata] = useState<CsfMetadata | null>(null)
   const [csfLoading, setCsfLoading] = useState(false)
   const [csfError, setCsfError] = useState<string | null>(null)
@@ -47,8 +52,37 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedFile, mixFile
       setCsfMetadata(null)
       setCsfError(null)
       setCsfLoading(false)
+      setResolvedSize(null)
 
       if (!selectedFile) return
+      if (target) {
+        const extension = target.extension.toLowerCase()
+        try {
+          const resolved = await resolvePreviewFile(target)
+          const bytes = await resolved.readBytes()
+          if (disposed) return
+          setResolvedSize(bytes.byteLength)
+          if (extension !== 'csf') return
+          setCsfLoading(true)
+          const parsed = CsfFile.fromVirtualFile(VirtualFile.fromBytes(bytes, resolved.name))
+          if (disposed) return
+          setCsfMetadata({
+            version: parsed.version,
+            languageName: parsed.languageName,
+            declaredLabels: parsed.stats.declaredLabels,
+            declaredValues: parsed.stats.declaredValues,
+            parsedLabels: parsed.stats.parsedLabels,
+          })
+          setCsfLoading(false)
+          return
+        } catch (e: any) {
+          if (!disposed) {
+            setCsfError(e?.message || 'Failed to parse file metadata')
+            setCsfLoading(false)
+          }
+          return
+        }
+      }
       const parsedPath = parseSelectedPath(selectedFile)
       if (!parsedPath) return
       const extension = parsedPath.filename.split('.').pop()?.toLowerCase() || ''
@@ -80,9 +114,21 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedFile, mixFile
     return () => {
       disposed = true
     }
-  }, [selectedFile, mixFiles])
+  }, [selectedFile, mixFiles, target])
 
   const getFileProperties = (filePath: string) => {
+    if (target) {
+      const name = target.kind === 'project-file'
+        ? target.relativePath.split('/').pop() || target.relativePath
+        : target.entryName
+      return {
+        name,
+        path: target.displayPath,
+        type: (target.extension || '').toUpperCase() || 'UNKNOWN',
+        size: resolvedSize != null ? resolvedSize.toString() : t('props.unknown'),
+      }
+    }
+
     const parsedPath = parseSelectedPath(filePath)
     const mixName = parsedPath?.mixName || ''
     const innerPath = parsedPath?.innerPath || ''

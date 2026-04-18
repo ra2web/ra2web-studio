@@ -1,16 +1,26 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { MixParser, MixFileInfo } from '../../services/MixParser'
 import { PaletteParser } from '../../services/palette/PaletteParser'
 import type { Rgb } from '../../services/palette/PaletteTypes'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { useLocale } from '../../i18n/LocaleContext'
+import type { PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
-type MixFileData = { file: File; info: MixFileInfo }
-const PalViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resourceContext?: ResourceContext | null }> = ({ selectedFile, mixFiles }) => {
+const PalViewer: React.FC<{
+  selectedFile?: string
+  mixFiles?: Array<{ file: File; info: any }>
+  target?: PreviewTarget | null
+  resourceContext?: ResourceContext | null
+}> = ({ selectedFile, mixFiles, target }) => {
   const { t } = useLocale()
   const [colors, setColors] = useState<Rgb[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -19,18 +29,12 @@ const PalViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
       setError(null)
       setColors(null)
       try {
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('Invalid path')
-        const mixName = selectedFile.substring(0, slash)
-        const inner = selectedFile.substring(slash + 1)
-        const mix = mixFiles.find(m => m.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-        const vf = await MixParser.extractFile(mix.file, inner)
-        if (!vf) throw new Error('File not found in MIX')
-
+        if (!source.resolved) return
+        const bytes = await source.resolved.readBytes()
+        const text = await source.resolved.readText()
         const parsed = PaletteParser.fromUnknownContent({
-          text: vf.readAsString(),
-          bytes: vf.getBytes(),
+          text,
+          bytes,
         })
         if (!parsed) throw new Error('Unsupported PAL format')
         if (!cancelled) setColors(PaletteParser.ensurePalette256(parsed.colors))
@@ -40,9 +44,11 @@ const PalViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
         if (!cancelled) setLoading(false)
       }
     }
-    load()
+    if (source.resolved) {
+      void load()
+    }
     return () => { cancelled = true }
-  }, [selectedFile, mixFiles])
+  }, [source.resolved])
 
   const count = colors?.length ?? 0
   const cells = useMemo(() => {
@@ -78,8 +84,6 @@ const PalViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
 }
 
 export default PalViewer
-
-
 
 
 

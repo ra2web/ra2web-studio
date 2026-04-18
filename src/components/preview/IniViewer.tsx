@@ -1,14 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { MixParser, MixFileInfo } from '../../services/MixParser'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { vscodeEditorOptions } from './monacoOptions'
-import type { PreviewEditorHandle } from './types'
-
-type MixFileData = { file: File; info: MixFileInfo }
+import type { PreviewEditorHandle, PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
 interface IniViewerProps {
-  selectedFile: string
-  mixFiles: MixFileData[]
+  selectedFile?: string
+  mixFiles?: Array<{ file: File; info: any }>
+  target?: PreviewTarget | null
   resourceContext?: ResourceContext | null
   value?: string
   loadingOverride?: boolean
@@ -21,6 +20,7 @@ interface IniViewerProps {
 const IniViewer: React.FC<IniViewerProps> = ({
   selectedFile,
   mixFiles,
+  target,
   value,
   loadingOverride,
   errorOverride,
@@ -29,10 +29,13 @@ const IniViewer: React.FC<IniViewerProps> = ({
   onEditorReady,
 }) => {
   const [content, setContent] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [Monaco, setMonaco] = useState<React.ComponentType<any> | null>(null)
   const externallyManaged = value !== undefined || loadingOverride !== undefined || errorOverride !== undefined
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
 
   useEffect(() => {
     let mounted = true
@@ -52,33 +55,25 @@ const IniViewer: React.FC<IniViewerProps> = ({
     if (externallyManaged) return
     let cancelled = false
     async function load() {
-      setLoading(true)
-      setError(null)
       setContent('')
       try {
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('Invalid path')
-        const mixName = selectedFile.substring(0, slash)
-        const inner = selectedFile.substring(slash + 1)
-        const mix = mixFiles.find(m => m.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-        const vf = await MixParser.extractFile(mix.file, inner)
-        if (!vf) throw new Error('File not found in MIX')
-        const text = vf.readAsString()
+        if (!source.resolved) return
+        const text = await source.resolved.readText()
         if (!cancelled) setContent(text)
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'Failed to load INI')
-      } finally {
-        if (!cancelled) setLoading(false)
+      } catch {
+        // error is handled by source hook
       }
     }
-    load()
+    if (source.resolved) {
+      void load()
+    }
     return () => { cancelled = true }
-  }, [externallyManaged, selectedFile, mixFiles])
+  }, [externallyManaged, source.resolved])
 
   const effectiveContent = value ?? content
-  const effectiveLoading = loadingOverride ?? (!externallyManaged ? loading : false)
-  const effectiveError = errorOverride ?? (!externallyManaged ? error : null)
+  const effectiveLoading = loadingOverride ?? (!externallyManaged ? source.loading : false)
+  const effectiveError = errorOverride ?? (!externallyManaged ? source.error : null)
+  const editorPath = source.resolved?.displayPath ?? selectedFile ?? ''
 
   const handleEditorMount = useCallback((editor: any) => {
     const handle: PreviewEditorHandle = {
@@ -115,7 +110,7 @@ const IniViewer: React.FC<IniViewerProps> = ({
       >
         <Editor
           height="100%"
-          path={selectedFile}
+          path={editorPath}
           defaultLanguage="ini"
           value={effectiveContent || ''}
           onChange={(next: string | undefined) => onChange?.(next ?? '')}

@@ -1,7 +1,12 @@
 import JSZip from 'jszip'
 import sevenZipWasmUrl from '7z-wasm/7zz.wasm?url'
 import { FileSystemUtil } from './FileSystemUtil'
-import { isMixLikeFile, isStandaloneIniLikeFile, normalizeResourceFilename } from './patterns'
+import {
+  isMixLikeFile,
+  isStandaloneIniLikeFile,
+  normalizeResourceFilename,
+  normalizeResourcePath,
+} from './patterns'
 import { GAME_RES_IMPORT_STAGE_LABELS } from './types'
 import type { GameResImportProgressEvent, GameResImportResult, ResourceBucket } from './types'
 
@@ -9,6 +14,8 @@ export interface ImportOptions {
   modName?: string | null
   onProgress?: (message: string) => void
   onProgressEvent?: (event: GameResImportProgressEvent) => void
+  preservePaths?: boolean
+  allowAllFiles?: boolean
 }
 
 function createResult(): GameResImportResult {
@@ -20,7 +27,12 @@ function createResult(): GameResImportResult {
   }
 }
 
-function shouldImport(name: string): boolean {
+function normalizeImportedEntryName(name: string, options: ImportOptions): string {
+  return options.preservePaths ? normalizeResourcePath(name) : normalizeResourceFilename(name)
+}
+
+function shouldImport(name: string, options: ImportOptions): boolean {
+  if (options.allowAllFiles) return true
   return isMixLikeFile(name) || isStandaloneIniLikeFile(name)
 }
 
@@ -104,7 +116,9 @@ function dedupeFlattenedEntries<T extends DedupableImportEntry>(
       continue
     }
     result.skipped++
-    const conflictMessage = `${entry.normalizedName}: 路径扁平化后文件名冲突，已跳过 (${entry.sourcePath} 与 ${conflictWith} 冲突)`
+    const conflictMessage = options.preservePaths
+      ? `${entry.normalizedName}: 目标路径冲突，已跳过 (${entry.sourcePath} 与 ${conflictWith} 冲突)`
+      : `${entry.normalizedName}: 路径扁平化后文件名冲突，已跳过 (${entry.sourcePath} 与 ${conflictWith} 冲突)`
     result.errors.push(conflictMessage)
     emitProgress(options, {
       stage: 'import',
@@ -169,13 +183,13 @@ async function importFrom7zArchive(
     const extractedEntries = extractedFiles
       .map((entryPath) => ({
         sourcePath: entryPath,
-        normalizedName: normalizeResourceFilename(entryPath),
+        normalizedName: normalizeImportedEntryName(entryPath, options),
       }))
       .filter((entry): entry is { sourcePath: string; normalizedName: string } => (
         !!entry.normalizedName && entry.normalizedName.toLowerCase() !== archiveNameKey
       ))
 
-    const importableCandidates = extractedEntries.filter((entry) => shouldImport(entry.normalizedName))
+    const importableCandidates = extractedEntries.filter((entry) => shouldImport(entry.normalizedName, options))
     result.skipped += extractedEntries.length - importableCandidates.length
     const importableEntries = dedupeFlattenedEntries(importableCandidates, result, options)
 
@@ -268,7 +282,7 @@ async function importOneFile(
   forceName?: string,
   progressMeta?: ImportProgressMeta,
 ): Promise<void> {
-  const normalized = normalizeResourceFilename(forceName ?? sourceFile.name)
+  const normalized = normalizeImportedEntryName(forceName ?? sourceFile.name, options)
   const totalCount = progressMeta?.totalCount ?? 0
   const currentIndex = progressMeta?.currentIndex ?? 0
 
@@ -284,7 +298,7 @@ async function importOneFile(
     })
   }
 
-  if (!shouldImport(normalized)) {
+  if (!shouldImport(normalized, options)) {
     result.skipped++
     if (progressMeta) {
       emitProgress(options, {
@@ -372,9 +386,9 @@ export class GameResImporter {
         .map((entry) => ({
           ...entry,
           sourcePath: entry.entryName,
-          normalizedName: normalizeResourceFilename(entry.entryName),
+          normalizedName: normalizeImportedEntryName(entry.entryName, options),
         }))
-        .filter((entry) => shouldImport(entry.normalizedName))
+        .filter((entry) => shouldImport(entry.normalizedName, options))
       result.skipped += fileEntries.length - importableCandidates.length
       const importableEntries = dedupeFlattenedEntries(importableCandidates, result, options)
 
@@ -449,10 +463,10 @@ export class GameResImporter {
       const importableCandidates = files
         .map((file) => ({
           file,
-          sourcePath: file.name,
-          normalizedName: normalizeResourceFilename(file.name),
+          sourcePath: file.webkitRelativePath || file.name,
+          normalizedName: normalizeImportedEntryName(file.webkitRelativePath || file.name, options),
         }))
-        .filter((entry) => shouldImport(entry.normalizedName))
+        .filter((entry) => shouldImport(entry.normalizedName, options))
       result.skipped += files.length - importableCandidates.length
       const importableFiles = dedupeFlattenedEntries(importableCandidates, result, options)
 
@@ -518,7 +532,7 @@ export class GameResImporter {
         currentItem: archiveFile.name,
       })
 
-      if (isMixLikeFile(lowerName) || isStandaloneIniLikeFile(lowerName)) {
+      if (options.allowAllFiles || isMixLikeFile(lowerName) || isStandaloneIniLikeFile(lowerName)) {
         emitProgress(options, {
           stage: 'load_archive',
           message: '检测到单文件资源，跳过归档加载',
@@ -595,9 +609,9 @@ export class GameResImporter {
         .map((entry) => ({
           entry,
           sourcePath: entry.name,
-          normalizedName: normalizeResourceFilename(entry.name),
+          normalizedName: normalizeImportedEntryName(entry.name, options),
         }))
-        .filter((entry) => shouldImport(entry.normalizedName))
+        .filter((entry) => shouldImport(entry.normalizedName, options))
       result.skipped += entries.length - importableCandidates.length
       const importableEntries = dedupeFlattenedEntries(importableCandidates, result, options)
 

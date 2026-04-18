@@ -1,14 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { MixParser, MixFileInfo } from '../../services/MixParser'
+import { MixFileInfo } from '../../services/MixParser'
 import { HvaFile } from '../../data/HvaFile'
+import { VirtualFile } from '../../data/vfs/VirtualFile'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { useLocale } from '../../i18n/LocaleContext'
+import type { PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
 type MixFileData = { file: File; info: MixFileInfo }
 
-const HvaViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resourceContext?: ResourceContext | null }> = ({ selectedFile, mixFiles }) => {
+const HvaViewer: React.FC<{
+  selectedFile?: string
+  mixFiles?: MixFileData[]
+  target?: PreviewTarget | null
+  resourceContext?: ResourceContext | null
+}> = ({ selectedFile, mixFiles, target }) => {
   const { t } = useLocale()
   const mountRef = useRef<HTMLDivElement>(null)
   const applyFrameRef = useRef<(frame: number) => void>(() => {})
@@ -16,6 +24,11 @@ const HvaViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
   const [error, setError] = useState<string | null>(null)
   const [frame, setFrame] = useState(0)
   const [maxFrame, setMaxFrame] = useState(0)
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
 
   useEffect(() => {
     let renderer: THREE.WebGLRenderer | null = null
@@ -32,14 +45,9 @@ const HvaViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
       setLoading(true)
       setError(null)
       try {
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('Invalid path')
-        const mixName = selectedFile.substring(0, slash)
-        const inner = selectedFile.substring(slash + 1)
-        const mix = mixFiles.find(m => m.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-        const vf = await MixParser.extractFile(mix.file, inner)
-        if (!vf) throw new Error('File not found in MIX')
+        if (!source.resolved) throw new Error('File not found')
+        const bytes = await source.resolved.readBytes()
+        const vf = VirtualFile.fromBytes(bytes, source.resolved.name)
 
         const hva = new HvaFile(vf)
         if (!hva.sections.length) throw new Error('No sections in HVA')
@@ -121,7 +129,7 @@ const HvaViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
 
         applyFrameRef.current = (fi: number) => applyFrame(fi)
       } catch (e: any) {
-        setError(e?.message || 'Failed to render HVA')
+        setError(e?.message || source.error || 'Failed to render HVA')
       } finally {
         setLoading(false)
       }
@@ -143,7 +151,7 @@ const HvaViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
       groups = []
       applyFrameRef.current = () => {}
     }
-  }, [selectedFile, mixFiles, applyFrameRef])
+  }, [applyFrameRef, source.error, source.resolved])
 
   useEffect(() => {
     applyFrameRef.current(Math.min(frame, maxFrame))
@@ -174,4 +182,3 @@ const HvaViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
 }
 
 export default HvaViewer
-

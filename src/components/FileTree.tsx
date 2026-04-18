@@ -4,7 +4,6 @@ import { useLocale } from '../i18n/LocaleContext'
 import { MixFileData } from './MixEditor'
 import SearchableSelect from './common/SearchableSelect'
 
-type BrowserMode = 'workspace' | 'repository'
 type SortColumn = 'filename' | 'type' | 'size'
 type SortDirection = 'asc' | 'desc'
 
@@ -13,43 +12,40 @@ interface FileItem {
   extension: string
   length: number
   path: string
-  mixName?: string
-  isMixFile?: boolean
+  mixName: string
+  isMixFile: boolean
 }
 
 interface FileTreeProps {
+  title: string
+  description?: string
   mixFiles: MixFileData[]
-  workspaceMixFiles?: MixFileData[]
-  browserMode: BrowserMode
-  onBrowserModeChange: (mode: BrowserMode) => void
   activeMixName: string | null
   onActiveMixChange: (mixName: string) => void
-  mixSourceLabelByName?: Record<string, string>
   selectedFile: string | null
   onFileSelect: (file: string) => void
-  // rootless 模式：隐藏顶层 MIX 作为树根，直接显示当前容器的条目
   container?: { name: string; info: any }
-  rootless?: boolean
-  navPrefix?: string // 如 a.mix/b.mix，便于拼接 path
-  onDrillDown?: (filename: string) => void // 当点击的是 .mix 文件时触发
+  navPrefix?: string
+  onDrillDown?: (filename: string) => void
   onNavigateUp?: () => void
+  emptyText: string
+  searchPlaceholder?: string
 }
 
 const FileTree: React.FC<FileTreeProps> = ({
+  title,
+  description,
   mixFiles,
-  workspaceMixFiles,
-  browserMode,
-  onBrowserModeChange,
   activeMixName,
   onActiveMixChange,
-  mixSourceLabelByName,
   selectedFile,
   onFileSelect,
   container,
-  rootless,
   navPrefix,
   onDrillDown,
   onNavigateUp,
+  emptyText,
+  searchPlaceholder,
 }) => {
   const { t } = useLocale()
   const [searchQuery, setSearchQuery] = useState('')
@@ -58,7 +54,6 @@ const FileTree: React.FC<FileTreeProps> = ({
     direction: null,
   })
 
-  // 格式化文件大小显示
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return '0 B'
     const k = 1024
@@ -67,7 +62,6 @@ const FileTree: React.FC<FileTreeProps> = ({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
   }
 
-  // 类型列仅显示后缀（小写）
   const getFileTypeName = (extension: string): string => {
     const ext = (extension || '').trim().toLowerCase()
     return ext || '-'
@@ -99,10 +93,40 @@ const FileTree: React.FC<FileTreeProps> = ({
     return <ArrowDown size={12} className={baseClass} aria-hidden="true" />
   }
 
-  const sortFileItems = (files: FileItem[]): FileItem[] => {
+  const activeMix = useMemo(() => {
+    if (!mixFiles.length) return null
+    if (!activeMixName) return mixFiles[0]
+    return mixFiles.find((mix) => mix.info.name === activeMixName) ?? mixFiles[0]
+  }, [activeMixName, mixFiles])
+
+  const fileList = useMemo<FileItem[]>(() => {
+    if (!container && !activeMix) return []
+    const resolvedContainer = container ?? (activeMix ? { name: activeMix.info.name, info: activeMix.info } : null)
+    const prefix = navPrefix ? `${navPrefix}/` : resolvedContainer ? `${resolvedContainer.name}/` : ''
+    if (!resolvedContainer) return []
+    return resolvedContainer.info.files.map((file: any) => ({
+      filename: file.filename,
+      extension: file.extension,
+      length: file.length,
+      path: `${prefix}${file.filename}`,
+      mixName: activeMix?.info.name ?? resolvedContainer.name,
+      isMixFile: ['mix', 'mmx', 'yro'].includes(file.extension.toLowerCase()),
+    }))
+  }, [activeMix, container, navPrefix])
+
+  const normalizedSearchQuery = useMemo(() => searchQuery.trim().toLowerCase(), [searchQuery])
+  const filteredFileList = useMemo(() => {
+    if (!normalizedSearchQuery) return fileList
+    return fileList.filter((file) => {
+      const haystack = `${file.filename} ${file.extension} ${file.path}`.toLowerCase()
+      return haystack.includes(normalizedSearchQuery)
+    })
+  }, [fileList, normalizedSearchQuery])
+
+  const sortedFileList = useMemo(() => {
     const { column, direction } = sortState
-    if (!column || !direction) return files
-    const sorted = [...files].sort((a, b) => {
+    if (!column || !direction) return filteredFileList
+    const sorted = [...filteredFileList].sort((a, b) => {
       let result = 0
       if (column === 'filename') {
         result = a.filename.localeCompare(b.filename, undefined, { sensitivity: 'base' })
@@ -119,109 +143,37 @@ const FileTree: React.FC<FileTreeProps> = ({
       return direction === 'asc' ? result : -result
     })
     return sorted
-  }
+  }, [filteredFileList, sortState])
 
-  const toFileItem = (mixName: string, file: any, prefix?: string): FileItem => ({
-    filename: file.filename,
-    extension: file.extension,
-    length: file.length,
-    path: prefix ? `${prefix}${file.filename}` : `${mixName}/${file.filename}`,
-    mixName,
-    isMixFile: ['mix', 'mmx', 'yro'].includes(file.extension.toLowerCase()),
-  })
-
-  const buildWorkspaceFileList = (): FileItem[] => {
-    const files: FileItem[] = []
-    if (rootless && container) {
-      // 仅显示当前容器文件列表
-      const prefix = navPrefix ? `${navPrefix}/` : `${container.name}/`
-      for (const file of container.info.files) {
-        files.push(toFileItem(container.name, file, prefix))
-      }
-      return files
-    }
-    const sourceMixFiles =
-      workspaceMixFiles && workspaceMixFiles.length > 0 ? workspaceMixFiles : mixFiles
-    // 工作区模式：仅显示当前激活 mix 对应内容（或 fallback）
-    sourceMixFiles.forEach((mixData) => {
-      mixData.info.files.forEach((file: any) => {
-        files.push(toFileItem(mixData.info.name, file))
-      })
-    })
-    return files
-  }
-
-  const buildRepositoryGroups = () => {
-    return mixFiles.map((mixData) => ({
-      mixName: mixData.info.name,
-      sourceLabel: mixSourceLabelByName?.[mixData.info.name],
-      files: mixData.info.files.map((file: any) => toFileItem(mixData.info.name, file)),
-    }))
-  }
-
-  const workspaceFileList = useMemo(
-    () => buildWorkspaceFileList(),
-    [rootless, container, navPrefix, workspaceMixFiles, mixFiles],
-  )
-  const repositoryGroups = useMemo(
-    () => buildRepositoryGroups(),
-    [mixFiles, mixSourceLabelByName],
-  )
-  const normalizedSearchQuery = useMemo(
-    () => searchQuery.trim().toLowerCase(),
-    [searchQuery],
-  )
-  const filteredWorkspaceFileList = useMemo(() => {
-    if (!normalizedSearchQuery) return workspaceFileList
-    return workspaceFileList.filter((file) => (
-      file.filename.toLowerCase().includes(normalizedSearchQuery)
-      || file.extension.toLowerCase().includes(normalizedSearchQuery)
-      || file.path.toLowerCase().includes(normalizedSearchQuery)
-    ))
-  }, [workspaceFileList, normalizedSearchQuery])
-  const sortedWorkspaceFileList = useMemo(
-    () => sortFileItems(filteredWorkspaceFileList),
-    [filteredWorkspaceFileList, sortState],
-  )
-  const sortedRepositoryGroups = useMemo(
-    () => repositoryGroups.map((group) => ({ ...group, files: sortFileItems(group.files) })),
-    [repositoryGroups, sortState],
-  )
   const activeMixOptions = useMemo(
-    () => mixFiles.map((mix) => {
-      const sourceLabel = mixSourceLabelByName?.[mix.info.name]
-      const label = sourceLabel === 'base' ? `${mix.info.name} ${t('fileTree.baseFileTag')}` : mix.info.name
-      return {
-        value: mix.info.name,
-        label,
-        searchText: sourceLabel ?? '',
-      }
-    }),
-    [mixFiles, mixSourceLabelByName],
+    () => mixFiles.map((mix) => ({
+      value: mix.info.name,
+      label: mix.info.name,
+    })),
+    [mixFiles],
   )
-  const activeMixValue = activeMixName ?? mixFiles[0]?.info.name ?? ''
-  const isNestedWorkspace = Boolean(rootless && navPrefix && navPrefix.includes('/'))
+
+  const activeMixValue = activeMix?.info.name ?? ''
 
   const renderFileRow = (file: FileItem, key: string) => {
     const isSelected = selectedFile === file.path
-    const isMixFile = browserMode === 'workspace' && file.isMixFile && onDrillDown
     return (
       <div
         key={key}
         data-context-kind="file-tree-row"
         data-file-path={file.path}
         data-is-mix-file={String(Boolean(file.isMixFile))}
-        data-mix-name={file.mixName ?? ''}
+        data-mix-name={file.mixName}
         className={`flex items-center hover:bg-gray-700 cursor-pointer border-b border-gray-800 ${
           isSelected ? 'bg-blue-600' : ''
         }`}
         onClick={() => onFileSelect(file.path)}
         onDoubleClick={() => {
-          if (isMixFile) onDrillDown(file.filename)
+          if (file.isMixFile) onDrillDown?.(file.filename)
         }}
       >
         <div className="flex-1 min-w-0 flex items-center px-2 py-1" style={{ minWidth: '175px' }}>
-          {isMixFile ? (
+          {file.isMixFile ? (
             <Folder size={16} className="mr-2 flex-shrink-0" />
           ) : (
             <File size={16} className="mr-2 flex-shrink-0" />
@@ -243,43 +195,19 @@ const FileTree: React.FC<FileTreeProps> = ({
   return (
     <div className="h-full flex flex-col">
       <div className="p-2 flex-shrink-0 border-b border-gray-700">
-        <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{t('fileTree.title')}</div>
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            className={`px-2 py-1 text-xs rounded border ${
-              browserMode === 'workspace'
-                ? 'bg-blue-600 border-blue-500 text-white'
-                : 'bg-gray-700 border-gray-600 text-gray-200 hover:bg-gray-600'
-            }`}
-            onClick={() => onBrowserModeChange('workspace')}
-          >
-            {t('fileTree.singleFileView')}
-          </button>
-          <button
-            type="button"
-            className={`px-2 py-1 text-xs rounded border ${
-              browserMode === 'repository'
-                ? 'bg-blue-600 border-blue-500 text-white'
-                : 'bg-gray-700 border-gray-600 text-gray-200 hover:bg-gray-600'
-            }`}
-            onClick={() => onBrowserModeChange('repository')}
-          >
-            {t('fileTree.globalView')}
-          </button>
+        <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{title}</div>
+        {description && <div className="mt-1 text-xs text-gray-500">{description}</div>}
+        <div className="mt-2">
+          <input
+            data-testid="file-tree-search-input"
+            type="text"
+            className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100"
+            placeholder={searchPlaceholder ?? t('fileTree.searchPlaceholder')}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
         </div>
-        {browserMode === 'workspace' && (
-          <div className="mt-2">
-            <input
-              type="text"
-              className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-gray-100"
-              placeholder={t('fileTree.searchPlaceholder')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-        )}
-        {browserMode === 'workspace' && mixFiles.length > 1 && (
+        {mixFiles.length > 1 && (
           <div className="mt-2">
             <label className="text-xs text-gray-400 block mb-1">{t('fileTree.activeMixLabel')}</label>
             <SearchableSelect
@@ -289,14 +217,14 @@ const FileTree: React.FC<FileTreeProps> = ({
                 if (next) onActiveMixChange(next)
               }}
               triggerClassName="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-left text-gray-100 flex items-center gap-2"
-              menuClassName="absolute z-50 mt-1 left-0 right-0 rounded border border-gray-600 bg-gray-700 shadow-xl"
+              menuClassName="z-50 rounded border border-gray-600 bg-gray-700 shadow-xl"
               searchPlaceholder={t('fileTree.searchMixPlaceholder')}
               noResultsText={t('fileTree.noMatchMix')}
               footerHint=""
             />
           </div>
         )}
-        {browserMode === 'workspace' && isNestedWorkspace && navPrefix && (
+        {navPrefix && navPrefix.includes('/') && (
           <div className="mt-2 flex items-center gap-2">
             <div className="text-xs text-gray-400 truncate flex-1" title={navPrefix}>
               {t('fileTree.currentContainer')}：{navPrefix}
@@ -314,7 +242,6 @@ const FileTree: React.FC<FileTreeProps> = ({
         )}
       </div>
 
-      {/* 表格头部 */}
       <div className="flex text-xs font-semibold text-gray-500 uppercase tracking-wide bg-gray-800 border-b border-gray-700">
         <button
           type="button"
@@ -342,50 +269,15 @@ const FileTree: React.FC<FileTreeProps> = ({
         </button>
       </div>
 
-      {/* 表格内容 */}
       <div className="text-sm flex-1 overflow-y-auto" data-context-kind="file-tree-empty">
-        {browserMode === 'workspace' ? (
-          workspaceFileList.length > 0 ? (
-            sortedWorkspaceFileList.length > 0 ? (
-              sortedWorkspaceFileList.map((file, index) => renderFileRow(file, `${file.path}-${index}`))
-            ) : (
-              <div className="px-3 py-3 text-xs text-gray-400">{t('fileTree.noMatchMaterial')}</div>
-            )
+        {fileList.length > 0 ? (
+          sortedFileList.length > 0 ? (
+            sortedFileList.map((file, index) => renderFileRow(file, `${file.path}-${index}`))
           ) : (
-            <div className="px-3 py-3 text-xs text-gray-400">{t('fileTree.workspaceEmpty')}</div>
+            <div className="px-3 py-3 text-xs text-gray-400">{t('fileTree.noMatchMaterial')}</div>
           )
-        ) : sortedRepositoryGroups.length > 0 ? (
-          sortedRepositoryGroups.map((group, groupIndex) => (
-            <React.Fragment key={`${group.mixName}-${groupIndex}`}>
-              <div
-                className="flex items-center justify-between px-2 py-1 border-b border-gray-700 bg-gray-700"
-                data-context-kind="repository-group-header"
-                data-mix-name={group.mixName}
-              >
-                <div className="text-xs text-gray-200 truncate" title={group.mixName}>
-                  {group.mixName}
-                  {group.mixName === activeMixName && (
-                    <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-blue-700 text-blue-100">
-                      active
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 text-[10px] text-gray-300">
-                  {group.sourceLabel && (
-                    <span className="px-1.5 py-0.5 rounded bg-gray-600 text-gray-100">
-                      {group.sourceLabel}
-                    </span>
-                  )}
-                  <span>{group.files.length} files</span>
-                </div>
-              </div>
-              {group.files.map((file, fileIndex) =>
-                renderFileRow(file, `${group.mixName}-${file.path}-${fileIndex}`),
-              )}
-            </React.Fragment>
-          ))
         ) : (
-          <div className="px-3 py-3 text-xs text-gray-400">{t('fileTree.repoEmpty')}</div>
+          <div className="px-3 py-3 text-xs text-gray-400">{emptyText}</div>
         )}
       </div>
     </div>

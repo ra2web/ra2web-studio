@@ -1,8 +1,34 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { FolderOpen, Download, Settings, FolderPlus, Trash2, PackagePlus, Languages } from 'lucide-react'
+import {
+  Archive,
+  ArchiveRestore,
+  Boxes,
+  Download,
+  FilePlus2,
+  FolderOpen,
+  Languages,
+  PackagePlus,
+  Pencil,
+  Plus,
+  Search,
+  Settings,
+  Trash2,
+  Upload,
+} from 'lucide-react'
 import { useLocale } from '../i18n/LocaleContext'
+import SearchableSelect from './common/SearchableSelect'
+import type { ProjectSummary, StudioMode } from '../types/studio'
+
+type WorkspaceStudioMode = Exclude<StudioMode, 'search'>
 
 interface ToolbarProps {
+  studioMode: WorkspaceStudioMode
+  onStudioModeChange: (mode: WorkspaceStudioMode) => void
+  searchQuery: string
+  searchActive: boolean
+  onSearchQueryChange: (query: string) => void
+  onSearchActivate?: () => void
+  onSearchClear?: () => void
   mixFiles: string[]
   loading?: boolean
   onExportTopMix?: () => void
@@ -10,13 +36,64 @@ interface ToolbarProps {
   onOpenCurrentMixImportPicker?: () => void
   onReimportBaseDirectory: () => void | Promise<void>
   onOpenBaseArchivePicker?: () => void
-  onOpenPatchPicker?: () => void
-  onClearNonBaseResources: () => void | Promise<void>
-  resourceReady: boolean
-  resourceSummary?: string
+  onOpenProjectArchivePicker?: () => void
+  onCreateProject?: () => void
+  onRenameProject?: () => void
+  onDeleteProject?: () => void
+  onExportProjectZip?: () => void
+  onAddSelectionToProject?: () => void
+  canAddSelectionToProject?: boolean
+  projects: ProjectSummary[]
+  activeProjectName: string | null
+  onActiveProjectChange?: (projectName: string) => void
+}
+
+type ToolbarIconButtonProps = {
+  icon: React.ComponentType<{ size?: number; className?: string }>
+  label: string
+  disabled?: boolean
+  active?: boolean
+  danger?: boolean
+  onClick?: () => void
+}
+
+const ToolbarIconButton: React.FC<ToolbarIconButtonProps> = ({
+  icon: Icon,
+  label,
+  disabled,
+  active = false,
+  danger = false,
+  onClick,
+}) => {
+  const className = danger
+    ? 'inline-flex h-10 w-10 items-center justify-center rounded-xl border border-red-500/40 bg-red-900/35 text-red-100 transition-colors hover:bg-red-800/60 disabled:cursor-not-allowed disabled:opacity-50'
+    : active
+      ? 'inline-flex h-10 w-10 items-center justify-center rounded-xl border border-blue-400/70 bg-blue-600 text-white shadow-[0_0_0_1px_rgba(96,165,250,0.22)] transition-colors disabled:cursor-not-allowed disabled:opacity-50'
+      : 'inline-flex h-10 w-10 items-center justify-center rounded-xl border border-gray-700 bg-gray-800/90 text-gray-200 transition-colors hover:bg-gray-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-50'
+
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className={className}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      <Icon size={17} />
+      <span className="sr-only">{label}</span>
+    </button>
+  )
 }
 
 const Toolbar: React.FC<ToolbarProps> = ({
+  studioMode,
+  onStudioModeChange,
+  searchQuery,
+  searchActive,
+  onSearchQueryChange,
+  onSearchActivate,
+  onSearchClear,
   mixFiles,
   loading,
   onExportTopMix,
@@ -24,10 +101,16 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onOpenCurrentMixImportPicker,
   onReimportBaseDirectory,
   onOpenBaseArchivePicker,
-  onOpenPatchPicker,
-  onClearNonBaseResources,
-  resourceReady,
-  resourceSummary,
+  onOpenProjectArchivePicker,
+  onCreateProject,
+  onRenameProject,
+  onDeleteProject,
+  onExportProjectZip,
+  onAddSelectionToProject,
+  canAddSelectionToProject = false,
+  projects,
+  activeProjectName,
+  onActiveProjectChange,
 }) => {
   const { t, locale, setLocale } = useLocale()
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -44,132 +127,229 @@ const Toolbar: React.FC<ToolbarProps> = ({
     return () => document.removeEventListener('mousedown', onMouseDown)
   }, [])
 
-  const handleExportTopMix = () => {
-    onExportTopMix?.()
-  }
+  const projectOptions = projects.map((project) => ({
+    value: project.name,
+    label: project.name,
+    searchText: `${project.fileCount}`,
+  }))
 
-  const handleExportCurrentMix = () => {
-    onExportCurrentMix?.()
-  }
-
-  const handleReimportBaseDirectoryFromSettings = () => {
-    setSettingsOpen(false)
-    void onReimportBaseDirectory()
-  }
-
-  const handleReimportBaseArchivesFromSettings = () => {
-    setSettingsOpen(false)
-    onOpenBaseArchivePicker?.()
-  }
+  const currentProjectLabel = activeProjectName
+    ? `${t('toolbar.projectMode')} · ${activeProjectName}`
+    : t('toolbar.projectMode')
 
   return (
-    <div className="h-12 bg-gray-800 border-b border-gray-700 flex items-center px-4">
-      <div className="flex items-center space-x-4">
-        <button
-          onClick={() => onOpenPatchPicker?.()}
-          className="flex items-center space-x-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={!resourceReady || !!loading}
-          title={!resourceReady ? t('toolbar.importGameFirst') : ''}
-        >
-          <PackagePlus size={16} />
-          <span>{t('toolbar.importMix')}</span>
-        </button>
-        <button
-          onClick={() => onClearNonBaseResources()}
-          className="flex items-center space-x-2 px-3 py-1.5 bg-red-700 hover:bg-red-600 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={!!loading}
-          title={t('toolbar.clearPatchesOnly')}
-        >
-          <Trash2 size={16} />
-          <span>{t('toolbar.clearPatches')}</span>
-        </button>
+    <div className="h-16 border-b border-gray-700 bg-gray-800 px-4">
+      <div className="grid h-full grid-cols-[minmax(0,1fr)_minmax(18rem,34rem)_auto] items-center gap-4">
+        <div className="min-w-0 overflow-x-auto">
+          <div className="flex min-w-max items-center gap-1.5 pr-2">
+            {studioMode === 'base' && (
+              <>
+                <ToolbarIconButton
+                  icon={FolderOpen}
+                  label={t('toolbar.reimportBaseArchives')}
+                  onClick={() => onOpenBaseArchivePicker?.()}
+                  disabled={!!loading}
+                />
+                <ToolbarIconButton
+                  icon={Upload}
+                  label={t('toolbar.reimportBaseDir')}
+                  onClick={() => void onReimportBaseDirectory()}
+                  disabled={!!loading}
+                />
+                <ToolbarIconButton
+                  icon={Download}
+                  label={t('toolbar.exportTopMix')}
+                  onClick={() => onExportTopMix?.()}
+                  disabled={!mixFiles.length || !!loading}
+                />
+                <ToolbarIconButton
+                  icon={Archive}
+                  label={t('toolbar.exportCurrentMix')}
+                  onClick={() => onExportCurrentMix?.()}
+                  disabled={!mixFiles.length || !!loading}
+                />
+                <ToolbarIconButton
+                  icon={PackagePlus}
+                  label={t('toolbar.addToProject')}
+                  onClick={() => onAddSelectionToProject?.()}
+                  disabled={!!loading || !canAddSelectionToProject}
+                />
+              </>
+            )}
 
-        <button
-          onClick={handleExportTopMix}
-          className="flex items-center space-x-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={!mixFiles.length || !!loading}
-        >
-          <Download size={16} />
-          <span>{t('toolbar.exportTopMix')}</span>
-        </button>
+            {studioMode === 'projects' && (
+              <>
+                {projects.length > 0 ? (
+                  <SearchableSelect
+                    value={activeProjectName ?? projects[0]?.name ?? ''}
+                    options={projectOptions}
+                    onChange={(next) => onActiveProjectChange?.(next)}
+                    triggerClassName="inline-flex h-10 min-w-[15rem] max-w-[22rem] items-center gap-2 rounded-xl border border-blue-500/30 bg-gradient-to-r from-gray-800 via-gray-800 to-slate-800 px-3 text-left text-sm text-gray-100 shadow-[0_8px_24px_rgba(0,0,0,0.18)] transition-colors hover:border-blue-400/50 hover:bg-gray-700"
+                    triggerTitle={currentProjectLabel}
+                    triggerAriaLabel={currentProjectLabel}
+                    renderTriggerContent={(selected) => (
+                      <>
+                        <Boxes size={17} className="flex-shrink-0 text-blue-300" />
+                        <span className="min-w-0 flex-1 truncate font-medium">
+                          {selected?.label ?? t('toolbar.noProjects')}
+                        </span>
+                      </>
+                    )}
+                    menuClassName="z-50 w-80 rounded-xl border border-gray-600 bg-gray-800 shadow-2xl"
+                    searchPlaceholder={t('toolbar.searchProjectPlaceholder')}
+                    noResultsText={t('toolbar.noProjects')}
+                    footerHint=""
+                  />
+                ) : (
+                  <div
+                    className="inline-flex h-10 min-w-[15rem] items-center gap-2 rounded-xl border border-gray-700 bg-gray-800/90 px-3 text-sm text-gray-400"
+                    aria-label={t('toolbar.noProjects')}
+                    title={t('toolbar.noProjects')}
+                  >
+                    <Boxes size={17} className="flex-shrink-0" />
+                    <span className="truncate">{t('toolbar.noProjects')}</span>
+                  </div>
+                )}
+                <ToolbarIconButton
+                  icon={Plus}
+                  label={t('toolbar.createProject')}
+                  onClick={() => onCreateProject?.()}
+                  disabled={!!loading}
+                />
+                <ToolbarIconButton
+                  icon={Pencil}
+                  label={t('toolbar.renameProject')}
+                  onClick={() => onRenameProject?.()}
+                  disabled={!!loading || !activeProjectName}
+                />
+                <ToolbarIconButton
+                  icon={Trash2}
+                  label={t('toolbar.deleteProject')}
+                  onClick={() => onDeleteProject?.()}
+                  disabled={!!loading || !activeProjectName}
+                  danger
+                />
+                <ToolbarIconButton
+                  icon={Archive}
+                  label={t('toolbar.exportProjectZip')}
+                  onClick={() => onExportProjectZip?.()}
+                  disabled={!!loading || !activeProjectName}
+                />
+                <ToolbarIconButton
+                  icon={FilePlus2}
+                  label={t('toolbar.importProjectFiles')}
+                  onClick={() => onOpenProjectArchivePicker?.()}
+                  disabled={!!loading || !activeProjectName}
+                />
+                <ToolbarIconButton
+                  icon={Download}
+                  label={t('toolbar.exportTopMix')}
+                  onClick={() => onExportTopMix?.()}
+                  disabled={!mixFiles.length || !!loading || !activeProjectName}
+                />
+                <ToolbarIconButton
+                  icon={ArchiveRestore}
+                  label={t('toolbar.exportCurrentMix')}
+                  onClick={() => onExportCurrentMix?.()}
+                  disabled={!mixFiles.length || !!loading || !activeProjectName}
+                />
+                <ToolbarIconButton
+                  icon={PackagePlus}
+                  label={t('toolbar.importToCurrentMix')}
+                  onClick={() => onOpenCurrentMixImportPicker?.()}
+                  disabled={!mixFiles.length || !!loading || !activeProjectName}
+                />
+              </>
+            )}
+          </div>
+        </div>
 
-        <button
-          onClick={handleExportCurrentMix}
-          className="flex items-center space-x-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={!mixFiles.length || !!loading}
-        >
-          <Download size={16} />
-          <span>{t('toolbar.exportCurrentMix')}</span>
-        </button>
-
-        <button
-          onClick={() => onOpenCurrentMixImportPicker?.()}
-          className="flex items-center space-x-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={!mixFiles.length || !!loading}
-        >
-          <FolderPlus size={16} />
-          <span>{t('toolbar.importToCurrentMix')}</span>
-        </button>
-      </div>
-
-      <div className="flex-1 text-xs text-gray-400 text-right truncate px-4">
-        {resourceSummary ?? (resourceReady ? t('toolbar.resourceReady') : t('toolbar.waitingImport'))}
-      </div>
-
-      <div className="flex items-center space-x-4">
-        <div className="relative" ref={settingsMenuRef}>
-          <button
-            onClick={() => setSettingsOpen((prev) => !prev)}
-            className="flex items-center space-x-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors"
-            disabled={!!loading}
+        <div className="min-w-0">
+          <label
+            className={`group flex h-11 items-center rounded-2xl border px-3 transition-all ${
+              searchActive
+                ? 'border-blue-400/70 bg-gray-950 shadow-[0_0_0_1px_rgba(96,165,250,0.25)]'
+                : 'border-gray-700 bg-gray-900/90 hover:border-gray-500'
+            }`}
           >
-            <Settings size={16} />
-            <span>{t('toolbar.settings')}</span>
-          </button>
-          {settingsOpen && (
-            <div className="absolute right-0 top-full mt-2 w-72 rounded border border-gray-600 bg-gray-800 shadow-lg z-20">
-              <div className="px-3 py-2 border-b border-gray-700">
-                <div className="text-xs font-semibold text-gray-200">{t('toolbar.systemConfig')}</div>
-                <div className="text-[11px] text-gray-400 mt-1">{t('toolbar.baseFileManage')}</div>
-              </div>
-              <div className="px-3 py-2 border-b border-gray-700 flex items-center gap-2">
-                <Languages size={14} className="text-gray-400 flex-shrink-0" />
-                <span className="text-xs text-gray-400 flex-shrink-0">{t('settings.language')}</span>
-                <div className="flex gap-1">
-                  <button
-                    type="button"
-                    className={`px-2 py-0.5 text-xs rounded ${locale === 'zh' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
-                    onClick={() => setLocale('zh')}
-                  >
-                    {t('settings.languageZh')}
-                  </button>
-                  <button
-                    type="button"
-                    className={`px-2 py-0.5 text-xs rounded ${locale === 'en' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
-                    onClick={() => setLocale('en')}
-                  >
-                    {t('settings.languageEn')}
-                  </button>
+            <Search
+              size={17}
+              className={`mr-2 flex-shrink-0 transition-colors ${
+                searchActive ? 'text-blue-300' : 'text-gray-400 group-hover:text-gray-300'
+              }`}
+            />
+            <input
+              data-testid="global-search-input"
+              type="text"
+              value={searchQuery}
+              onChange={(event) => onSearchQueryChange(event.target.value)}
+              onFocus={() => onSearchActivate?.()}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  onSearchClear?.()
+                }
+              }}
+              placeholder={t('search.placeholder')}
+              aria-label={t('search.title')}
+              className="min-w-0 flex-1 bg-transparent text-sm text-gray-100 outline-none placeholder:text-gray-500"
+            />
+            <span className="ml-3 hidden rounded-md border border-gray-700 bg-gray-800 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.2em] text-gray-500 md:inline">
+              Esc
+            </span>
+          </label>
+        </div>
+
+        <div className="flex items-center gap-1.5 justify-self-end">
+          <ToolbarIconButton
+            icon={ArchiveRestore}
+            label={t('toolbar.baseMode')}
+            active={studioMode === 'base'}
+            onClick={() => onStudioModeChange('base')}
+          />
+          <ToolbarIconButton
+            icon={Boxes}
+            label={t('toolbar.projectMode')}
+            active={studioMode === 'projects'}
+            onClick={() => onStudioModeChange('projects')}
+          />
+
+          <div className="relative" ref={settingsMenuRef}>
+            <ToolbarIconButton
+              icon={Settings}
+              label={t('toolbar.settings')}
+              onClick={() => setSettingsOpen((prev) => !prev)}
+              disabled={!!loading}
+            />
+            {settingsOpen && (
+              <div className="absolute right-0 top-full z-20 mt-2 w-72 rounded-xl border border-gray-600 bg-gray-800 shadow-2xl">
+                <div className="border-b border-gray-700 px-3 py-2">
+                  <div className="text-xs font-semibold text-gray-200">{t('toolbar.systemConfig')}</div>
+                  <div className="mt-1 text-[11px] text-gray-400">{t('toolbar.baseFileManage')}</div>
+                </div>
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <Languages size={14} className="flex-shrink-0 text-gray-400" />
+                  <span className="flex-shrink-0 text-xs text-gray-400">{t('settings.language')}</span>
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      className={`rounded px-2 py-0.5 text-xs ${locale === 'zh' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                      onClick={() => setLocale('zh')}
+                    >
+                      {t('settings.languageZh')}
+                    </button>
+                    <button
+                      type="button"
+                      className={`rounded px-2 py-0.5 text-xs ${locale === 'en' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                      onClick={() => setLocale('en')}
+                    >
+                      {t('settings.languageEn')}
+                    </button>
+                  </div>
                 </div>
               </div>
-              <button
-                onClick={handleReimportBaseDirectoryFromSettings}
-                className="w-full flex items-center space-x-2 px-3 py-2 text-sm text-left hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={!!loading}
-              >
-                <FolderPlus size={15} />
-                <span>{t('toolbar.reimportBaseDir')}</span>
-              </button>
-              <button
-                onClick={handleReimportBaseArchivesFromSettings}
-                className="w-full flex items-center space-x-2 px-3 py-2 text-sm text-left hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={!!loading}
-              >
-                <FolderOpen size={15} />
-                <span>{t('toolbar.reimportBaseArchives')}</span>
-              </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>

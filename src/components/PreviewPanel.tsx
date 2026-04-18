@@ -19,13 +19,14 @@ import MapViewer from './preview/MapViewer'
 import BikViewer from './preview/BikViewer'
 import type { ResourceContext } from '../services/gameRes/ResourceContext'
 import { useLocale } from '../i18n/LocaleContext'
-import type { PreviewEditorHandle } from './preview/types'
+import type { PreviewEditorHandle, PreviewTarget } from './preview/types'
 
 type MixFileData = { file: File; info: MixFileInfo }
 
 interface PreviewPanelProps {
   selectedFile: string | null
   mixFiles: MixFileData[]
+  target?: PreviewTarget | null
   breadcrumbs?: string[]
   onBreadcrumbClick?: (index: number) => void
   resourceContext?: ResourceContext | null
@@ -54,6 +55,7 @@ interface PreviewPanelProps {
 const PreviewPanel: React.FC<PreviewPanelProps> = ({
   selectedFile,
   mixFiles,
+  target,
   breadcrumbs,
   onBreadcrumbClick,
   resourceContext,
@@ -132,12 +134,25 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
     return t(key as 'preview.fileType_ini')
   }
 
-  const ext = useMemo(() => selectedFile?.split('.').pop()?.toLowerCase() ?? '', [selectedFile])
+  const displayPath = useMemo(() => target?.displayPath ?? selectedFile ?? '', [selectedFile, target])
+  const displayName = useMemo(() => {
+    if (target?.kind === 'project-file') {
+      return target.relativePath.split('/').pop() ?? target.relativePath
+    }
+    if (target?.kind === 'mix-entry' || target?.kind === 'base-mix-entry') {
+      return target.entryName
+    }
+    return selectedFile?.split('/').pop() ?? ''
+  }, [selectedFile, target])
+  const ext = useMemo(
+    () => target?.extension ?? selectedFile?.split('.').pop()?.toLowerCase() ?? '',
+    [selectedFile, target],
+  )
 
   type ViewerDef = {
     key: string
     label: string
-    Component: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resourceContext?: ResourceContext | null }>
+    Component: React.ComponentType<any>
   }
   const tmpViews: ViewerDef[] = [
     { key: 'image', label: t('viewLabels.image'), Component: TmpViewer },
@@ -242,17 +257,17 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
     <div
       className="h-full flex flex-col"
       data-context-kind="preview-selection"
-      data-file-path={selectedFile}
+      data-file-path={displayPath}
       data-is-mix-file={String(ext === 'mix' || ext === 'mmx' || ext === 'yro')}
     >
       {/* 预览头部：文件信息 + 文件操作区 */}
       <div className="p-4 border-b border-gray-700">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center space-x-3 min-w-0">
-          {getFileTypeIcon(selectedFile)}
+          {getFileTypeIcon(displayPath)}
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h3 className="text-lg font-semibold truncate">{selectedFile.split('/').pop()}</h3>
+              <h3 className="text-lg font-semibold truncate">{displayName}</h3>
               <button
                 type="button"
                 onClick={() => onOpenMetadataDrawer?.()}
@@ -268,7 +283,7 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
                 <Info size={16} />
               </button>
             </div>
-            <p className="text-sm text-gray-400">{getFileTypeName(selectedFile)}</p>
+            <p className="text-sm text-gray-400">{getFileTypeName(displayPath)}</p>
           </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -366,11 +381,28 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
           {(() => {
             const Viewer = available.find(v => v.key === activeView)?.Component ?? available[0].Component
             if (!selectedFile) return null
-            if (ext === 'pkt' && activeView === 'text') {
+            if ((ext === 'pkt' || ext === 'ini') && activeView === 'text') {
               return (
                 <IniViewer
                   selectedFile={selectedFile}
                   mixFiles={mixFiles}
+                  target={target}
+                  resourceContext={resourceContext}
+                  value={textValue}
+                  loadingOverride={textLoading}
+                  errorOverride={textError}
+                  onChange={onTextChange}
+                  readOnly={!canSaveSelectedFile}
+                  onEditorReady={onEditorReady}
+                />
+              )
+            }
+            if (ext === 'txt' && activeView === 'text') {
+              return (
+                <TxtViewer
+                  selectedFile={selectedFile}
+                  mixFiles={mixFiles}
+                  target={target}
                   resourceContext={resourceContext}
                   value={textValue}
                   loadingOverride={textLoading}
@@ -389,33 +421,21 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
                 <MixDirectoryViewer
                   selectedFile={selectedFile}
                   mixFiles={mixFiles}
+                  target={target}
                   resourceContext={resourceContext}
                   onEnterCurrentMix={onEnterCurrentMix}
                   canEnterCurrentMix={canEnterCurrentMix}
                 />
               )
             }
-            if ((ext === 'ini' && activeView === 'text')) {
-              return (
-                <IniViewer
-                  selectedFile={selectedFile}
-                  mixFiles={mixFiles}
-                  resourceContext={resourceContext}
-                  onEditorReady={onEditorReady}
-                />
-              )
-            }
-            if (ext === 'txt' && activeView === 'text') {
-              return (
-                <TxtViewer
-                  selectedFile={selectedFile}
-                  mixFiles={mixFiles}
-                  resourceContext={resourceContext}
-                  onEditorReady={onEditorReady}
-                />
-              )
-            }
-            return <Viewer selectedFile={selectedFile} mixFiles={mixFiles} resourceContext={resourceContext} />
+            return (
+              <Viewer
+                selectedFile={selectedFile}
+                mixFiles={mixFiles}
+                target={target}
+                resourceContext={resourceContext}
+              />
+            )
           })()}
         </div>
       </div>
@@ -438,7 +458,7 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
           </div>
         )}
         <div>
-          <span className="text-xs text-gray-400">{t('preview.viewingFile', { name: selectedFile.split('/').pop() ?? '' })}</span>
+          <span className="text-xs text-gray-400">{t('preview.viewingFile', { name: displayName })}</span>
         </div>
       </div>
     </div>

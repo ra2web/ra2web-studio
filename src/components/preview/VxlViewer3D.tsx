@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { MixParser, MixFileInfo } from '../../services/MixParser'
 import { VxlFile } from '../../data/VxlFile'
 import { HvaFile } from '../../data/HvaFile'
+import { VirtualFile } from '../../data/vfs/VirtualFile'
 import { PaletteParser } from '../../services/palette/PaletteParser'
 import { PaletteResolver } from '../../services/palette/PaletteResolver'
 import { loadPaletteByPath } from '../../services/palette/PaletteLoader'
@@ -12,6 +13,8 @@ import { usePaletteHotkeys } from './usePaletteHotkeys'
 import type { PaletteSelectionInfo, Rgb } from '../../services/palette/PaletteTypes'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { useLocale } from '../../i18n/LocaleContext'
+import type { PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
 type MixFileData = { file: File; info: MixFileInfo }
 type HvaSelectionInfo = {
@@ -55,7 +58,7 @@ function normalizeSectionKey(name: string): string {
 }
 
 function buildHvaOptionPaths(
-  mixFiles: MixFileData[],
+  mixFiles: MixFileData[] | undefined,
   resourceContext: ResourceContext | null | undefined,
   autoHvaPath: string | null,
 ): string[] {
@@ -73,7 +76,7 @@ function buildHvaOptionPaths(
 
   add(autoHvaPath)
 
-  for (const mix of mixFiles) {
+  for (const mix of mixFiles ?? []) {
     for (const entry of mix.info.files) {
       if ((entry.extension || '').toLowerCase() !== 'hva') continue
       add(`${mix.info.name}/${entry.filename}`)
@@ -92,12 +95,24 @@ function buildHvaOptionPaths(
   return result
 }
 
-async function loadHvaByPath(path: string, mixFiles: MixFileData[]): Promise<HvaFile | null> {
+async function loadHvaByPath(
+  path: string,
+  mixFiles: MixFileData[] | undefined,
+  resourceContext: ResourceContext | null | undefined,
+): Promise<HvaFile | null> {
   const resolved = splitMixPath(path)
   if (!resolved) return null
-  const mix = mixFiles.find((m) => m.info.name === resolved.mixName)
-  if (!mix) return null
-  const vf = await MixParser.extractFile(mix.file, resolved.innerPath)
+  const mix = (mixFiles ?? []).find((m) => m.info.name === resolved.mixName)
+  let vf: VirtualFile | null = null
+  if (mix) {
+    vf = await MixParser.extractFile(mix.file, resolved.innerPath)
+  }
+  if (!vf && resourceContext) {
+    const archive = resourceContext.archives.find((item) => item.info.name === resolved.mixName)
+    if (archive) {
+      vf = await MixParser.extractFile(archive.file, resolved.innerPath)
+    }
+  }
   if (!vf) return null
   try {
     vf.stream.seek(0)
@@ -111,9 +126,15 @@ async function loadHvaByPath(path: string, mixFiles: MixFileData[]): Promise<Hva
   return hva
 }
 
-const VxlViewer3D: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resourceContext?: ResourceContext | null }> = ({
+const VxlViewer3D: React.FC<{
+  selectedFile?: string
+  mixFiles?: MixFileData[]
+  target?: PreviewTarget | null
+  resourceContext?: ResourceContext | null
+}> = ({
   selectedFile,
   mixFiles,
+  target,
   resourceContext,
 }) => {
   const { t } = useLocale()
@@ -137,11 +158,17 @@ const VxlViewer3D: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; res
     reason: '未加载',
     resolvedPath: null,
   })
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
+  const assetPath = source.resolved?.displayPath ?? selectedFile ?? ''
 
   useEffect(() => {
     setHvaPath(HVA_AUTO_VALUE)
     setHvaFrame(0)
-  }, [selectedFile])
+  }, [assetPath])
 
   useEffect(() => {
     const clamped = Math.max(0, Math.min(hvaMaxFrame, hvaFrame | 0))
@@ -167,21 +194,18 @@ const VxlViewer3D: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; res
       setLoading(true)
       setError(null)
       try {
-        const splitPath = splitMixPath(selectedFile)
-        if (!splitPath) throw new Error('Invalid path')
-        const { mixName, innerPath: inner } = splitPath
-        const mix = mixFiles.find(m => m.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-        const vf = await MixParser.extractFile(mix.file, inner)
-        if (!vf) throw new Error('File not found in MIX')
+        if (!source.resolved) throw new Error('File not found')
+        const bytes = await source.resolved.readBytes()
+        const inner = source.resolved.name
+        const vf = VirtualFile.fromBytes(bytes, inner)
 
         const vxl = new VxlFile(vf)
         if (vxl.sections.length === 0) throw new Error('Failed to parse VXL')
         const hasEmbeddedPalette = vxl.embeddedPalette.length >= 48
         const decision = PaletteResolver.resolve({
-          assetPath: selectedFile,
+          assetPath,
           assetKind: 'vxl',
-          mixFiles,
+          mixFiles: mixFiles ?? [],
           resourceContext,
           manualPalettePath: palettePath || null,
           hasEmbeddedPalette,
@@ -191,7 +215,7 @@ const VxlViewer3D: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; res
         let selectedInfo: PaletteSelectionInfo = decision.selection
         let finalPalette: Rgb[] | null = null
         if (decision.resolvedPalettePath) {
-          const loaded = await loadPaletteByPath(decision.resolvedPalettePath, mixFiles)
+          const loaded = await loadPaletteByPath(decision.resolvedPalettePath, resourceContext ?? mixFiles ?? [])
           if (loaded) {
             finalPalette = loaded
           } else {
@@ -217,7 +241,7 @@ const VxlViewer3D: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; res
         setPaletteInfo(selectedInfo)
         const pal = toBytePalette(finalPalette)
 
-        const autoHvaPath = replaceExtension(selectedFile, 'hva')
+        const autoHvaPath = replaceExtension(assetPath, 'hva')
         const hvaCandidatePaths = buildHvaOptionPaths(mixFiles, resourceContext, autoHvaPath)
         if (!disposed) setHvaOptions(hvaCandidatePaths)
         const targetHvaPath = hvaPath || autoHvaPath
@@ -229,7 +253,7 @@ const VxlViewer3D: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; res
           resolvedPath: targetHvaPath || null,
         }
         if (targetHvaPath) {
-          loadedHva = await loadHvaByPath(targetHvaPath, mixFiles)
+          loadedHva = await loadHvaByPath(targetHvaPath, mixFiles, resourceContext)
           if (loadedHva) {
             loadedHvaFrameCount = loadedHva.sections.reduce(
               (max, section) => Math.max(max, section.matrices.length),
@@ -414,7 +438,7 @@ const VxlViewer3D: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; res
         }
         loop()
       } catch (e: any) {
-        if (!disposed) setError(e?.message || 'Failed to render VXL 3D')
+        if (!disposed) setError(e?.message || source.error || 'Failed to render VXL 3D')
       } finally {
         if (!disposed) setLoading(false)
       }
@@ -434,7 +458,7 @@ const VxlViewer3D: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; res
       renderer = null
       controls = null
     }
-  }, [selectedFile, mixFiles, palettePath, resourceContext, hvaPath, t])
+  }, [assetPath, mixFiles, palettePath, resourceContext, source.error, source.resolved, hvaPath, t])
 
   const paletteOptions = useMemo(
     () => [{ value: '', label: t('viewer.paletteAutoEmbedded') }, ...paletteList.map((p) => ({ value: p, label: p.split('/').pop() || p }))],
@@ -475,7 +499,7 @@ const VxlViewer3D: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; res
             searchPlaceholder={t('viewer.searchPalette')}
             noResultsText={t('viewer.noMatchPalette')}
             triggerClassName="min-w-[160px] max-w-[240px] bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-xs text-left flex items-center gap-2"
-            menuClassName="absolute z-50 mt-1 w-[260px] max-w-[70vw] rounded border border-gray-700 bg-gray-800 shadow-xl"
+            menuClassName="z-50 w-[260px] max-w-[70vw] rounded border border-gray-700 bg-gray-800 shadow-xl"
           />
         </label>
         <span className="text-gray-500 truncate max-w-[320px]">{paletteInfo.source} - {paletteInfo.reason === 'Embedded palette' ? t('viewer.embeddedPalette') : paletteInfo.reason === 'Manually specified' ? t('viewer.manuallySpecified') : paletteInfo.reason}</span>
@@ -493,7 +517,7 @@ const VxlViewer3D: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; res
             searchPlaceholder={t('viewer.searchHva')}
             noResultsText={t('viewer.noMatchHva')}
             triggerClassName="min-w-[180px] max-w-[280px] bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-xs text-left flex items-center gap-2"
-            menuClassName="absolute z-50 mt-1 w-[280px] max-w-[70vw] rounded border border-gray-700 bg-gray-800 shadow-xl"
+            menuClassName="z-50 w-[280px] max-w-[70vw] rounded border border-gray-700 bg-gray-800 shadow-xl"
           />
         </label>
         <label className="flex items-center gap-1">
@@ -536,5 +560,3 @@ const VxlViewer3D: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; res
 }
 
 export default VxlViewer3D
-
-

@@ -1,21 +1,39 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { MixParser, MixFileInfo } from '../../services/MixParser'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { vscodeEditorOptions } from './monacoOptions'
-import type { PreviewEditorHandle } from './types'
-
-type MixFileData = { file: File; info: MixFileInfo }
+import type { PreviewEditorHandle, PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
 const TxtViewer: React.FC<{
-  selectedFile: string
-  mixFiles: MixFileData[]
+  selectedFile?: string
+  mixFiles?: Array<{ file: File; info: any }>
+  target?: PreviewTarget | null
   resourceContext?: ResourceContext | null
+  value?: string
+  loadingOverride?: boolean
+  errorOverride?: string | null
+  onChange?: (next: string) => void
+  readOnly?: boolean
   onEditorReady?: (handle: PreviewEditorHandle | null) => void
-}> = ({ selectedFile, mixFiles, onEditorReady }) => {
+}> = ({
+  selectedFile,
+  mixFiles,
+  target,
+  value,
+  loadingOverride,
+  errorOverride,
+  onChange,
+  readOnly = true,
+  onEditorReady,
+}) => {
   const [content, setContent] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [Monaco, setMonaco] = useState<React.ComponentType<any> | null>(null)
+  const externallyManaged = value !== undefined || loadingOverride !== undefined || errorOverride !== undefined
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
 
   useEffect(() => {
     let mounted = true
@@ -32,34 +50,27 @@ const TxtViewer: React.FC<{
   }, [onEditorReady])
 
   useEffect(() => {
+    if (externallyManaged) return
     let cancelled = false
     async function load() {
-      setLoading(true)
-      setError(null)
       setContent('')
       try {
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('Invalid path')
-        const mixName = selectedFile.substring(0, slash)
-        const inner = selectedFile.substring(slash + 1)
-        const mix = mixFiles.find(m => m.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-        const vf = await MixParser.extractFile(mix.file, inner)
-        if (!vf) throw new Error('File not found in MIX')
-        const text = vf.readAsString()
+        if (!source.resolved) return
+        const text = await source.resolved.readText()
         if (!cancelled) setContent(text)
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'Failed to load TXT')
-      } finally {
-        if (!cancelled) setLoading(false)
+      } catch {
+        // error is handled by source hook
       }
     }
-    load()
+    if (source.resolved) {
+      void load()
+    }
     return () => { cancelled = true }
-  }, [selectedFile, mixFiles])
+  }, [externallyManaged, source.resolved])
 
-  if (loading) return <div className="h-full w-full flex items-center justify-center text-gray-400">加载中...</div>
-  if (error) return <div className="p-3 text-red-400 text-sm">{error}</div>
+  const effectiveContent = value ?? content
+  const effectiveLoading = loadingOverride ?? (!externallyManaged ? source.loading : false)
+  const effectiveError = errorOverride ?? (!externallyManaged ? source.error : null)
 
   const handleEditorMount = useCallback((editor: any) => {
     const handle: PreviewEditorHandle = {
@@ -78,10 +89,13 @@ const TxtViewer: React.FC<{
         const selection = editor.getSelection?.()
         return !!selection && !selection.isEmpty()
       },
-      canEdit: () => false,
+      canEdit: () => !readOnly,
     }
     onEditorReady?.(handle)
-  }, [onEditorReady])
+  }, [onEditorReady, readOnly])
+
+  if (effectiveLoading) return <div className="h-full w-full flex items-center justify-center text-gray-400">加载中...</div>
+  if (effectiveError) return <div className="p-3 text-red-400 text-sm">{effectiveError}</div>
 
   if (Monaco) {
     const Editor = Monaco
@@ -93,13 +107,14 @@ const TxtViewer: React.FC<{
       >
         <Editor
           height="100%"
-          path={selectedFile}
+          path={source.resolved?.displayPath ?? selectedFile ?? ''}
           defaultLanguage="plaintext"
-          value={content || ''}
+          value={effectiveContent || ''}
+          onChange={(next: string | undefined) => onChange?.(next ?? '')}
           onMount={handleEditorMount}
           options={{
             ...vscodeEditorOptions,
-            readOnly: true,
+            readOnly,
           }}
           theme="vs-dark"
         />
@@ -109,7 +124,7 @@ const TxtViewer: React.FC<{
 
   return (
     <div className="vscode-editor-fallback">
-      <pre className="vscode-editor-fallback__content">{content}</pre>
+      <pre className="vscode-editor-fallback__content">{effectiveContent}</pre>
     </div>
   )
 }

@@ -14,18 +14,20 @@ export class GameResConfig {
       const raw = globalThis.localStorage?.getItem(STORAGE_KEY)
       if (!raw) {
         return {
-          activeModName: null,
+          activeProjectName: null,
           lastImportAt: null,
         }
       }
-      const parsed = JSON.parse(raw) as Partial<GameResPersistedConfig>
+      const parsed = JSON.parse(raw) as Partial<GameResPersistedConfig> & {
+        activeModName?: string | null
+      }
       return {
-        activeModName: parsed.activeModName ?? null,
+        activeProjectName: parsed.activeProjectName ?? parsed.activeModName ?? null,
         lastImportAt: typeof parsed.lastImportAt === 'number' ? parsed.lastImportAt : null,
       }
     } catch {
       return {
-        activeModName: null,
+        activeProjectName: null,
         lastImportAt: null,
       }
     }
@@ -35,9 +37,9 @@ export class GameResConfig {
     globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(config))
   }
 
-  static markImported(activeModName: string | null): void {
+  static markImported(activeProjectName: string | null): void {
     this.save({
-      activeModName,
+      activeProjectName,
       lastImportAt: Date.now(),
     })
   }

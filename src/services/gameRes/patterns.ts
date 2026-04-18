@@ -16,6 +16,40 @@ export function normalizeResourceFilename(filename: string): string {
   return filename.replace(/\\/g, '/').split('/').pop()?.trim() ?? filename.trim()
 }
 
+export function normalizeResourcePath(pathLike: string): string {
+  const normalized = pathLike.replace(/\\/g, '/')
+  const parts = normalized
+    .split('/')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && part !== '.')
+
+  if (parts.some((part) => part === '..')) {
+    throw new Error('路径不能包含 ..')
+  }
+
+  return parts.join('/')
+}
+
+export function getResourcePathBasename(pathLike: string): string {
+  const normalized = normalizeResourcePath(pathLike)
+  const parts = normalized.split('/')
+  return parts[parts.length - 1] ?? ''
+}
+
+export function getResourcePathDirname(pathLike: string): string {
+  const normalized = normalizeResourcePath(pathLike)
+  const parts = normalized.split('/')
+  parts.pop()
+  return parts.join('/')
+}
+
+export function getResourcePathExtension(pathLike: string): string {
+  const baseName = getResourcePathBasename(pathLike)
+  const dot = baseName.lastIndexOf('.')
+  if (dot < 0 || dot === baseName.length - 1) return ''
+  return baseName.slice(dot + 1).toLowerCase()
+}
+
 export function getPatchSequence(name: string): number | null {
   const m = name.match(PATCH_MIX_RE)
   if (!m) return null

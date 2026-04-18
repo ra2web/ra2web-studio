@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react'
-import { MixParser, MixFileInfo } from '../../services/MixParser'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
+import type { PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
-type MixFileData = { file: File; info: MixFileInfo }
 type HexRow = {
   lineNo: string
   rawData: string
@@ -10,11 +10,19 @@ type HexRow = {
 }
 type HexColumnKey = 'line' | 'raw' | 'translated'
 
-const HexViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resourceContext?: ResourceContext | null }> = ({ selectedFile, mixFiles }) => {
+const HexViewer: React.FC<{
+  selectedFile?: string
+  mixFiles?: Array<{ file: File; info: any }>
+  target?: PreviewTarget | null
+  resourceContext?: ResourceContext | null
+}> = ({ selectedFile, mixFiles, target }) => {
   const [rows, setRows] = useState<HexRow[]>([])
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
   const [activeSelectionColumn, setActiveSelectionColumn] = useState<HexColumnKey | null>(null)
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
 
   useEffect(() => {
     const clearActiveColumn = () => setActiveSelectionColumn(null)
@@ -25,19 +33,10 @@ const HexViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
   useEffect(() => {
     let cancelled = false
     async function load() {
-      setLoading(true)
-      setError(null)
       setRows([])
       try {
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('Invalid path')
-        const mixName = selectedFile.substring(0, slash)
-        const inner = selectedFile.substring(slash + 1)
-        const mix = mixFiles.find(m => m.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-        const vf = await MixParser.extractFile(mix.file, inner)
-        if (!vf) throw new Error('File not found in MIX')
-        const bytes = vf.getBytes()
+        if (!source.resolved) return
+        const bytes = await source.resolved.readBytes()
         const viewLen = Math.min(bytes.length, 4096)
         const out: HexRow[] = []
         for (let off = 0; off < viewLen; off += 16) {
@@ -55,23 +54,23 @@ const HexViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
           })
         }
         if (!cancelled) setRows(out)
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'Failed to load file')
-      } finally {
-        if (!cancelled) setLoading(false)
+      } catch {
+        // error is handled by source hook
       }
     }
-    load()
+    if (source.resolved) {
+      void load()
+    }
     return () => { cancelled = true }
-  }, [selectedFile, mixFiles])
+  }, [source.resolved])
 
   const getColumnSelectionClass = (column: HexColumnKey): string => {
     if (activeSelectionColumn && activeSelectionColumn !== column) return 'select-none'
     return 'select-text'
   }
 
-  if (loading) return <div className="h-full w-full flex items-center justify-center text-gray-400">加载中...</div>
-  if (error) return <div className="p-3 text-red-400 text-sm">{error}</div>
+  if (source.loading) return <div className="h-full w-full flex items-center justify-center text-gray-400">加载中...</div>
+  if (source.error) return <div className="p-3 text-red-400 text-sm">{source.error}</div>
 
   return (
     <div className="w-full h-full overflow-x-auto">
@@ -122,5 +121,3 @@ const HexViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
 }
 
 export default HexViewer
-
-

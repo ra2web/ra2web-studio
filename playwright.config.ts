@@ -8,6 +8,9 @@ export default defineConfig({
   testDir: './tests/e2e',
   timeout: 60_000,
   fullyParallel: false,
+  // E2E fixtures seed the same OPFS origin storage, so multiple workers would
+  // race on the shared workspace and make tests flaky.
+  workers: 1,
   use: {
     baseURL,
     headless: true,

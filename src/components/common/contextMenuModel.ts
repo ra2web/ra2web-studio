@@ -1,31 +1,34 @@
-export type BrowserMode = 'workspace' | 'repository'
+import type { SearchResultKind, SearchScope, StudioMode } from '../../types/studio'
 
 export type ContextMenuTargetKind =
   | 'import-shell'
   | 'global-shell'
   | 'file-tree-row'
   | 'file-tree-empty'
-  | 'repository-group-header'
   | 'preview-selection'
   | 'metadata-drawer'
   | 'editable-text'
+  | 'search-result'
 
 export type ContextMenuEditableKind = 'input' | 'monaco'
 
 export type ContextMenuCommandId =
   | 'selectArchive'
   | 'selectGameDirectory'
-  | 'importPatchMix'
+  | 'createProject'
+  | 'renameProject'
+  | 'deleteProject'
+  | 'importProjectFiles'
   | 'importToCurrentMix'
   | 'exportTopMix'
   | 'exportCurrentMix'
+  | 'exportProjectZip'
   | 'reimportBaseDirectory'
   | 'reimportBaseArchives'
-  | 'clearPatches'
-  | 'switchToWorkspace'
-  | 'switchToRepository'
+  | 'switchToBase'
+  | 'switchToProjects'
+  | 'switchToSearch'
   | 'navigateUp'
-  | 'setActiveMix'
   | 'rawExport'
   | 'imageGifExport'
   | 'enterCurrentMix'
@@ -35,6 +38,8 @@ export type ContextMenuCommandId =
   | 'closeMetadata'
   | 'saveFile'
   | 'discardChanges'
+  | 'addToProject'
+  | 'openSearchResult'
   | 'undo'
   | 'redo'
   | 'cut'
@@ -61,6 +66,8 @@ export type ContextMenuIconName =
   | 'upload'
   | 'arrow-up'
   | 'panel'
+  | 'search'
+  | 'box'
 
 export type ContextMenuEntry =
   | {
@@ -86,10 +93,15 @@ export interface ContextMenuTarget {
   isMixFile?: boolean
   editableKind?: ContextMenuEditableKind
   inputElement?: HTMLInputElement | HTMLTextAreaElement
+  searchScope?: SearchScope
+  resultKind?: SearchResultKind
+  projectName?: string
+  topLevelOwner?: string
+  containerChain?: string[]
 }
 
 export interface ContextMenuBuildState {
-  browserMode: BrowserMode
+  studioMode: StudioMode
   resourceReady: boolean
   loading: boolean
   hasMixFiles: boolean
@@ -101,10 +113,13 @@ export interface ContextMenuBuildState {
   hasUnsavedChanges: boolean
   metadataDrawerOpen: boolean
   canNavigateUp: boolean
-  targetMixIsActive: boolean
   editableReadOnly: boolean
   editableHasSelection: boolean
   editableHasValue: boolean
+  editableCanCopyWithoutSelection: boolean
+  hasProjects: boolean
+  hasActiveProject: boolean
+  canAddToProject: boolean
 }
 
 type TranslateFn = (key: string) => string
@@ -173,6 +188,19 @@ function findEditableInputElement(
   return null
 }
 
+function parseContainerChain(raw: string | undefined): string[] | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) {
+      return parsed.filter((item): item is string => typeof item === 'string')
+    }
+  } catch {
+    return undefined
+  }
+  return undefined
+}
+
 export function resolveContextMenuTarget(
   element: HTMLElement | null,
   pointer: Pick<ContextMenuTarget, 'clientX' | 'clientY'>,
@@ -205,6 +233,11 @@ export function resolveContextMenuTarget(
     filePath: contextRoot?.dataset.filePath,
     mixName: contextRoot?.dataset.mixName,
     isMixFile: contextRoot?.dataset.isMixFile === 'true' || contextRoot?.dataset.isMixFile === '1',
+    searchScope: contextRoot?.dataset.searchScope as SearchScope | undefined,
+    resultKind: contextRoot?.dataset.resultKind as SearchResultKind | undefined,
+    projectName: contextRoot?.dataset.projectName,
+    topLevelOwner: contextRoot?.dataset.topLevelOwner,
+    containerChain: parseContainerChain(contextRoot?.dataset.containerChain),
     clientX: pointer.clientX,
     clientY: pointer.clientY,
   }
@@ -237,33 +270,28 @@ export function buildContextMenuItems(args: {
   const items: ContextMenuEntry[] = []
   const modKey = isMac ? 'Cmd' : 'Ctrl'
 
-  const pushGlobalEntries = () => {
+  const appendModeSwitches = () => {
     appendItem(items, {
-      id: 'importPatchMix',
-      label: t('contextMenu.importPatchMix'),
-      icon: 'upload',
-      disabled: state.loading || !state.resourceReady,
-    })
-    appendItem(items, {
-      id: 'importToCurrentMix',
-      label: t('contextMenu.importToCurrentMix'),
-      icon: 'folder-plus',
-      disabled: state.loading || !state.resourceReady || !state.hasMixFiles,
-    })
-    appendSeparator(items)
-    appendItem(items, {
-      id: 'exportTopMix',
-      label: t('contextMenu.exportTopMix'),
-      icon: 'download',
-      disabled: state.loading || !state.hasMixFiles,
-    })
-    appendItem(items, {
-      id: 'exportCurrentMix',
-      label: t('contextMenu.exportCurrentMix'),
+      id: 'switchToBase',
+      label: t('contextMenu.switchToBase'),
       icon: 'archive',
-      disabled: state.loading || !state.hasMixFiles,
+      disabled: state.loading || state.studioMode === 'base',
     })
-    appendSeparator(items)
+    appendItem(items, {
+      id: 'switchToProjects',
+      label: t('contextMenu.switchToProjects'),
+      icon: 'box',
+      disabled: state.loading || state.studioMode === 'projects',
+    })
+    appendItem(items, {
+      id: 'switchToSearch',
+      label: t('contextMenu.switchToSearch'),
+      icon: 'search',
+      disabled: state.loading || state.studioMode === 'search',
+    })
+  }
+
+  const appendBaseGlobalEntries = () => {
     appendItem(items, {
       id: 'reimportBaseDirectory',
       label: t('contextMenu.reimportBaseDirectory'),
@@ -278,11 +306,76 @@ export function buildContextMenuItems(args: {
     })
     appendSeparator(items)
     appendItem(items, {
-      id: 'clearPatches',
-      label: t('contextMenu.clearPatches'),
-      icon: 'trash',
+      id: 'exportTopMix',
+      label: t('contextMenu.exportTopMix'),
+      icon: 'download',
+      disabled: state.loading || !state.hasMixFiles,
+    })
+    appendItem(items, {
+      id: 'exportCurrentMix',
+      label: t('contextMenu.exportCurrentMix'),
+      icon: 'archive',
+      disabled: state.loading || !state.hasMixFiles,
+    })
+    appendItem(items, {
+      id: 'addToProject',
+      label: t('contextMenu.addToProject'),
+      icon: 'folder-plus',
+      disabled: state.loading || !state.canAddToProject,
+    })
+  }
+
+  const appendProjectGlobalEntries = () => {
+    appendItem(items, {
+      id: 'createProject',
+      label: t('contextMenu.createProject'),
+      icon: 'folder-plus',
       disabled: state.loading,
+    })
+    appendItem(items, {
+      id: 'renameProject',
+      label: t('contextMenu.renameProject'),
+      icon: 'pencil',
+      disabled: state.loading || !state.hasActiveProject,
+    })
+    appendItem(items, {
+      id: 'deleteProject',
+      label: t('contextMenu.deleteProject'),
+      icon: 'trash',
+      disabled: state.loading || !state.hasActiveProject,
       danger: true,
+    })
+    appendSeparator(items)
+    appendItem(items, {
+      id: 'importProjectFiles',
+      label: t('contextMenu.importProjectFiles'),
+      icon: 'upload',
+      disabled: state.loading || !state.hasActiveProject,
+    })
+    appendItem(items, {
+      id: 'importToCurrentMix',
+      label: t('contextMenu.importToCurrentMix'),
+      icon: 'folder-plus',
+      disabled: state.loading || !state.hasActiveProject || !state.hasMixFiles,
+    })
+    appendItem(items, {
+      id: 'exportProjectZip',
+      label: t('contextMenu.exportProjectZip'),
+      icon: 'download',
+      disabled: state.loading || !state.hasActiveProject,
+    })
+    appendSeparator(items)
+    appendItem(items, {
+      id: 'exportTopMix',
+      label: t('contextMenu.exportTopMix'),
+      icon: 'download',
+      disabled: state.loading || !state.hasMixFiles,
+    })
+    appendItem(items, {
+      id: 'exportCurrentMix',
+      label: t('contextMenu.exportCurrentMix'),
+      icon: 'archive',
+      disabled: state.loading || !state.hasMixFiles,
     })
   }
 
@@ -302,21 +395,11 @@ export function buildContextMenuItems(args: {
       })
       return items
     }
-    case 'global-shell': {
-      pushGlobalEntries()
-      return items
-    }
+    case 'global-shell':
     case 'file-tree-empty': {
-      appendItem(items, {
-        id: state.browserMode === 'workspace' ? 'switchToRepository' : 'switchToWorkspace',
-        label:
-          state.browserMode === 'workspace'
-            ? t('contextMenu.switchToRepository')
-            : t('contextMenu.switchToWorkspace'),
-        icon: 'panel',
-        disabled: state.loading,
-      })
+      appendModeSwitches()
       if (state.canNavigateUp) {
+        appendSeparator(items)
         appendItem(items, {
           id: 'navigateUp',
           label: t('contextMenu.navigateUp'),
@@ -325,22 +408,29 @@ export function buildContextMenuItems(args: {
         })
       }
       appendSeparator(items)
-      pushGlobalEntries()
+      if (state.studioMode === 'projects') {
+        appendProjectGlobalEntries()
+      } else if (state.studioMode === 'base') {
+        appendBaseGlobalEntries()
+      }
       return items
     }
-    case 'repository-group-header': {
+    case 'search-result': {
       appendItem(items, {
-        id: 'setActiveMix',
-        label: t('contextMenu.setActiveMix'),
-        icon: 'archive',
-        disabled: state.loading || state.targetMixIsActive,
+        id: 'openSearchResult',
+        label: t('contextMenu.openSearchResult'),
+        icon: 'search',
+        disabled: state.loading,
       })
-      appendItem(items, {
-        id: 'exportTopMix',
-        label: t('contextMenu.exportTopMix'),
-        icon: 'download',
-        disabled: state.loading || !state.hasMixFiles,
-      })
+      if (target.searchScope === 'base') {
+        appendSeparator(items)
+        appendItem(items, {
+          id: 'addToProject',
+          label: t('contextMenu.addToProject'),
+          icon: 'folder-plus',
+          disabled: state.loading || !state.hasProjects,
+        })
+      }
       return items
     }
     case 'file-tree-row':
@@ -385,6 +475,18 @@ export function buildContextMenuItems(args: {
           disabled: state.loading || !state.hasFileSelection,
         })
       }
+
+      if (state.studioMode === 'base') {
+        appendSeparator(items)
+        appendItem(items, {
+          id: 'addToProject',
+          label: t('contextMenu.addToProject'),
+          icon: 'folder-plus',
+          disabled: state.loading || !state.canAddToProject,
+        })
+        return items
+      }
+
       appendSeparator(items)
       if (state.canSaveTarget && state.hasUnsavedChanges) {
         appendItem(items, {
@@ -444,7 +546,7 @@ export function buildContextMenuItems(args: {
         id: 'copy',
         label: t('contextMenu.copy'),
         icon: 'copy',
-        disabled: !state.editableHasSelection,
+        disabled: !state.editableHasSelection && !state.editableCanCopyWithoutSelection,
         hint: `${modKey}+C`,
       })
       appendItem(items, {

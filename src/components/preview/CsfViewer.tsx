@@ -1,21 +1,28 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { MixParser, MixFileInfo } from '../../services/MixParser'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { useLocale } from '../../i18n/LocaleContext'
 import { CsfEntry, CsfFile } from '../../data/CsfFile'
-
-type MixFileData = { file: File; info: MixFileInfo }
+import { DataStream } from '../../data/DataStream'
+import { VirtualFile } from '../../data/vfs/VirtualFile'
+import type { PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
 const CsfViewer: React.FC<{
-  selectedFile: string
-  mixFiles: MixFileData[]
+  selectedFile?: string
+  mixFiles?: Array<{ file: File; info: any }>
+  target?: PreviewTarget | null
   resourceContext?: ResourceContext | null
-}> = ({ selectedFile, mixFiles }) => {
+}> = ({ selectedFile, mixFiles, target }) => {
   const { t } = useLocale()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [csfFile, setCsfFile] = useState<CsfFile | null>(null)
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -25,15 +32,11 @@ const CsfViewer: React.FC<{
       setError(null)
       setCsfFile(null)
       try {
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('Invalid path')
-        const mixName = selectedFile.substring(0, slash)
-        const innerPath = selectedFile.substring(slash + 1)
-        const mix = mixFiles.find((item) => item.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-        const vf = await MixParser.extractFile(mix.file, innerPath)
-        if (!vf) throw new Error('File not found in MIX')
-
+        if (!source.resolved) return
+        const bytes = await source.resolved.readBytes()
+        const buffer = new ArrayBuffer(bytes.byteLength)
+        new Uint8Array(buffer).set(bytes)
+        const vf = new VirtualFile(new DataStream(buffer), source.resolved.name)
         const parsed = CsfFile.fromVirtualFile(vf)
         if (!cancelled) setCsfFile(parsed)
       } catch (e: any) {
@@ -45,11 +48,13 @@ const CsfViewer: React.FC<{
       }
     }
 
-    loadCsf()
+    if (source.resolved) {
+      void loadCsf()
+    }
     return () => {
       cancelled = true
     }
-  }, [selectedFile, mixFiles])
+  }, [source.resolved])
 
   const filteredEntries = useMemo(() => {
     const entries = csfFile?.entries ?? []
@@ -167,4 +172,3 @@ const CsfViewer: React.FC<{
 }
 
 export default CsfViewer
-

@@ -1,5 +1,10 @@
-import type { ImportedResourceFile, ResourceBucket } from './types'
-import { normalizeResourceFilename } from './patterns'
+import type { ImportedResourceFile, ImportedResourceTreeEntry, ResourceBucket } from './types'
+import {
+  getResourcePathBasename,
+  getResourcePathDirname,
+  normalizeResourceFilename,
+  normalizeResourcePath,
+} from './patterns'
 
 type AnyDirectoryHandle = any
 type AnyFileHandle = any
@@ -53,6 +58,93 @@ async function tryGetDirectory(parent: AnyDirectoryHandle, name: string): Promis
   }
 }
 
+async function tryGetFile(parent: AnyDirectoryHandle, name: string): Promise<AnyFileHandle | null> {
+  try {
+    return await parent.getFileHandle(name)
+  } catch {
+    return null
+  }
+}
+
+function splitRelativePath(pathLike: string): string[] {
+  const normalized = normalizeResourcePath(pathLike)
+  return normalized ? normalized.split('/') : []
+}
+
+async function resolveNestedDirectory(
+  bucket: ResourceBucket,
+  modName: string | null,
+  relativeDirPath: string,
+  create: boolean,
+): Promise<AnyDirectoryHandle> {
+  let current = await resolveBucketDir(bucket, modName)
+  const parts = splitRelativePath(relativeDirPath)
+  for (const part of parts) {
+    current = create
+      ? await current.getDirectoryHandle(part, { create: true })
+      : await current.getDirectoryHandle(part)
+  }
+  return current
+}
+
+async function resolveParentDirectoryForFile(
+  bucket: ResourceBucket,
+  modName: string | null,
+  relativePath: string,
+  create: boolean,
+): Promise<{ dir: AnyDirectoryHandle; basename: string; normalizedPath: string }> {
+  const normalizedPath = normalizeResourcePath(relativePath)
+  const basename = getResourcePathBasename(normalizedPath)
+  if (!basename) {
+    throw new Error('文件路径不能为空')
+  }
+  const dirname = getResourcePathDirname(normalizedPath)
+  const dir = dirname
+    ? await resolveNestedDirectory(bucket, modName, dirname, create)
+    : await resolveBucketDir(bucket, modName)
+  return { dir, basename, normalizedPath }
+}
+
+async function collectTreeEntries(
+  dir: AnyDirectoryHandle,
+  bucket: ResourceBucket,
+  modName: string | null,
+  prefix: string,
+  output: ImportedResourceTreeEntry[],
+): Promise<void> {
+  const pending: Array<Promise<void>> = []
+  for await (const [entryName, handle] of dir.entries()) {
+    const entryPath = prefix ? `${prefix}/${entryName}` : entryName
+    if (handle.kind === 'file') {
+      pending.push((async () => {
+        const file = await handle.getFile()
+        output.push({
+          bucket,
+          kind: 'file',
+          path: entryPath,
+          name: entryName,
+          size: file.size,
+          lastModified: file.lastModified,
+          modName: bucket === 'mod' ? (modName ?? undefined) : undefined,
+        })
+      })())
+      continue
+    }
+
+    output.push({
+      bucket,
+      kind: 'directory',
+      path: entryPath,
+      name: entryName,
+      size: 0,
+      lastModified: 0,
+      modName: bucket === 'mod' ? (modName ?? undefined) : undefined,
+    })
+    pending.push(collectTreeEntries(handle, bucket, modName, entryPath, output))
+  }
+  await Promise.all(pending)
+}
+
 export class FileSystemUtil {
   static isOpfsSupported(): boolean {
     const storageAny = navigator.storage as any
@@ -73,22 +165,40 @@ export class FileSystemUtil {
     modName: string | null = null,
     forceName?: string,
   ): Promise<string> {
-    const dir = await resolveBucketDir(bucket, modName)
-    const normalizedName = normalizeResourceFilename(forceName ?? source.name)
-    const fileHandle: AnyFileHandle = await dir.getFileHandle(normalizedName, { create: true })
+    const requestedPath = forceName ?? source.name
+    const normalizedPath = bucket === 'mod'
+      ? normalizeResourcePath(requestedPath)
+      : normalizeResourceFilename(requestedPath)
+    const { dir, basename } = await resolveParentDirectoryForFile(bucket, modName, normalizedPath, true)
+    const fileHandle: AnyFileHandle = await dir.getFileHandle(basename, { create: true })
     const writable = await fileHandle.createWritable()
     try {
       await writable.write(await source.arrayBuffer())
       await writable.close()
-    } catch (e) {
+    } catch (error) {
       try {
         await writable.abort()
       } catch {
         // ignore abort failure
       }
-      throw e
+      throw error
     }
-    return normalizedName
+    return normalizedPath
+  }
+
+  static async ensureBucket(bucket: ResourceBucket, modName: string | null = null): Promise<void> {
+    await resolveBucketDir(bucket, modName)
+  }
+
+  static async ensureDirectory(
+    bucket: ResourceBucket,
+    relativeDirPath: string,
+    modName: string | null = null,
+  ): Promise<string> {
+    const normalized = normalizeResourcePath(relativeDirPath)
+    if (!normalized) return ''
+    await resolveNestedDirectory(bucket, modName, normalized, true)
+    return normalized
   }
 
   static async readImportedFile(
@@ -96,29 +206,65 @@ export class FileSystemUtil {
     filename: string,
     modName: string | null = null,
   ): Promise<File> {
-    const dir = await resolveBucketDir(bucket, modName)
-    const fileHandle: AnyFileHandle = await dir.getFileHandle(normalizeResourceFilename(filename))
+    const normalized = bucket === 'mod'
+      ? normalizeResourcePath(filename)
+      : normalizeResourceFilename(filename)
+    const { dir, basename } = await resolveParentDirectoryForFile(bucket, modName, normalized, false)
+    const fileHandle: AnyFileHandle = await dir.getFileHandle(basename)
     return fileHandle.getFile()
+  }
+
+  static async copyImportedFile(args: {
+    sourceBucket: ResourceBucket
+    sourceFilename: string
+    targetBucket: ResourceBucket
+    sourceModName?: string | null
+    targetModName?: string | null
+    targetFilename?: string
+  }): Promise<string> {
+    const sourceFile = await this.readImportedFile(
+      args.sourceBucket,
+      args.sourceFilename,
+      args.sourceModName ?? null,
+    )
+    const normalizedTargetFilename = args.targetFilename ?? args.sourceFilename
+    const copy = new File([await sourceFile.arrayBuffer()], getResourcePathBasename(normalizedTargetFilename), {
+      type: sourceFile.type || 'application/octet-stream',
+      lastModified: sourceFile.lastModified,
+    })
+    return this.writeImportedFile(
+      args.targetBucket,
+      copy,
+      args.targetModName ?? null,
+      normalizedTargetFilename,
+    )
   }
 
   static async listImportedFiles(
     bucket: ResourceBucket,
     modName: string | null = null,
   ): Promise<ImportedResourceFile[]> {
+    const entries = await this.listImportedTree(bucket, modName)
+    return entries
+      .filter((entry): entry is ImportedResourceTreeEntry & { kind: 'file' } => entry.kind === 'file')
+      .map((entry) => ({
+        bucket: entry.bucket,
+        name: entry.path,
+        size: entry.size,
+        lastModified: entry.lastModified,
+        modName: entry.modName,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+  }
+
+  static async listImportedTree(
+    bucket: ResourceBucket,
+    modName: string | null = null,
+  ): Promise<ImportedResourceTreeEntry[]> {
     const dir = await resolveBucketDir(bucket, modName)
-    const result: ImportedResourceFile[] = []
-    for await (const [entryName, handle] of dir.entries()) {
-      if (handle.kind !== 'file') continue
-      const file = await handle.getFile()
-      result.push({
-        bucket,
-        name: entryName,
-        size: file.size,
-        lastModified: file.lastModified,
-        modName: bucket === 'mod' ? (modName ?? undefined) : undefined,
-      })
-    }
-    result.sort((a, b) => a.name.localeCompare(b.name))
+    const result: ImportedResourceTreeEntry[] = []
+    await collectTreeEntries(dir, bucket, modName, '', result)
+    result.sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }))
     return result
   }
 
@@ -138,9 +284,56 @@ export class FileSystemUtil {
 
   static async listAllImportedFiles(activeModName: string | null): Promise<ImportedResourceFile[]> {
     const base = await this.listImportedFiles('base')
-    const patch = await this.listImportedFiles('patch')
     const mod = activeModName ? await this.listImportedFiles('mod', activeModName) : []
-    return [...base, ...patch, ...mod]
+    return [...base, ...mod]
+  }
+
+  static async removeImportedEntry(
+    bucket: ResourceBucket,
+    relativePath: string,
+    modName: string | null = null,
+    recursive: boolean = true,
+  ): Promise<void> {
+    const normalized = normalizeResourcePath(relativePath)
+    if (!normalized) {
+      throw new Error('路径不能为空')
+    }
+    const dirname = getResourcePathDirname(normalized)
+    const basename = getResourcePathBasename(normalized)
+    const parentDir = dirname
+      ? await resolveNestedDirectory(bucket, modName, dirname, false)
+      : await resolveBucketDir(bucket, modName)
+    await parentDir.removeEntry(basename, { recursive })
+  }
+
+  static async readImportedDirectoryHandle(
+    bucket: ResourceBucket,
+    relativePath: string,
+    modName: string | null = null,
+  ): Promise<AnyDirectoryHandle> {
+    const normalized = normalizeResourcePath(relativePath)
+    if (!normalized) {
+      return resolveBucketDir(bucket, modName)
+    }
+    return resolveNestedDirectory(bucket, modName, normalized, false)
+  }
+
+  static async importedEntryExists(
+    bucket: ResourceBucket,
+    relativePath: string,
+    modName: string | null = null,
+  ): Promise<boolean> {
+    const normalized = normalizeResourcePath(relativePath)
+    if (!normalized) return true
+    const dirname = getResourcePathDirname(normalized)
+    const basename = getResourcePathBasename(normalized)
+    const parentDir = dirname
+      ? await resolveNestedDirectory(bucket, modName, dirname, false)
+      : await resolveBucketDir(bucket, modName)
+    const fileHandle = await tryGetFile(parentDir, basename)
+    if (fileHandle) return true
+    const dirHandle = await tryGetDirectory(parentDir, basename)
+    return Boolean(dirHandle)
   }
 
   static async clearWorkspace(): Promise<void> {

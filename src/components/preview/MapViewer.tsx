@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { MixParser, MixFileInfo } from '../../services/MixParser'
+import { MixFileInfo } from '../../services/MixParser'
 import { useLocale } from '../../i18n/LocaleContext'
 import {
   MapPreviewDecodeResult,
@@ -8,6 +8,8 @@ import {
   projectStartingLocationToPreview,
 } from '../../data/map/MapPreviewDecoder'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
+import type { PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
 type MixFileData = { file: File; info: MixFileInfo }
 
@@ -74,16 +76,22 @@ function drawPreviewToCanvas(canvas: HTMLCanvasElement, data: MapPreviewDecodeRe
 }
 
 const MapViewer: React.FC<{
-  selectedFile: string
-  mixFiles: MixFileData[]
+  selectedFile?: string
+  mixFiles?: MixFileData[]
+  target?: PreviewTarget | null
   resourceContext?: ResourceContext | null
-}> = ({ selectedFile, mixFiles }) => {
+}> = ({ selectedFile, mixFiles, target }) => {
   const { t } = useLocale()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [noPreview, setNoPreview] = useState(false)
   const [previewData, setPreviewData] = useState<MapPreviewDecodeResult | null>(null)
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -95,17 +103,8 @@ const MapViewer: React.FC<{
       setPreviewData(null)
 
       try {
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('Invalid path')
-        const mixName = selectedFile.substring(0, slash)
-        const inner = selectedFile.substring(slash + 1)
-        const mix = mixFiles.find((m) => m.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-
-        const vf = await MixParser.extractFile(mix.file, inner)
-        if (!vf) throw new Error('File not found in MIX')
-
-        const text = vf.readAsString()
+        if (!source.resolved) throw new Error('File not found')
+        const text = await source.resolved.readText()
         const decoded = MapPreviewDecoder.decode(text)
         if (cancelled) return
         if (!decoded) {
@@ -115,7 +114,7 @@ const MapViewer: React.FC<{
         setPreviewData(decoded)
       } catch (e: any) {
         if (!cancelled) {
-          setError(e?.message || t('map.readFailed'))
+          setError(e?.message || source.error || t('map.readFailed'))
         }
       } finally {
         if (!cancelled) {
@@ -128,7 +127,7 @@ const MapViewer: React.FC<{
     return () => {
       cancelled = true
     }
-  }, [selectedFile, mixFiles, t])
+  }, [source.error, source.resolved, t])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -141,7 +140,7 @@ const MapViewer: React.FC<{
       <div className="px-3 py-2 text-xs text-gray-400 border-b border-gray-700 flex items-center justify-between gap-3">
         <span>{t('map.title')}</span>
         <span className="text-gray-500 truncate">
-          {selectedFile.split('/').pop() || selectedFile}
+          {source.resolved?.name || selectedFile}
           {previewData ? ` · ${previewData.previewRect.width} x ${previewData.previewRect.height}` : ''}
         </span>
       </div>
@@ -195,4 +194,3 @@ const MapViewer: React.FC<{
 }
 
 export default MapViewer
-

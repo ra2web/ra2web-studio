@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { MixParser, MixFileInfo } from '../../services/MixParser'
 import { PaletteParser } from '../../services/palette/PaletteParser'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
-
-type MixFileData = { file: File; info: MixFileInfo }
+import type { PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
 type ParsedImage = { width: number; height: number; rgba: Uint8ClampedArray }
 
@@ -128,11 +127,21 @@ function decodePCX(bytes: Uint8Array): ParsedImage {
   throw new Error(`Unsupported PCX format (bpp=${bitsPerPixel}, planes=${nPlanes})`)
 }
 
-const PcxViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resourceContext?: ResourceContext | null }> = ({ selectedFile, mixFiles }) => {
+const PcxViewer: React.FC<{
+  selectedFile?: string
+  mixFiles?: Array<{ file: File; info: any }>
+  target?: PreviewTarget | null
+  resourceContext?: ResourceContext | null
+}> = ({ selectedFile, mixFiles, target }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<{ w: number; h: number } | null>(null)
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -141,18 +150,9 @@ const PcxViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
       setError(null)
       setInfo(null)
       try {
-        console.log('[PcxViewer] load selectedFile =', selectedFile)
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('Invalid path')
-        const mixName = selectedFile.substring(0, slash)
-        const inner = selectedFile.substring(slash + 1)
-        console.log('[PcxViewer] parsed path', { mixName, inner })
-        const mix = mixFiles.find(m => m.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-        console.log('[PcxViewer] found MIX', { name: mix.info.name, size: mix.info.size, files: mix.info.files.length })
-        const vf = await MixParser.extractFile(mix.file, inner)
-        if (!vf) throw new Error('File not found in MIX')
-        const bytes = vf.getBytes()
+        console.log('[PcxViewer] load selectedFile =', source.resolved?.displayPath)
+        if (!source.resolved) return
+        const bytes = await source.resolved.readBytes()
         console.log('[PcxViewer] VirtualFile size', bytes.length)
         if (bytes.length >= 16) {
           const head = Array.from(bytes.slice(0, 16)).map(v => v.toString(16).padStart(2, '0')).join(' ')
@@ -190,9 +190,11 @@ const PcxViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
         if (!cancelled) setLoading(false)
       }
     }
-    load()
+    if (source.resolved) {
+      void load()
+    }
     return () => { cancelled = true }
-  }, [selectedFile, mixFiles])
+  }, [source.resolved])
 
   return (
     <div className="w-full h-full flex flex-col">
@@ -217,5 +219,3 @@ const PcxViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
 }
 
 export default PcxViewer
-
-

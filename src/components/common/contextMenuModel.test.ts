@@ -9,7 +9,7 @@ import {
 const t = (key: string) => key
 
 const defaultState: ContextMenuBuildState = {
-  browserMode: 'workspace',
+  studioMode: 'base',
   resourceReady: true,
   loading: false,
   hasMixFiles: true,
@@ -21,10 +21,13 @@ const defaultState: ContextMenuBuildState = {
   hasUnsavedChanges: true,
   metadataDrawerOpen: false,
   canNavigateUp: false,
-  targetMixIsActive: false,
   editableReadOnly: false,
   editableHasSelection: true,
   editableHasValue: true,
+  editableCanCopyWithoutSelection: false,
+  hasProjects: true,
+  hasActiveProject: true,
+  canAddToProject: true,
 }
 
 describe('contextMenuModel', () => {
@@ -59,7 +62,7 @@ describe('contextMenuModel', () => {
     expect(target.inputElement).toBe(input)
   })
 
-  it('builds file menu entries for mix-like rows', () => {
+  it('builds base-mode file menu entries for mix-like rows', () => {
     const items = buildContextMenuItems({
       t,
       target: {
@@ -71,6 +74,7 @@ describe('contextMenuModel', () => {
       },
       state: {
         ...defaultState,
+        studioMode: 'base',
         fileExtension: 'mix',
         canEnterMixTarget: true,
         canSaveTarget: false,
@@ -83,12 +87,11 @@ describe('contextMenuModel', () => {
       'rawExport',
       'enterCurrentMix',
       'openMetadata',
-      'renameFile',
-      'deleteFile',
+      'addToProject',
     ])
   })
 
-  it('adds navigation and global commands for empty tree regions', () => {
+  it('adds project commands for empty tree regions in project mode', () => {
     const items = buildContextMenuItems({
       t,
       target: {
@@ -98,26 +101,29 @@ describe('contextMenuModel', () => {
       },
       state: {
         ...defaultState,
-        browserMode: 'repository',
+        studioMode: 'projects',
         canNavigateUp: true,
       },
       isMac: false,
     })
 
     expect(getCommandIds(items)).toEqual([
-      'switchToWorkspace',
+      'switchToBase',
+      'switchToProjects',
+      'switchToSearch',
       'navigateUp',
-      'importPatchMix',
+      'createProject',
+      'renameProject',
+      'deleteProject',
+      'importProjectFiles',
       'importToCurrentMix',
+      'exportProjectZip',
       'exportTopMix',
       'exportCurrentMix',
-      'reimportBaseDirectory',
-      'reimportBaseArchives',
-      'clearPatches',
     ])
   })
 
-  it('shows pkt save and discard actions when the preview target is dirty', () => {
+  it('shows pkt save and discard actions when the preview target is dirty in project mode', () => {
     const items = buildContextMenuItems({
       t,
       target: {
@@ -128,6 +134,7 @@ describe('contextMenuModel', () => {
       },
       state: {
         ...defaultState,
+        studioMode: 'projects',
         fileExtension: 'pkt',
         canEnterMixTarget: false,
         canSaveTarget: true,
@@ -151,6 +158,29 @@ describe('contextMenuModel', () => {
       kind: 'item',
       hint: 'Cmd+S',
     })
+  })
+
+  it('builds search-result menu entries for base hits', () => {
+    const items = buildContextMenuItems({
+      t,
+      target: {
+        kind: 'search-result',
+        clientX: 18,
+        clientY: 24,
+        filePath: 'ra2.mix/nested.mix/inside.txt',
+        searchScope: 'base',
+      },
+      state: {
+        ...defaultState,
+        studioMode: 'search',
+      },
+      isMac: false,
+    })
+
+    expect(getCommandIds(items)).toEqual([
+      'openSearchResult',
+      'addToProject',
+    ])
   })
 
   it('builds editable menu entries with keyboard hints', () => {
@@ -196,6 +226,7 @@ describe('contextMenuModel', () => {
         editableReadOnly: true,
         editableHasSelection: false,
         editableHasValue: false,
+        editableCanCopyWithoutSelection: false,
       },
       isMac: false,
     })

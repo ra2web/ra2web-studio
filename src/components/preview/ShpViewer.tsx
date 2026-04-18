@@ -1,21 +1,30 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { MixParser, MixFileInfo } from '../../services/MixParser'
+import { MixFileInfo } from '../../services/MixParser'
 import { ShpFile } from '../../data/ShpFile'
 import { PaletteParser } from '../../services/palette/PaletteParser'
 import { PaletteResolver } from '../../services/palette/PaletteResolver'
 import { loadPaletteByPath } from '../../services/palette/PaletteLoader'
 import { IndexedColorRenderer } from '../../services/palette/IndexedColorRenderer'
+import { VirtualFile } from '../../data/vfs/VirtualFile'
 import SearchableSelect from '../common/SearchableSelect'
 import { usePaletteHotkeys } from './usePaletteHotkeys'
 import type { PaletteSelectionInfo, Rgb } from '../../services/palette/PaletteTypes'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { useLocale } from '../../i18n/LocaleContext'
+import type { PreviewTarget } from './types'
+import { usePreviewSourceFile } from './usePreviewSourceFile'
 
 type MixFileData = { file: File; info: MixFileInfo }
 
-const ShpViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resourceContext?: ResourceContext | null }> = ({
+const ShpViewer: React.FC<{
+  selectedFile?: string
+  mixFiles?: MixFileData[]
+  target?: PreviewTarget | null
+  resourceContext?: ResourceContext | null
+}> = ({
   selectedFile,
   mixFiles,
+  target,
   resourceContext,
 }) => {
   const { t } = useLocale()
@@ -31,14 +40,20 @@ const ShpViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
     reason: '未加载',
     resolvedPath: null,
   })
+  const source = usePreviewSourceFile({
+    target,
+    selectedFile,
+    mixFiles,
+  })
+  const assetPath = source.resolved?.displayPath ?? selectedFile ?? ''
 
   // 重置帧为0，当切换文件时
   useEffect(() => {
-    if (selectedFile) {
-      console.log('[ShpViewer] selectedFile changed to:', selectedFile, 'frame will be reset to 0')
+    if (assetPath) {
+      console.log('[ShpViewer] selected file changed to:', assetPath, 'frame will be reset to 0')
       setFrame(0)
     }
-  }, [selectedFile])
+  }, [assetPath])
 
   // 存储SHP和调色板数据，用于帧变化时重新渲染
   const [shpData, setShpData] = useState<{ shp: ShpFile; palette: Rgb[] } | null>(null)
@@ -51,22 +66,16 @@ const ShpViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
       setError(null)
       setInfo(null)
       try {
-        const slash = selectedFile.indexOf('/')
-        if (slash <= 0) throw new Error('Invalid path')
-        const mixName = selectedFile.substring(0, slash)
-        const inner = selectedFile.substring(slash + 1)
-        const mix = mixFiles.find(m => m.info.name === mixName)
-        if (!mix) throw new Error('MIX not found')
-
-        const vf = await MixParser.extractFile(mix.file, inner)
-        if (!vf) throw new Error('File not found in MIX')
+        if (!source.resolved) throw new Error('File not found')
+        const bytes = await source.resolved.readBytes()
+        const vf = VirtualFile.fromBytes(bytes, source.resolved.name)
         const shp = ShpFile.fromVirtualFile(vf)
         if (!shp || shp.numImages <= 0) throw new Error('Failed to parse SHP')
 
         const decision = PaletteResolver.resolve({
-          assetPath: selectedFile,
+          assetPath,
           assetKind: 'shp',
-          mixFiles,
+          mixFiles: mixFiles ?? [],
           resourceContext,
           manualPalettePath: palettePath || null,
           assetWidth: shp.width,
@@ -77,7 +86,7 @@ const ShpViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
         let palette: Rgb[] | null = null
         let selection: PaletteSelectionInfo = decision.selection
         if (decision.resolvedPalettePath) {
-          const loaded = await loadPaletteByPath(decision.resolvedPalettePath, mixFiles)
+          const loaded = await loadPaletteByPath(decision.resolvedPalettePath, resourceContext ?? mixFiles ?? [])
           if (loaded) {
             palette = loaded
           } else {
@@ -116,14 +125,14 @@ const ShpViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
         setCanvasSize({ w: safeW, h: safeH })
         setInfo({ w: safeW, h: safeH, frames: shp.numImages })
       } catch (e: any) {
-        setError(e?.message || 'Failed to render SHP')
+        setError(e?.message || source.error || 'Failed to render SHP')
       } finally {
         if (!cancelled) setLoading(false)
       }
     }
     load()
     return () => { cancelled = true }
-  }, [selectedFile, mixFiles, palettePath, resourceContext, t])
+  }, [assetPath, mixFiles, palettePath, resourceContext, source.error, source.resolved, t])
 
   // 当帧或SHP数据改变时重新渲染
   useEffect(() => {
@@ -225,5 +234,3 @@ const ShpViewer: React.FC<{ selectedFile: string; mixFiles: MixFileData[]; resou
 }
 
 export default ShpViewer
-
-
