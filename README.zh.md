@@ -76,6 +76,29 @@ npm run build
 npm run preview
 ```
 
+### 自动化测试
+
+```bash
+npm run test:unit
+npm run test:e2e
+```
+
+如果本机 `3000` 端口已经被其他服务占用，可以临时覆盖 Playwright 启动端口：
+
+```bash
+PLAYWRIGHT_PORT=3100 npm run test:e2e
+```
+
+真实归档导入冒烟测试：
+
+```bash
+npm run test:e2e:smoke-import
+```
+
+- 默认 E2E 和 CI 使用最小 MIX 夹具种子，不依赖真实游戏文件。
+- 冒烟测试读取环境变量 `RA2WEB_STUDIO_IMPORT_ARCHIVE`，默认路径为 `/Users/bxy/Downloads/fully-music.exe`。
+- 这条冒烟测试只用于本机验证，不进入默认 CI 流水线。
+
 ---
 
 ## 📁 项目结构

@@ -7,10 +7,10 @@ interface ToolbarProps {
   loading?: boolean
   onExportTopMix?: () => void
   onExportCurrentMix?: () => void
-  onImportFilesToCurrentMix?: (files: File[]) => void | Promise<void>
+  onOpenCurrentMixImportPicker?: () => void
   onReimportBaseDirectory: () => void | Promise<void>
-  onReimportBaseArchives: (files: File[]) => void | Promise<void>
-  onImportPatchMixes: (files: File[]) => void | Promise<void>
+  onOpenBaseArchivePicker?: () => void
+  onOpenPatchPicker?: () => void
   onClearNonBaseResources: () => void | Promise<void>
   resourceReady: boolean
   resourceSummary?: string
@@ -21,10 +21,10 @@ const Toolbar: React.FC<ToolbarProps> = ({
   loading,
   onExportTopMix,
   onExportCurrentMix,
-  onImportFilesToCurrentMix,
+  onOpenCurrentMixImportPicker,
   onReimportBaseDirectory,
-  onReimportBaseArchives,
-  onImportPatchMixes,
+  onOpenBaseArchivePicker,
+  onOpenPatchPicker,
   onClearNonBaseResources,
   resourceReady,
   resourceSummary,
@@ -44,41 +44,6 @@ const Toolbar: React.FC<ToolbarProps> = ({
     return () => document.removeEventListener('mousedown', onMouseDown)
   }, [])
 
-  const openArchivePicker = () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.tar.gz,.tgz,.exe,.7z,.zip,.mix'
-    input.multiple = true
-    input.onchange = (e) => {
-      const files = Array.from((e.target as HTMLInputElement).files || [])
-      onReimportBaseArchives(files)
-    }
-    input.click()
-  }
-
-  const openPatchPicker = () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.mix,.mmx,.yro'
-    input.multiple = true
-    input.onchange = (e) => {
-      const files = Array.from((e.target as HTMLInputElement).files || [])
-      onImportPatchMixes(files)
-    }
-    input.click()
-  }
-
-  const openCurrentMixImportPicker = () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.multiple = true
-    input.onchange = (e) => {
-      const files = Array.from((e.target as HTMLInputElement).files || [])
-      onImportFilesToCurrentMix?.(files)
-    }
-    input.click()
-  }
-
   const handleExportTopMix = () => {
     onExportTopMix?.()
   }
@@ -94,14 +59,14 @@ const Toolbar: React.FC<ToolbarProps> = ({
 
   const handleReimportBaseArchivesFromSettings = () => {
     setSettingsOpen(false)
-    openArchivePicker()
+    onOpenBaseArchivePicker?.()
   }
 
   return (
     <div className="h-12 bg-gray-800 border-b border-gray-700 flex items-center px-4">
       <div className="flex items-center space-x-4">
         <button
-          onClick={openPatchPicker}
+          onClick={() => onOpenPatchPicker?.()}
           className="flex items-center space-x-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={!resourceReady || !!loading}
           title={!resourceReady ? t('toolbar.importGameFirst') : ''}
@@ -138,7 +103,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
         </button>
 
         <button
-          onClick={openCurrentMixImportPicker}
+          onClick={() => onOpenCurrentMixImportPicker?.()}
           className="flex items-center space-x-2 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={!mixFiles.length || !!loading}
         >

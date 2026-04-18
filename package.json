@@ -7,7 +7,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "npm run test:unit",
+    "test:unit": "vitest run --coverage",
+    "test:unit:watch": "vitest",
+    "test:e2e": "playwright test --grep-invert @smoke-import",
+    "test:e2e:ui": "playwright test --ui --grep-invert @smoke-import",
+    "test:e2e:smoke-import": "playwright test --grep @smoke-import",
+    "test:ci": "npm run build && npm run test:unit && npm run test:e2e"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
@@ -20,21 +27,29 @@
     "clsx": "^2.0.0",
     "gifenc": "^1.0.3",
     "jszip": "^3.10.1",
-    "lucide-react": "^0.263.0",
+    "lucide-react": "^1.8.0",
     "monaco-editor": "0.53.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
     "tailwind-merge": "^2.2.0",
     "three": "^0.177.0"
   },
   "devDependencies": {
-    "@types/react": "^18.2.45",
-    "@types/react-dom": "^18.2.18",
-    "@vitejs/plugin-react": "^4.2.1",
+    "@playwright/test": "^1.53.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.0.1",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/node": "^24.0.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "@vitest/coverage-v8": "^3.2.4",
     "autoprefixer": "^10.4.16",
+    "jsdom": "^25.0.1",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",
-    "typescript": "^5.3.3",
-    "vite": "^5.0.10"
+    "typescript": "^5.6.3",
+    "vite": "^6.4.2",
+    "vitest": "^3.2.4"
   }
 }

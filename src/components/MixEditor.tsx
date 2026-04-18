@@ -1,9 +1,11 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import Toolbar from './Toolbar'
 import FileTree from './FileTree'
 import PreviewPanel from './PreviewPanel'
 import PropertiesPanel from './PropertiesPanel'
 import ImportProgressPanel from './ImportProgressPanel'
+import ExportDialog from './export/ExportDialog'
 import { MixParser, MixFileInfo } from '../services/MixParser'
 import { VirtualFile } from '../data/vfs/VirtualFile'
 import { DataStream } from '../data/DataStream'
@@ -20,11 +22,20 @@ import {
 import { bytesToBlob, triggerBrowserDownload } from '../services/export/utils'
 import { useAppDialog } from './common/AppDialogProvider'
 import { useLocale } from '../i18n/LocaleContext'
+import AppContextMenu from './common/AppContextMenu'
+import {
+  buildContextMenuItems,
+  type ContextMenuBuildState,
+  type ContextMenuCommandId,
+  type ContextMenuTarget,
+  resolveContextMenuTarget,
+} from './common/contextMenuModel'
 import {
   createInitialGameResImportSteps,
   GAME_RES_IMPORT_STAGE_ORDER,
 } from '../services/gameRes/types'
 import type { GameResImportProgressEvent, GameResImportStepState } from '../services/gameRes/types'
+import type { PreviewEditorHandle } from './preview/types'
 
 export interface MixFileData {
   file: File
@@ -38,6 +49,14 @@ type LayerLmdSummary = MixArchiveLmdSummary & { layerName: string }
 type PersistEntriesResult = {
   currentLmdSummary: MixArchiveLmdSummary
   parentLmdSummaries: LayerLmdSummary[]
+}
+type ExportTab = 'raw' | 'static' | 'gif'
+type EditablePktSession = {
+  filePath: string
+  originalContent: string
+  draftContent: string
+  loading: boolean
+  error: string | null
 }
 
 const LOCAL_MIX_DATABASE_FILENAME = 'local mix database.dat'
@@ -58,6 +77,41 @@ function cloneBytes(bytes: Uint8Array): Uint8Array {
   const copy = new Uint8Array(bytes.length)
   copy.set(bytes)
   return copy
+}
+
+function encodeAsciiString(text: string): Uint8Array {
+  const stream = new DataStream(0)
+  stream.writeString(text)
+  return stream.toUint8Array()
+}
+
+function getEditableSelection(input: HTMLInputElement | HTMLTextAreaElement): string {
+  const start = input.selectionStart ?? 0
+  const end = input.selectionEnd ?? start
+  return input.value.slice(start, end)
+}
+
+function replaceEditableSelection(
+  input: HTMLInputElement | HTMLTextAreaElement,
+  replacement: string,
+): void {
+  const start = input.selectionStart ?? input.value.length
+  const end = input.selectionEnd ?? start
+  input.setRangeText(replacement, start, end, 'end')
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
+function focusEditableInput(input: HTMLInputElement | HTMLTextAreaElement): void {
+  input.focus()
+  try {
+    input.select()
+  } catch {
+    try {
+      input.setSelectionRange(0, input.value.length)
+    } catch {
+      // ignore browsers that do not support selection ranges for this input type
+    }
+  }
 }
 
 const NON_ERROR_STAGE_ORDER = GAME_RES_IMPORT_STAGE_ORDER.filter((stage) => stage !== 'error')
@@ -121,6 +175,15 @@ const MixEditor: React.FC = () => {
   const [startupTotalResourceCount, setStartupTotalResourceCount] = useState(0)
   const [startupLoadedResourceCount, setStartupLoadedResourceCount] = useState(0)
   const [startupLoadedResourceNames, setStartupLoadedResourceNames] = useState<string[]>([])
+  const [pktEditSession, setPktEditSession] = useState<EditablePktSession | null>(null)
+  const [exportDialogOpen, setExportDialogOpen] = useState(false)
+  const [exportInitialTab, setExportInitialTab] = useState<ExportTab>('raw')
+  const [contextMenuTarget, setContextMenuTarget] = useState<ContextMenuTarget | null>(null)
+  const previewEditorRef = useRef<PreviewEditorHandle | null>(null)
+  const isMacLikePlatform = useMemo(() => {
+    if (typeof navigator === 'undefined') return false
+    return /Mac|iPhone|iPad|iPod/i.test(navigator.platform)
+  }, [])
 
   const initializeSelection = useCallback((nextMixFiles: MixFileData[]) => {
     if (!nextMixFiles.length) {
@@ -252,6 +315,51 @@ const MixEditor: React.FC = () => {
     [createMixReaderFromFileObj],
   )
 
+  const selectedFileExtension = useMemo(() => {
+    return selectedFile?.split('.').pop()?.toLowerCase() ?? ''
+  }, [selectedFile])
+
+  const isPktSelected = selectedFileExtension === 'pkt'
+  const hasUnsavedPktChanges = useMemo(() => {
+    if (!pktEditSession) return false
+    return pktEditSession.draftContent !== pktEditSession.originalContent
+  }, [pktEditSession])
+
+  const loadTextEntryContent = useCallback(async (filePath: string): Promise<string> => {
+    const slash = filePath.indexOf('/')
+    if (slash <= 0) throw new Error('Invalid path')
+    const mixName = filePath.substring(0, slash)
+    const inner = filePath.substring(slash + 1)
+    const mix = mixFiles.find((item) => item.info.name === mixName)
+    if (!mix) throw new Error('MIX not found')
+    const vf = await MixParser.extractFile(mix.file, inner)
+    if (!vf) throw new Error('File not found in MIX')
+    return vf.readAsString()
+  }, [mixFiles])
+
+  const discardPktEdits = useCallback(() => {
+    setPktEditSession((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        draftContent: prev.originalContent,
+        error: null,
+      }
+    })
+  }, [])
+
+  const confirmDiscardPktEdits = useCallback(async (): Promise<boolean> => {
+    if (!hasUnsavedPktChanges) return true
+    const confirmed = await dialog.confirmDanger({
+      title: t('mixEditor.confirmDiscardPktChanges'),
+      message: t('mixEditor.confirmDiscardPktChangesMsg'),
+      confirmText: t('preview.discardChanges'),
+    })
+    if (!confirmed) return false
+    discardPktEdits()
+    return true
+  }, [dialog, discardPktEdits, hasUnsavedPktChanges, t])
+
   const restoreNavigation = useCallback(
     async (nextMixFiles: MixFileData[], target?: RestorableNavigationTarget): Promise<boolean> => {
       if (!target || !target.stackNames.length) return false
@@ -298,9 +406,13 @@ const MixEditor: React.FC = () => {
 
   const reloadResourceContext = useCallback(async (
     restoreTarget?: RestorableNavigationTarget,
-    options?: { startup?: boolean },
+    options?: { startup?: boolean; skipUnsavedGuard?: boolean },
   ) => {
     const isStartup = options?.startup === true
+    if (!isStartup && !options?.skipUnsavedGuard) {
+      const allowed = await confirmDiscardPktEdits()
+      if (!allowed) return
+    }
     if (isStartup) {
       setShowStartupLoadingScreen(false)
       setStartupLoadingStatus(t('mixEditor.readingResources'))
@@ -347,13 +459,83 @@ const MixEditor: React.FC = () => {
       setLoading(false)
       if (isStartup) setInitialBooting(false)
     }
-  }, [initializeSelection, restoreNavigation, t, handleStartupResourceProgress])
+  }, [confirmDiscardPktEdits, initializeSelection, restoreNavigation, t, handleStartupResourceProgress])
 
   useEffect(() => {
-    reloadResourceContext(undefined, { startup: true })
-  }, [reloadResourceContext])
+    void reloadResourceContext(undefined, { startup: true, skipUnsavedGuard: true })
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!selectedFile || !isPktSelected) {
+      setPktEditSession(null)
+      return
+    }
+
+    setPktEditSession({
+      filePath: selectedFile,
+      originalContent: '',
+      draftContent: '',
+      loading: true,
+      error: null,
+    })
+
+    void (async () => {
+      try {
+        const content = await loadTextEntryContent(selectedFile)
+        if (cancelled) return
+        setPktEditSession({
+          filePath: selectedFile,
+          originalContent: content,
+          draftContent: content,
+          loading: false,
+          error: null,
+        })
+      } catch (error: any) {
+        if (cancelled) return
+        setPktEditSession({
+          filePath: selectedFile,
+          originalContent: '',
+          draftContent: '',
+          loading: false,
+          error: error?.message || t('mixEditor.readPktFailed'),
+        })
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isPktSelected, loadTextEntryContent, selectedFile, t])
+
+  const runWithPktDiscardGuard = useCallback(async (action: () => Promise<void> | void) => {
+    const allowed = await confirmDiscardPktEdits()
+    if (!allowed) return false
+    await action()
+    return true
+  }, [confirmDiscardPktEdits])
+
+  const openFilePicker = useCallback((
+    options: {
+      accept?: string
+      multiple?: boolean
+    },
+    onPick: (files: File[]) => void,
+  ) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    if (options.accept) input.accept = options.accept
+    input.multiple = options.multiple ?? false
+    input.onchange = (event) => {
+      const files = Array.from((event.target as HTMLInputElement).files || [])
+      onPick(files)
+    }
+    input.click()
+  }, [])
 
   const handleReimportBaseDirectory = useCallback(async () => {
+    const allowed = await confirmDiscardPktEdits()
+    if (!allowed) return
     setLoading(true)
     resetImportProgress(t('importProgress.prepareReimportDir'))
     try {
@@ -384,10 +566,12 @@ const MixEditor: React.FC = () => {
       setLoading(false)
       setProgressMessage('')
     }
-  }, [reloadResourceContext, handleImportProgressEvent, resetImportProgress, dialog, t])
+  }, [confirmDiscardPktEdits, reloadResourceContext, handleImportProgressEvent, resetImportProgress, dialog, t])
 
   const handleReimportBaseArchives = useCallback(async (files: File[]) => {
     if (!files.length) return
+    const allowed = await confirmDiscardPktEdits()
+    if (!allowed) return
     setLoading(true)
     resetImportProgress(t('importProgress.prepareReimportArchive'))
     try {
@@ -412,10 +596,12 @@ const MixEditor: React.FC = () => {
       setLoading(false)
       setProgressMessage('')
     }
-  }, [reloadResourceContext, handleImportProgressEvent, resetImportProgress, dialog, t])
+  }, [confirmDiscardPktEdits, reloadResourceContext, handleImportProgressEvent, resetImportProgress, dialog, t])
 
   const handleImportPatchMixes = useCallback(async (files: File[]) => {
     if (!files.length) return
+    const allowed = await confirmDiscardPktEdits()
+    if (!allowed) return
     setLoading(true)
     resetImportProgress(t('importProgress.prepareImportPatch'))
     try {
@@ -440,9 +626,11 @@ const MixEditor: React.FC = () => {
       setLoading(false)
       setProgressMessage('')
     }
-  }, [reloadResourceContext, handleImportProgressEvent, resetImportProgress, dialog, t])
+  }, [confirmDiscardPktEdits, reloadResourceContext, handleImportProgressEvent, resetImportProgress, dialog, t])
 
   const handleClearNonBaseResources = useCallback(async () => {
+    const allowed = await confirmDiscardPktEdits()
+    if (!allowed) return
     const confirmed = await dialog.confirmDanger({
       title: t('mixEditor.confirmClearPatches'),
       message: t('mixEditor.confirmClearPatchesMsg'),
@@ -459,7 +647,7 @@ const MixEditor: React.FC = () => {
       setLoading(false)
       setProgressMessage('')
     }
-  }, [resourceContext, reloadResourceContext, dialog, t])
+  }, [confirmDiscardPktEdits, resourceContext, reloadResourceContext, dialog, t])
 
   const setWorkspaceMix = useCallback((mixName: string, selectFirstFile: boolean) => {
     const mix = mixFiles.find((m) => m.info.name === mixName)
@@ -475,15 +663,72 @@ const MixEditor: React.FC = () => {
     }
   }, [mixFiles])
 
+  const selectFileWithGuard = useCallback(async (filePath: string): Promise<boolean> => {
+    if (filePath === selectedFile) return true
+    const allowed = await runWithPktDiscardGuard(() => {
+      flushSync(() => {
+        setSelectedFile(filePath)
+        const slash = filePath.indexOf('/')
+        if (slash <= 0) return
+        const mixName = filePath.substring(0, slash)
+        if (browserMode === 'repository' && mixName !== activeTopMixName) {
+          setWorkspaceMix(mixName, false)
+        }
+      })
+    })
+    return allowed !== false
+  }, [activeTopMixName, browserMode, runWithPktDiscardGuard, selectedFile, setWorkspaceMix])
+
+  const setActiveMixWithGuard = useCallback(async (
+    mixName: string,
+    selectFirstFile: boolean,
+  ): Promise<boolean> => {
+    if (mixName === activeTopMixName && !selectFirstFile) return true
+    const allowed = await runWithPktDiscardGuard(() => {
+      flushSync(() => {
+        setWorkspaceMix(mixName, selectFirstFile)
+      })
+    })
+    return allowed !== false
+  }, [activeTopMixName, runWithPktDiscardGuard, setWorkspaceMix])
+
+  const switchBrowserModeWithGuard = useCallback(async (mode: BrowserMode): Promise<boolean> => {
+    if (mode === browserMode) return true
+    const allowed = await runWithPktDiscardGuard(() => {
+      flushSync(() => {
+        setBrowserMode(mode)
+      })
+    })
+    return allowed !== false
+  }, [browserMode, runWithPktDiscardGuard])
+
+  const openBaseArchivePicker = useCallback(() => {
+    openFilePicker(
+      {
+        accept: '.tar.gz,.tgz,.exe,.7z,.zip,.mix',
+        multiple: true,
+      },
+      (files) => {
+        void handleReimportBaseArchives(files)
+      },
+    )
+  }, [handleReimportBaseArchives, openFilePicker])
+
+  const openPatchPicker = useCallback(() => {
+    openFilePicker(
+      {
+        accept: '.mix,.mmx,.yro',
+        multiple: true,
+      },
+      (files) => {
+        void handleImportPatchMixes(files)
+      },
+    )
+  }, [handleImportPatchMixes, openFilePicker])
+
   const handleFileSelect = useCallback((filePath: string) => {
-    setSelectedFile(filePath)
-    const slash = filePath.indexOf('/')
-    if (slash <= 0) return
-    const mixName = filePath.substring(0, slash)
-    if (browserMode === 'repository' && mixName !== activeTopMixName) {
-      setWorkspaceMix(mixName, false)
-    }
-  }, [browserMode, activeTopMixName, setWorkspaceMix])
+    void selectFileWithGuard(filePath)
+  }, [selectFileWithGuard])
 
   const handleOpenMetadataDrawer = useCallback(() => {
     setMetadataDrawerOpen(true)
@@ -494,12 +739,12 @@ const MixEditor: React.FC = () => {
   }, [])
 
   const handleBrowserModeChange = useCallback((mode: BrowserMode) => {
-    setBrowserMode(mode)
-  }, [])
+    void switchBrowserModeWithGuard(mode)
+  }, [switchBrowserModeWithGuard])
 
   const handleActiveMixChange = useCallback((mixName: string) => {
-    setWorkspaceMix(mixName, true)
-  }, [setWorkspaceMix])
+    void setActiveMixWithGuard(mixName, true)
+  }, [setActiveMixWithGuard])
 
   const workspaceMixFiles = useMemo(() => {
     if (!mixFiles.length) return []
@@ -534,6 +779,8 @@ const MixEditor: React.FC = () => {
   const currentPrefix = useMemo(() => navStack.map(n => n.name).join('/'), [navStack])
 
   const handleDrillDown = useCallback(async (filename: string) => {
+    const allowed = await confirmDiscardPktEdits()
+    if (!allowed) return
     if (!currentContainer) return
     try {
       let childVf: VirtualFile | null = null
@@ -575,20 +822,22 @@ const MixEditor: React.FC = () => {
     } catch (e) {
       console.error('Drill down failed:', e)
     }
-  }, [currentContainer, navStack])
+  }, [confirmDiscardPktEdits, currentContainer, navStack])
 
   const handleBreadcrumbClick = useCallback((index: number) => {
     if (index < 0 || index >= navStack.length) return
-    const newStack = navStack.slice(0, index + 1)
-    setNavStack(newStack)
-    const top = newStack[newStack.length - 1]
-    if (top && top.info.files.length > 0) {
-      const prefix = newStack.map(n => n.name).join('/')
-      setSelectedFile(`${prefix}/${top.info.files[0].filename}`)
-    } else {
-      setSelectedFile(null)
-    }
-  }, [navStack])
+    void runWithPktDiscardGuard(() => {
+      const newStack = navStack.slice(0, index + 1)
+      setNavStack(newStack)
+      const top = newStack[newStack.length - 1]
+      if (top && top.info.files.length > 0) {
+        const prefix = newStack.map(n => n.name).join('/')
+        setSelectedFile(`${prefix}/${top.info.files[0].filename}`)
+      } else {
+        setSelectedFile(null)
+      }
+    })
+  }, [navStack, runWithPktDiscardGuard])
 
   const handleNavigateUp = useCallback(() => {
     if (navStack.length <= 1) return
@@ -734,7 +983,7 @@ const MixEditor: React.FC = () => {
     if (nextSelectedLeafName) {
       restoreTarget.selectedLeafName = nextSelectedLeafName
     }
-    await reloadResourceContext(restoreTarget)
+    await reloadResourceContext(restoreTarget, { skipUnsavedGuard: true })
 
     return {
       currentLmdSummary: currentLmd.summary,
@@ -742,8 +991,77 @@ const MixEditor: React.FC = () => {
     }
   }, [navStack, rebuildTopMixBytesFromCurrent, reloadResourceContext, resolveTopArchiveSource])
 
+  const handleSaveSelectedPktFile = useCallback(async () => {
+    if (!currentContainer || !selectedLeafName || !pktEditSession || pktEditSession.loading) return
+    if (!hasUnsavedPktChanges) return
+    setLoading(true)
+    setProgressMessage(t('mixEditor.savingFile'))
+    try {
+      const currentEntries = await readContainerEntries(currentContainer)
+      const selectedIndex = currentEntries.findIndex((entry) => sameMixEntryName(entry.filename, selectedLeafName))
+      if (selectedIndex < 0) {
+        await dialog.info(t('mixEditor.selectedEntryNotFound'))
+        return
+      }
+
+      currentEntries[selectedIndex] = {
+        ...currentEntries[selectedIndex],
+        bytes: encodeAsciiString(pktEditSession.draftContent),
+      }
+
+      const persisted = await persistCurrentContainerEntries(currentEntries, selectedLeafName)
+      setPktEditSession((prev) => {
+        if (!prev || prev.filePath !== selectedFile) return prev
+        return {
+          ...prev,
+          originalContent: prev.draftContent,
+          error: null,
+        }
+      })
+      const lmdLines = buildLmdSummaryLines(
+        currentContainer.name,
+        persisted.currentLmdSummary,
+        persisted.parentLmdSummaries,
+      )
+      await dialog.info({
+        title: t('mixEditor.saveComplete'),
+        message: `${t('mixEditor.saveSummary', { name: selectedLeafName })}\n\n${t('mixEditor.lmdUpdateSummary')}\n${lmdLines.join('\n')}`,
+      })
+    } catch (err: any) {
+      console.error('Save pkt in current MIX failed:', err)
+      await dialog.info(err?.message || t('mixEditor.saveFailed'))
+    } finally {
+      setLoading(false)
+      setProgressMessage('')
+    }
+  }, [
+    buildLmdSummaryLines,
+    currentContainer,
+    dialog,
+    hasUnsavedPktChanges,
+    persistCurrentContainerEntries,
+    pktEditSession,
+    readContainerEntries,
+    selectedFile,
+    selectedLeafName,
+    t,
+  ])
+
+  const handleDiscardSelectedPktFile = useCallback(async () => {
+    if (!hasUnsavedPktChanges) return
+    const confirmed = await dialog.confirmDanger({
+      title: t('mixEditor.confirmDiscardPktChanges'),
+      message: t('mixEditor.confirmDiscardPktChangesMsg'),
+      confirmText: t('preview.discardChanges'),
+    })
+    if (!confirmed) return
+    discardPktEdits()
+  }, [dialog, discardPktEdits, hasUnsavedPktChanges, t])
+
   const handleImportFilesToCurrentMix = useCallback(async (files: File[]) => {
     if (!files.length || !navStack.length) return
+    const allowed = await confirmDiscardPktEdits()
+    if (!allowed) return
     const currentNode = navStack[navStack.length - 1]
     setLoading(true)
     setProgressMessage(t('mixEditor.importingFiles'))
@@ -845,6 +1163,7 @@ const MixEditor: React.FC = () => {
       setProgressMessage('')
     }
   }, [
+    confirmDiscardPktEdits,
     navStack,
     readContainerEntries,
     selectedLeafName,
@@ -854,8 +1173,21 @@ const MixEditor: React.FC = () => {
     t,
   ])
 
+  const openCurrentMixImportPicker = useCallback(() => {
+    openFilePicker(
+      {
+        multiple: true,
+      },
+      (files) => {
+        void handleImportFilesToCurrentMix(files)
+      },
+    )
+  }, [handleImportFilesToCurrentMix, openFilePicker])
+
   const handleRenameSelectedFileInCurrentMix = useCallback(async () => {
     if (!currentContainer || !selectedLeafName || typeof window === 'undefined') return
+    const allowed = await confirmDiscardPktEdits()
+    if (!allowed) return
     setLoading(true)
     setProgressMessage(t('mixEditor.renamingFile'))
     try {
@@ -945,6 +1277,7 @@ const MixEditor: React.FC = () => {
       setProgressMessage('')
     }
   }, [
+    confirmDiscardPktEdits,
     currentContainer,
     selectedLeafName,
     readContainerEntries,
@@ -956,6 +1289,8 @@ const MixEditor: React.FC = () => {
 
   const handleDeleteSelectedFileInCurrentMix = useCallback(async () => {
     if (!currentContainer || !selectedLeafName) return
+    const allowed = await confirmDiscardPktEdits()
+    if (!allowed) return
     setLoading(true)
     setProgressMessage(t('mixEditor.deletingFile'))
     try {
@@ -996,6 +1331,7 @@ const MixEditor: React.FC = () => {
       setProgressMessage('')
     }
   }, [
+    confirmDiscardPktEdits,
     currentContainer,
     selectedLeafName,
     readContainerEntries,
@@ -1026,8 +1362,309 @@ const MixEditor: React.FC = () => {
     }
   }, [currentContainer, readFileObjBytes])
 
+  const canSaveSelectedPktFile = isPktSelected
+    && canEditSelectedEntry
+    && !!pktEditSession
+    && !pktEditSession.loading
+    && !pktEditSession.error
+
+  const openExportDialog = useCallback((initialTab: ExportTab) => {
+    setExportInitialTab(initialTab)
+    setExportDialogOpen(true)
+  }, [])
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenuTarget(null)
+  }, [])
+
+  const executeInputContextCommand = useCallback(async (
+    commandId: ContextMenuCommandId,
+    input: HTMLInputElement | HTMLTextAreaElement,
+  ) => {
+    input.focus()
+    const selection = getEditableSelection(input)
+    switch (commandId) {
+      case 'undo':
+        document.execCommand('undo')
+        break
+      case 'redo':
+        document.execCommand('redo')
+        break
+      case 'cut':
+        if (selection) {
+          await navigator.clipboard?.writeText(selection)
+          replaceEditableSelection(input, '')
+        }
+        break
+      case 'copy':
+        if (selection) {
+          await navigator.clipboard?.writeText(selection)
+        }
+        break
+      case 'paste': {
+        const text = await navigator.clipboard?.readText()
+        if (text != null) {
+          replaceEditableSelection(input, text)
+        }
+        break
+      }
+      case 'selectAll':
+        focusEditableInput(input)
+        break
+      default:
+        break
+    }
+  }, [])
+
+  const contextMenuBuildState = useMemo<ContextMenuBuildState>(() => {
+    const targetFilePath = contextMenuTarget?.filePath ?? selectedFile ?? ''
+    const targetExt = targetFilePath.split('.').pop()?.toLowerCase() ?? ''
+    const inputElement = contextMenuTarget?.editableKind === 'input' ? contextMenuTarget.inputElement : null
+    const inputSelection = inputElement ? getEditableSelection(inputElement) : ''
+    const monacoEditor = previewEditorRef.current
+
+    return {
+      browserMode,
+      resourceReady,
+      loading,
+      hasMixFiles: mixFiles.length > 0,
+      hasFileSelection: Boolean(contextMenuTarget?.filePath ?? selectedFile),
+      fileExtension: targetExt,
+      canEnterMixTarget:
+        contextMenuTarget?.kind === 'file-tree-row'
+          ? Boolean(contextMenuTarget.isMixFile)
+          : canEnterCurrentMix,
+      canModifyTarget: canEditSelectedEntry,
+      canSaveTarget: canSaveSelectedPktFile,
+      hasUnsavedChanges: hasUnsavedPktChanges,
+      metadataDrawerOpen,
+      canNavigateUp: browserMode === 'workspace' && navStack.length > 1,
+      targetMixIsActive: Boolean(contextMenuTarget?.mixName && contextMenuTarget.mixName === activeTopMixName),
+      editableReadOnly:
+        contextMenuTarget?.editableKind === 'input'
+          ? Boolean(inputElement?.readOnly || inputElement?.disabled)
+          : !(monacoEditor?.canEdit() ?? false),
+      editableHasSelection:
+        contextMenuTarget?.editableKind === 'input'
+          ? inputSelection.length > 0
+          : Boolean(monacoEditor?.hasSelection() ?? false),
+      editableHasValue:
+        contextMenuTarget?.editableKind === 'input'
+          ? Boolean(inputElement?.value?.length)
+          : true,
+    }
+  }, [
+    activeTopMixName,
+    browserMode,
+    canEditSelectedEntry,
+    canEnterCurrentMix,
+    canSaveSelectedPktFile,
+    contextMenuTarget,
+    hasUnsavedPktChanges,
+    loading,
+    metadataDrawerOpen,
+    mixFiles.length,
+    navStack.length,
+    resourceReady,
+    selectedFile,
+  ])
+
+  const contextMenuEntries = useMemo(() => {
+    if (!contextMenuTarget) return []
+    return buildContextMenuItems({
+      t: (key) => t(key as any),
+      target: contextMenuTarget,
+      state: contextMenuBuildState,
+      isMac: isMacLikePlatform,
+    })
+  }, [contextMenuBuildState, contextMenuTarget, isMacLikePlatform, t])
+
+  const handleContextMenuCapture = useCallback(async (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.shiftKey) {
+      closeContextMenu()
+      return
+    }
+
+    const target = resolveContextMenuTarget(
+      event.target as HTMLElement | null,
+      {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      },
+      resourceReady ? 'global-shell' : 'import-shell',
+    )
+
+    event.preventDefault()
+
+    if (target.kind === 'file-tree-row' && target.filePath) {
+      const allowed = await selectFileWithGuard(target.filePath)
+      if (!allowed) return
+    }
+
+    if (target.kind === 'editable-text' && target.editableKind === 'input') {
+      target.inputElement?.focus()
+    }
+
+    if (target.kind === 'editable-text' && target.editableKind === 'monaco') {
+      // Let Monaco finish applying any cursor/selection updates from this right click
+      // before we snapshot editor state into the custom menu.
+      queueMicrotask(() => {
+        setContextMenuTarget(target)
+      })
+      return
+    }
+
+    setContextMenuTarget(target)
+  }, [closeContextMenu, resourceReady, selectFileWithGuard])
+
+  const handleContextMenuCommand = useCallback((commandId: ContextMenuCommandId) => {
+    const target = contextMenuTarget
+    closeContextMenu()
+
+    const ensureTargetFileSelected = async (): Promise<boolean> => {
+      if (!target?.filePath) return Boolean(selectedFile)
+      return selectFileWithGuard(target.filePath)
+    }
+
+    void (async () => {
+      switch (commandId) {
+        case 'selectArchive':
+        case 'reimportBaseArchives':
+          openBaseArchivePicker()
+          return
+        case 'selectGameDirectory':
+        case 'reimportBaseDirectory':
+          await handleReimportBaseDirectory()
+          return
+        case 'importPatchMix':
+          openPatchPicker()
+          return
+        case 'importToCurrentMix':
+          openCurrentMixImportPicker()
+          return
+        case 'exportTopMix':
+          await handleExportTopMix()
+          return
+        case 'exportCurrentMix':
+          await handleExportCurrentMix()
+          return
+        case 'clearPatches':
+          await handleClearNonBaseResources()
+          return
+        case 'switchToWorkspace':
+          await switchBrowserModeWithGuard('workspace')
+          return
+        case 'switchToRepository':
+          await switchBrowserModeWithGuard('repository')
+          return
+        case 'navigateUp':
+          handleNavigateUp()
+          return
+        case 'setActiveMix':
+          if (target?.mixName) {
+            await setActiveMixWithGuard(target.mixName, false)
+          }
+          return
+        case 'rawExport':
+          if (await ensureTargetFileSelected()) {
+            openExportDialog('raw')
+          }
+          return
+        case 'imageGifExport':
+          if (await ensureTargetFileSelected()) {
+            openExportDialog('static')
+          }
+          return
+        case 'enterCurrentMix':
+          if (await ensureTargetFileSelected()) {
+            handleEnterCurrentMix()
+          }
+          return
+        case 'openMetadata':
+          if (await ensureTargetFileSelected()) {
+            handleOpenMetadataDrawer()
+          }
+          return
+        case 'closeMetadata':
+          handleCloseMetadataDrawer()
+          return
+        case 'renameFile':
+          if (await ensureTargetFileSelected()) {
+            await handleRenameSelectedFileInCurrentMix()
+          }
+          return
+        case 'deleteFile':
+          if (await ensureTargetFileSelected()) {
+            await handleDeleteSelectedFileInCurrentMix()
+          }
+          return
+        case 'saveFile':
+          if (await ensureTargetFileSelected()) {
+            await handleSaveSelectedPktFile()
+          }
+          return
+        case 'discardChanges':
+          if (await ensureTargetFileSelected()) {
+            await handleDiscardSelectedPktFile()
+          }
+          return
+        case 'undo':
+        case 'redo':
+        case 'cut':
+        case 'copy':
+        case 'paste':
+        case 'selectAll': {
+          if (target?.editableKind === 'input' && target.inputElement) {
+            await executeInputContextCommand(commandId, target.inputElement)
+            return
+          }
+
+          const editor = previewEditorRef.current
+          if (!editor) return
+          if (commandId === 'undo') editor.undo()
+          else if (commandId === 'redo') editor.redo()
+          else if (commandId === 'cut') editor.cut()
+          else if (commandId === 'copy') editor.copy()
+          else if (commandId === 'paste') editor.paste()
+          else if (commandId === 'selectAll') editor.selectAll()
+          return
+        }
+        default:
+          return
+      }
+    })()
+  }, [
+    closeContextMenu,
+    contextMenuTarget,
+    executeInputContextCommand,
+    handleClearNonBaseResources,
+    handleCloseMetadataDrawer,
+    handleDeleteSelectedFileInCurrentMix,
+    handleDiscardSelectedPktFile,
+    handleEnterCurrentMix,
+    handleExportCurrentMix,
+    handleExportTopMix,
+    handleOpenMetadataDrawer,
+    handleReimportBaseDirectory,
+    handleRenameSelectedFileInCurrentMix,
+    handleSaveSelectedPktFile,
+    handleNavigateUp,
+    openBaseArchivePicker,
+    openCurrentMixImportPicker,
+    openExportDialog,
+    openPatchPicker,
+    selectFileWithGuard,
+    selectedFile,
+    setActiveMixWithGuard,
+    switchBrowserModeWithGuard,
+  ])
+
   return (
-    <div className="h-full flex flex-col">
+    <div
+      className="h-full flex flex-col"
+      data-context-kind={resourceReady ? 'global-shell' : 'import-shell'}
+      onContextMenuCapture={handleContextMenuCapture}
+    >
       {/* 顶部工具栏（仅资源就绪后显示） */}
       {resourceReady && (
         <Toolbar
@@ -1035,10 +1672,10 @@ const MixEditor: React.FC = () => {
           loading={loading}
           onExportTopMix={handleExportTopMix}
           onExportCurrentMix={handleExportCurrentMix}
-          onImportFilesToCurrentMix={handleImportFilesToCurrentMix}
+          onOpenCurrentMixImportPicker={openCurrentMixImportPicker}
           onReimportBaseDirectory={handleReimportBaseDirectory}
-          onReimportBaseArchives={handleReimportBaseArchives}
-          onImportPatchMixes={handleImportPatchMixes}
+          onOpenBaseArchivePicker={openBaseArchivePicker}
+          onOpenPatchPicker={openPatchPicker}
           onClearNonBaseResources={handleClearNonBaseResources}
           resourceReady={resourceReady}
           resourceSummary={
@@ -1112,7 +1749,10 @@ const MixEditor: React.FC = () => {
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center p-8">
-            <div className="max-w-2xl w-full bg-gray-800 border border-gray-700 rounded-lg p-6">
+            <div
+              className="max-w-2xl w-full bg-gray-800 border border-gray-700 rounded-lg p-6"
+              data-context-kind="import-shell"
+            >
               <h2 className="text-xl font-semibold mb-3">{t('mixEditor.importGameRes')}</h2>
               <p className="text-gray-300 text-sm leading-6">
                 {t('mixEditor.importHint')}
@@ -1123,17 +1763,7 @@ const MixEditor: React.FC = () => {
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm"
-                  onClick={() => {
-                    const input = document.createElement('input')
-                    input.type = 'file'
-                    input.accept = '.tar.gz,.tgz,.exe,.7z,.zip,.mix'
-                    input.multiple = true
-                    input.onchange = (e) => {
-                      const files = Array.from((e.target as HTMLInputElement).files || [])
-                      void handleReimportBaseArchives(files)
-                    }
-                    input.click()
-                  }}
+                  onClick={openBaseArchivePicker}
                   disabled={loading}
                 >
                   {t('mixEditor.selectArchive')}
@@ -1203,8 +1833,32 @@ const MixEditor: React.FC = () => {
               onDeleteFile={handleDeleteSelectedFileInCurrentMix}
               canModifyFile={canEditSelectedEntry}
               actionsDisabled={loading}
+              onSaveFile={handleSaveSelectedPktFile}
+              onDiscardChanges={handleDiscardSelectedPktFile}
+              canSaveSelectedFile={canSaveSelectedPktFile}
+              hasUnsavedChanges={hasUnsavedPktChanges}
+              textValue={pktEditSession?.draftContent ?? ''}
+              textLoading={pktEditSession?.loading ?? false}
+              textError={pktEditSession?.error ?? null}
+              onTextChange={(next) => {
+                setPktEditSession((prev) => {
+                  if (!prev) return prev
+                  return {
+                    ...prev,
+                    draftContent: next,
+                  }
+                })
+              }}
+              onBeforeViewChange={async () => confirmDiscardPktEdits()}
+              onOpenRawExport={() => openExportDialog('raw')}
+              onOpenImageExport={() => openExportDialog('static')}
+              onEditorReady={(handle) => {
+                previewEditorRef.current = handle
+              }}
             />
             <div
+              data-context-kind="metadata-drawer"
+              data-file-path={selectedFile ?? ''}
               className={`absolute inset-y-0 right-0 w-80 bg-gray-800 border-l border-gray-700 shadow-2xl z-20 transform transition-transform duration-200 ${
                 metadataDrawerOpen ? 'translate-x-0' : 'translate-x-full'
               }`}
@@ -1231,6 +1885,23 @@ const MixEditor: React.FC = () => {
           </div>
         </div>
       )}
+
+      <ExportDialog
+        open={exportDialogOpen}
+        onClose={() => setExportDialogOpen(false)}
+        selectedFile={selectedFile ?? ''}
+        mixFiles={mixFiles}
+        resourceContext={resourceContext}
+        initialTab={exportInitialTab}
+      />
+
+      <AppContextMenu
+        entries={contextMenuEntries}
+        target={contextMenuTarget}
+        open={contextMenuTarget != null}
+        onClose={closeContextMenu}
+        onCommand={handleContextMenuCommand}
+      />
 
       {/* 底部状态栏 */}
       <div className="h-8 bg-gray-800 border-t border-gray-700 flex items-center px-4 text-sm text-gray-400">

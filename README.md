@@ -76,6 +76,29 @@ npm run build
 npm run preview
 ```
 
+### Testing
+
+```bash
+npm run test:unit
+npm run test:e2e
+```
+
+If port `3000` is already occupied locally, you can temporarily override the Playwright web server port:
+
+```bash
+PLAYWRIGHT_PORT=3100 npm run test:e2e
+```
+
+Real archive smoke test:
+
+```bash
+npm run test:e2e:smoke-import
+```
+
+- Default E2E and CI use seeded minimal MIX fixtures and do not depend on external game files.
+- The smoke import test uses `RA2WEB_STUDIO_IMPORT_ARCHIVE`, which defaults to `/Users/bxy/Downloads/fully-music.exe`.
+- The smoke import test is local-only by design and is excluded from the default CI flow.
+
 ---
 
 ## 📁 Project Structure

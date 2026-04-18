@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react'
-import { Image, Box, FileText, Music, Info, Archive, Video, Download, Pencil, Trash2 } from 'lucide-react'
+import { Image, Box, FileText, Music, Info, Archive, Video, Download, Pencil, Trash2, Save, RotateCcw } from 'lucide-react'
 import { MixFileInfo } from '../services/MixParser'
 import IniViewer from './preview/IniViewer'
 import DatViewer from './preview/DatViewer'
@@ -18,8 +18,8 @@ import WavViewer from './preview/WavViewer'
 import MapViewer from './preview/MapViewer'
 import BikViewer from './preview/BikViewer'
 import type { ResourceContext } from '../services/gameRes/ResourceContext'
-import ExportDialog from './export/ExportDialog'
 import { useLocale } from '../i18n/LocaleContext'
+import type { PreviewEditorHandle } from './preview/types'
 
 type MixFileData = { file: File; info: MixFileInfo }
 
@@ -37,6 +37,18 @@ interface PreviewPanelProps {
   onDeleteFile?: () => void
   canModifyFile?: boolean
   actionsDisabled?: boolean
+  onSaveFile?: () => void
+  onDiscardChanges?: () => void
+  canSaveSelectedFile?: boolean
+  hasUnsavedChanges?: boolean
+  textValue?: string
+  textLoading?: boolean
+  textError?: string | null
+  onTextChange?: (next: string) => void
+  onBeforeViewChange?: (nextView: string) => Promise<boolean> | boolean
+  onOpenRawExport?: () => void
+  onOpenImageExport?: () => void
+  onEditorReady?: (handle: PreviewEditorHandle | null) => void
 }
 
 const PreviewPanel: React.FC<PreviewPanelProps> = ({
@@ -53,6 +65,18 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
   onDeleteFile,
   canModifyFile = false,
   actionsDisabled = false,
+  onSaveFile,
+  onDiscardChanges,
+  canSaveSelectedFile = false,
+  hasUnsavedChanges = false,
+  textValue,
+  textLoading = false,
+  textError = null,
+  onTextChange,
+  onBeforeViewChange,
+  onOpenRawExport,
+  onOpenImageExport,
+  onEditorReady,
 }) => {
   const { t } = useLocale()
 
@@ -61,6 +85,7 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
 
     switch (extension) {
       case 'ini':
+      case 'pkt':
         return <FileText size={48} className="text-gray-300" />
       case 'shp':
         return <Image size={48} className="text-blue-400" />
@@ -97,7 +122,7 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
   const getFileTypeName = (filePath: string) => {
     const extension = filePath.split('.').pop()?.toLowerCase()
     const keyMap: Record<string, string> = {
-      ini: 'preview.fileType_ini', txt: 'preview.fileType_txt', csf: 'preview.fileType_csf',
+      ini: 'preview.fileType_ini', pkt: 'preview.fileType_pkt', txt: 'preview.fileType_txt', csf: 'preview.fileType_csf',
       pal: 'preview.fileType_pal', shp: 'preview.fileType_shp', vxl: 'preview.fileType_vxl',
       pcx: 'preview.fileType_pcx', wav: 'preview.fileType_wav', bik: 'preview.fileType_bik',
       map: 'preview.fileType_map', mpr: 'preview.fileType_map',
@@ -108,8 +133,6 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
   }
 
   const ext = useMemo(() => selectedFile?.split('.').pop()?.toLowerCase() ?? '', [selectedFile])
-  const [exportDialogOpen, setExportDialogOpen] = useState(false)
-  const [exportInitialTab, setExportInitialTab] = useState<'raw' | 'static' | 'gif'>('raw')
 
   type ViewerDef = {
     key: string
@@ -131,6 +154,10 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
   ]
   const viewsByExt: Record<string, ViewerDef[]> = {
     ini: [
+      { key: 'text', label: t('viewLabels.text'), Component: IniViewer },
+      { key: 'hex', label: t('viewLabels.hex'), Component: HexViewer },
+    ],
+    pkt: [
       { key: 'text', label: t('viewLabels.text'), Component: IniViewer },
       { key: 'hex', label: t('viewLabels.hex'), Component: HexViewer },
     ],
@@ -212,7 +239,12 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div
+      className="h-full flex flex-col"
+      data-context-kind="preview-selection"
+      data-file-path={selectedFile}
+      data-is-mix-file={String(ext === 'mix' || ext === 'mmx' || ext === 'yro')}
+    >
       {/* 预览头部：文件信息 + 文件操作区 */}
       <div className="p-4 border-b border-gray-700">
         <div className="flex items-center justify-between gap-3">
@@ -242,6 +274,24 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              className="px-3 py-1.5 rounded text-xs bg-blue-700 hover:bg-blue-600 text-white inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => onSaveFile?.()}
+              disabled={!canSaveSelectedFile || !hasUnsavedChanges || actionsDisabled}
+            >
+              <Save size={14} />
+              {t('preview.saveFile')}
+            </button>
+            <button
+              type="button"
+              className="px-3 py-1.5 rounded text-xs bg-gray-700 hover:bg-gray-600 text-gray-100 inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => onDiscardChanges?.()}
+              disabled={!canSaveSelectedFile || !hasUnsavedChanges || actionsDisabled}
+            >
+              <RotateCcw size={14} />
+              {t('preview.discardChanges')}
+            </button>
+            <button
+              type="button"
               className="px-3 py-1.5 rounded text-xs bg-gray-700 hover:bg-gray-600 text-gray-100 inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={() => onRenameFile?.()}
               disabled={!canModifyFile || actionsDisabled}
@@ -261,10 +311,7 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
             <button
               type="button"
               className="px-3 py-1.5 rounded text-xs bg-gray-700 hover:bg-gray-600 text-gray-100 inline-flex items-center gap-1"
-              onClick={() => {
-                setExportInitialTab('raw')
-                setExportDialogOpen(true)
-              }}
+              onClick={() => onOpenRawExport?.()}
             >
               <Download size={14} />
               {t('preview.rawExport')}
@@ -278,8 +325,7 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
               }`}
               onClick={() => {
                 if (ext !== 'shp') return
-                setExportInitialTab('static')
-                setExportDialogOpen(true)
+                onOpenImageExport?.()
               }}
               disabled={ext !== 'shp'}
               title={ext === 'shp' ? t('preview.imageGifExportTitle') : t('preview.shpOnlyHint')}
@@ -299,7 +345,14 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
             <button
               key={v.key}
               className={`px-2 py-1 text-xs rounded ${activeView === v.key ? 'bg-blue-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
-              onClick={() => setActiveView(v.key)}
+              onClick={() => {
+                void (async () => {
+                  if (v.key === activeView) return
+                  const allowed = await onBeforeViewChange?.(v.key)
+                  if (allowed === false) return
+                  setActiveView(v.key)
+                })()
+              }}
             >
               {v.label}
             </button>
@@ -313,6 +366,21 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
           {(() => {
             const Viewer = available.find(v => v.key === activeView)?.Component ?? available[0].Component
             if (!selectedFile) return null
+            if (ext === 'pkt' && activeView === 'text') {
+              return (
+                <IniViewer
+                  selectedFile={selectedFile}
+                  mixFiles={mixFiles}
+                  resourceContext={resourceContext}
+                  value={textValue}
+                  loadingOverride={textLoading}
+                  errorOverride={textError}
+                  onChange={onTextChange}
+                  readOnly={!canSaveSelectedFile}
+                  onEditorReady={onEditorReady}
+                />
+              )
+            }
             if (
               (ext === 'mix' || ext === 'mmx' || ext === 'yro')
               && activeView === 'directory'
@@ -324,6 +392,26 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
                   resourceContext={resourceContext}
                   onEnterCurrentMix={onEnterCurrentMix}
                   canEnterCurrentMix={canEnterCurrentMix}
+                />
+              )
+            }
+            if ((ext === 'ini' && activeView === 'text')) {
+              return (
+                <IniViewer
+                  selectedFile={selectedFile}
+                  mixFiles={mixFiles}
+                  resourceContext={resourceContext}
+                  onEditorReady={onEditorReady}
+                />
+              )
+            }
+            if (ext === 'txt' && activeView === 'text') {
+              return (
+                <TxtViewer
+                  selectedFile={selectedFile}
+                  mixFiles={mixFiles}
+                  resourceContext={resourceContext}
+                  onEditorReady={onEditorReady}
                 />
               )
             }
@@ -353,14 +441,6 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
           <span className="text-xs text-gray-400">{t('preview.viewingFile', { name: selectedFile.split('/').pop() ?? '' })}</span>
         </div>
       </div>
-      <ExportDialog
-        open={exportDialogOpen}
-        onClose={() => setExportDialogOpen(false)}
-        selectedFile={selectedFile}
-        mixFiles={mixFiles}
-        resourceContext={resourceContext}
-        initialTab={exportInitialTab}
-      />
     </div>
   )
 }

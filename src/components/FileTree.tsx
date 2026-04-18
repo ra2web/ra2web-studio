@@ -208,6 +208,10 @@ const FileTree: React.FC<FileTreeProps> = ({
     return (
       <div
         key={key}
+        data-context-kind="file-tree-row"
+        data-file-path={file.path}
+        data-is-mix-file={String(Boolean(file.isMixFile))}
+        data-mix-name={file.mixName ?? ''}
         className={`flex items-center hover:bg-gray-700 cursor-pointer border-b border-gray-800 ${
           isSelected ? 'bg-blue-600' : ''
         }`}
@@ -339,7 +343,7 @@ const FileTree: React.FC<FileTreeProps> = ({
       </div>
 
       {/* 表格内容 */}
-      <div className="text-sm flex-1 overflow-y-auto">
+      <div className="text-sm flex-1 overflow-y-auto" data-context-kind="file-tree-empty">
         {browserMode === 'workspace' ? (
           workspaceFileList.length > 0 ? (
             sortedWorkspaceFileList.length > 0 ? (
@@ -353,7 +357,11 @@ const FileTree: React.FC<FileTreeProps> = ({
         ) : sortedRepositoryGroups.length > 0 ? (
           sortedRepositoryGroups.map((group, groupIndex) => (
             <React.Fragment key={`${group.mixName}-${groupIndex}`}>
-              <div className="flex items-center justify-between px-2 py-1 border-b border-gray-700 bg-gray-700">
+              <div
+                className="flex items-center justify-between px-2 py-1 border-b border-gray-700 bg-gray-700"
+                data-context-kind="repository-group-header"
+                data-mix-name={group.mixName}
+              >
                 <div className="text-xs text-gray-200 truncate" title={group.mixName}>
                   {group.mixName}
                   {group.mixName === activeMixName && (

@@ -75,3 +75,76 @@
     border: 2px solid #111827; /* to create inset space */
   }
 }
+
+@layer components {
+  .vscode-editor-shell {
+    height: 100%;
+    width: 100%;
+    background: #1e1e1e;
+    color: #d4d4d4;
+  }
+
+  .vscode-editor-shell .monaco-editor,
+  .vscode-editor-shell .monaco-editor-background,
+  .vscode-editor-shell .monaco-editor .margin,
+  .vscode-editor-shell .monaco-editor .monaco-editor-background {
+    background-color: #1e1e1e !important;
+  }
+
+  .vscode-editor-shell .monaco-editor .current-line,
+  .vscode-editor-shell .monaco-editor .current-line-margin {
+    background-color: rgba(255, 255, 255, 0.035) !important;
+    border: none !important;
+  }
+
+  .vscode-editor-shell .monaco-editor .line-numbers {
+    color: #858585 !important;
+  }
+
+  .vscode-editor-shell .monaco-editor .margin-view-overlays .current-line-exact {
+    border: none !important;
+  }
+
+  .vscode-editor-shell .monaco-editor .scroll-decoration {
+    box-shadow: none !important;
+  }
+
+  .vscode-editor-shell .monaco-editor .cursors-layer .cursor {
+    background-color: #aeafad !important;
+  }
+
+  .vscode-editor-shell .monaco-editor textarea.inputarea,
+  .vscode-editor-shell .monaco-editor .inputarea {
+    min-width: 1px !important;
+    min-height: 1px !important;
+    width: 1px !important;
+    height: 1px !important;
+    opacity: 0 !important;
+    background: transparent !important;
+    color: transparent !important;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    resize: none !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+  }
+
+  .vscode-editor-fallback {
+    height: 100%;
+    width: 100%;
+    overflow: auto;
+    background: #1e1e1e;
+    color: #d4d4d4;
+  }
+
+  .vscode-editor-fallback__content {
+    margin: 0;
+    padding: 14px 16px;
+    font-family: 'Cascadia Code', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'Liberation Mono', monospace;
+    font-size: 14px;
+    line-height: 22px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+}

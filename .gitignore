@@ -115,6 +115,9 @@ temp/
 
 # Testing
 coverage
+playwright-report/
+test-results/
+blob-report/
 
 # Local development
 .env.local
