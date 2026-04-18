@@ -114,9 +114,15 @@ export const en = {
     bytes: 'bytes',
   },
 
+  // ProjectExplorer
+  projectExplorer: {
+    collapse: 'Collapse project files',
+    expand: 'Expand project files',
+  },
+
   // MixEditor
   mixEditor: {
-    appTitle: 'RA2Web Studio - Mix Editor',
+    appTitle: 'RA2WEB Studio - Mix Editor',
     importGameRes: 'Import Game Resources',
     importHint: 'Import game directory or archive to build local resource base, then enter the editor.',
     selectArchive: 'Select archive (tar.gz/exe/7z)',

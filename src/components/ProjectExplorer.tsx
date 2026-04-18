@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, File, Folder, Search } from 'lucide-react'
+import { ChevronDown, ChevronRight, File, Folder, PanelLeftClose, Search } from 'lucide-react'
 import { useLocale } from '../i18n/LocaleContext'
 import type { ProjectTreeNode } from '../types/studio'
 import { isMixLikeFile } from '../services/gameRes/patterns'
@@ -21,6 +21,8 @@ interface ProjectExplorerProps {
   onOpenMix: (path: string) => void
   emptyText: string
   searchPlaceholder: string
+  /** 提供时在搜索栏右侧渲染折叠按钮；不提供则不显示按钮。 */
+  onToggleCollapse?: () => void
 }
 
 function formatFileSize(bytes: number): string {
@@ -81,6 +83,7 @@ const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
   onOpenMix,
   emptyText,
   searchPlaceholder,
+  onToggleCollapse,
 }) => {
   const { t } = useLocale()
   const [searchQuery, setSearchQuery] = useState('')
@@ -118,20 +121,33 @@ const ProjectExplorer: React.FC<ProjectExplorerProps> = ({
 
   return (
     <div className="h-full flex flex-col">
-      <label className="group flex items-center border-b border-gray-700 px-3 transition-colors focus-within:bg-gray-900/60 hover:bg-gray-800/60">
-        <Search
-          size={14}
-          className="mr-2 flex-shrink-0 text-gray-400 group-focus-within:text-blue-300"
-        />
-        <input
-          data-testid="project-tree-search-input"
-          type="text"
-          className="min-w-0 flex-1 bg-transparent py-2 text-xs text-gray-100 outline-none placeholder:text-gray-500"
-          placeholder={searchPlaceholder}
-          value={searchQuery}
-          onChange={(event) => setSearchQuery(event.target.value)}
-        />
-      </label>
+      <div className="flex items-stretch border-b border-gray-700">
+        <label className="group flex flex-1 min-w-0 items-center px-3 transition-colors focus-within:bg-gray-900/60 hover:bg-gray-800/60">
+          <Search
+            size={14}
+            className="mr-2 flex-shrink-0 text-gray-400 group-focus-within:text-blue-300"
+          />
+          <input
+            data-testid="project-tree-search-input"
+            type="text"
+            className="min-w-0 flex-1 bg-transparent py-2 text-xs text-gray-100 outline-none placeholder:text-gray-500"
+            placeholder={searchPlaceholder}
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+          />
+        </label>
+        {onToggleCollapse && (
+          <button
+            type="button"
+            className="inline-flex w-9 flex-shrink-0 items-center justify-center border-l border-gray-700 text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-100"
+            onClick={onToggleCollapse}
+            title={t('projectExplorer.collapse')}
+            aria-label={t('projectExplorer.collapse')}
+          >
+            <PanelLeftClose size={14} />
+          </button>
+        )}
+      </div>
 
       <div className="flex border-b border-gray-700 bg-gray-800 text-xs font-semibold uppercase tracking-wide text-gray-500">
         <div

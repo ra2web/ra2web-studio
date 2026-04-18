@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
+import { AlertCircle, CheckCircle2, Loader2, PanelLeftOpen } from 'lucide-react'
 import Toolbar from './Toolbar'
 import ActionSidebar from './ActionSidebar'
 import FileTree from './FileTree'
@@ -202,6 +203,17 @@ const MixEditor: React.FC = () => {
   const [activeTopMixName, setActiveTopMixName] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [progressMessage, setProgressMessage] = useState<string>('')
+  // 底栏右侧状态指示：异步操作完成后短暂展示一条非阻塞的提示，不再用全屏 dialog 打断用户。
+  const [statusNotice, setStatusNotice] = useState<{
+    id: number
+    level: 'success' | 'error' | 'info'
+    message: string
+  } | null>(null)
+  const statusNoticeIdRef = useRef(0)
+  const statusNoticeTimerRef = useRef<number | null>(null)
+  // 项目模式：左侧 ProjectExplorer 折叠态。打开 MIX 时自动折叠、关闭时自动展开，期间用户也可手动切换。
+  const [projectExplorerCollapsed, setProjectExplorerCollapsed] = useState(false)
+  const prevNavStackHasMixRef = useRef(false)
   const [importProgressEvent, setImportProgressEvent] = useState<GameResImportProgressEvent | null>(null)
   const [importProgressSteps, setImportProgressSteps] = useState<GameResImportStepState[]>(
     () => createInitialGameResImportSteps(),
@@ -233,6 +245,51 @@ const MixEditor: React.FC = () => {
     if (typeof navigator === 'undefined') return false
     return /Mac|iPhone|iPad|iPod/i.test(navigator.platform)
   }, [])
+
+  // 显示底栏右侧的瞬时通知（成功/失败/普通提示），到时自动消失。
+  const showStatusNotice = useCallback((
+    message: string,
+    level: 'success' | 'error' | 'info' = 'success',
+    durationMs?: number,
+  ) => {
+    if (typeof window === 'undefined') return
+    if (statusNoticeTimerRef.current != null) {
+      window.clearTimeout(statusNoticeTimerRef.current)
+      statusNoticeTimerRef.current = null
+    }
+    const id = ++statusNoticeIdRef.current
+    setStatusNotice({ id, level, message })
+    const ms = durationMs ?? (level === 'error' ? 4500 : 2200)
+    statusNoticeTimerRef.current = window.setTimeout(() => {
+      setStatusNotice((prev) => (prev?.id === id ? null : prev))
+      statusNoticeTimerRef.current = null
+    }, ms)
+  }, [])
+
+  // 卸载时清理定时器
+  useEffect(() => {
+    return () => {
+      if (statusNoticeTimerRef.current != null) {
+        window.clearTimeout(statusNoticeTimerRef.current)
+        statusNoticeTimerRef.current = null
+      }
+    }
+  }, [])
+
+  // 项目模式下，监听"是否打开了 MIX"的转换：
+  //   无 → 有 (打开 MIX)：自动折叠左侧 ProjectExplorer
+  //   有 → 无 (关闭 MIX)：自动展开 ProjectExplorer
+  // 转换之外的渲染不会动 collapsed，所以打开 MIX 后用户手动展开仍然有效。
+  useEffect(() => {
+    const hasMix = navStack.length > 0
+    const prev = prevNavStackHasMixRef.current
+    if (!prev && hasMix) {
+      setProjectExplorerCollapsed(true)
+    } else if (prev && !hasMix) {
+      setProjectExplorerCollapsed(false)
+    }
+    prevNavStackHasMixRef.current = hasMix
+  }, [navStack.length])
 
   const mixFiles = useMemo(() => {
     if (studioMode === 'base') return baseMixFiles
@@ -1675,10 +1732,7 @@ const MixEditor: React.FC = () => {
             error: null,
           }
         })
-        await dialog.info({
-          title: t('mixEditor.saveComplete'),
-          message: t('mixEditor.saveSummary', { name: fileName }),
-        })
+        showStatusNotice(t('mixEditor.saveSummary', { name: fileName }), 'success')
         return
       }
 
@@ -1704,15 +1758,14 @@ const MixEditor: React.FC = () => {
           error: null,
         }
       })
+      // LMD 更新明细对终端用户价值不大（更多是开发自检信息），保留到 console.debug。
       const lmdLines = buildLmdSummaryLines(
         currentContainer.name,
         persisted.currentLmdSummary,
         persisted.parentLmdSummaries,
       )
-      await dialog.info({
-        title: t('mixEditor.saveComplete'),
-        message: `${t('mixEditor.saveSummary', { name: selectedLeafName })}\n\n${t('mixEditor.lmdUpdateSummary')}\n${lmdLines.join('\n')}`,
-      })
+      console.debug('[MixEditor] save pkt LMD summary:', lmdLines.join('\n'))
+      showStatusNotice(t('mixEditor.saveSummary', { name: selectedLeafName }), 'success')
     } catch (err: any) {
       console.error('Save pkt in current MIX failed:', err)
       await dialog.info(err?.message || t('mixEditor.saveFailed'))
@@ -1733,6 +1786,7 @@ const MixEditor: React.FC = () => {
     reloadStudioData,
     selectedFile,
     selectedLeafName,
+    showStatusNotice,
     studioMode,
     t,
   ])
@@ -1841,10 +1895,8 @@ const MixEditor: React.FC = () => {
       const importSummary = skippedCount > 0
         ? t('mixEditor.importSummaryWithSkipped', { imported: String(importedCount), skipped: String(skippedCount) })
         : t('mixEditor.importSummaryDone', { imported: String(importedCount) })
-      await dialog.info({
-        title: t('mixEditor.importComplete'),
-        message: `${importSummary}\n\n${t('mixEditor.lmdUpdateSummary')}\n${lmdLines.join('\n')}`,
-      })
+      console.debug('[MixEditor] import LMD summary:', lmdLines.join('\n'))
+      showStatusNotice(importSummary, 'success')
     } catch (err: any) {
       console.error('Import to current MIX failed:', err)
       await dialog.info(err?.message || t('mixEditor.importFailed'))
@@ -1860,6 +1912,7 @@ const MixEditor: React.FC = () => {
     persistCurrentContainerEntries,
     buildLmdSummaryLines,
     dialog,
+    showStatusNotice,
     t,
   ])
 
@@ -1912,10 +1965,10 @@ const MixEditor: React.FC = () => {
           activeProjectName,
           projectSelectionPath: nextPath,
         })
-        await dialog.info({
-          title: t('mixEditor.renameComplete'),
-          message: t('mixEditor.renameSummary', { from: oldName, to: getResourcePathBasename(nextPath) }),
-        })
+        showStatusNotice(
+          t('mixEditor.renameSummary', { from: oldName, to: getResourcePathBasename(nextPath) }),
+          'success',
+        )
         return
       }
 
@@ -1995,10 +2048,8 @@ const MixEditor: React.FC = () => {
         persisted.currentLmdSummary,
         persisted.parentLmdSummaries,
       )
-      await dialog.info({
-        title: t('mixEditor.renameComplete'),
-        message: `${t('mixEditor.renameSummary', { from: oldName, to: nextName })}\n\n${t('mixEditor.lmdUpdateSummary')}\n${lmdLines.join('\n')}`,
-      })
+      console.debug('[MixEditor] rename LMD summary:', lmdLines.join('\n'))
+      showStatusNotice(t('mixEditor.renameSummary', { from: oldName, to: nextName }), 'success')
     } catch (err: any) {
       console.error('Rename entry in current MIX failed:', err)
       await dialog.info(err?.message || t('mixEditor.renameFailed'))
@@ -2017,6 +2068,7 @@ const MixEditor: React.FC = () => {
     readContainerEntries,
     reloadStudioData,
     selectedLeafName,
+    showStatusNotice,
     studioMode,
     t,
   ])
@@ -2046,10 +2098,7 @@ const MixEditor: React.FC = () => {
           studioMode: 'projects',
           activeProjectName,
         })
-        await dialog.info({
-          title: t('mixEditor.deleteComplete'),
-          message: t('mixEditor.deleteSummary', { name: targetName }),
-        })
+        showStatusNotice(t('mixEditor.deleteSummary', { name: targetName }), 'success')
         return
       }
 
@@ -2079,10 +2128,8 @@ const MixEditor: React.FC = () => {
         persisted.currentLmdSummary,
         persisted.parentLmdSummaries,
       )
-      await dialog.info({
-        title: t('mixEditor.deleteComplete'),
-        message: `${t('mixEditor.deleteSummary', { name: targetName })}\n\n${t('mixEditor.lmdUpdateSummary')}\n${lmdLines.join('\n')}`,
-      })
+      console.debug('[MixEditor] delete LMD summary:', lmdLines.join('\n'))
+      showStatusNotice(t('mixEditor.deleteSummary', { name: targetName }), 'success')
     } catch (err: any) {
       console.error('Delete entry in current MIX failed:', err)
       await dialog.info(err?.message || t('mixEditor.deleteFailed'))
@@ -2101,6 +2148,7 @@ const MixEditor: React.FC = () => {
     readContainerEntries,
     reloadStudioData,
     selectedLeafName,
+    showStatusNotice,
     studioMode,
     t,
   ])
@@ -2678,7 +2726,7 @@ const MixEditor: React.FC = () => {
             <div className="absolute inset-0 bg-gradient-to-br from-black/70 via-black/35 to-black/75" />
             <div className="absolute left-8 top-8 max-w-xl">
               <div className="text-2xl font-bold tracking-wide text-white drop-shadow-md">
-                RA2Web Studio
+                RA2WEB Studio
               </div>
               <div className="mt-2 text-sm text-gray-200 drop-shadow">
                 {startupLoadingStatus || t('mixEditor.readingResources')}
@@ -2808,16 +2856,29 @@ const MixEditor: React.FC = () => {
             </div>
           ) : (
             <div className="flex bg-gray-800 border-r border-gray-700">
-              <div className="w-80 min-w-[20rem]">
-                <ProjectExplorer
-                  tree={projectTree}
-                  selectedPath={selectedProjectPath}
-                  onSelectPath={handleProjectTreeSelect}
-                  onOpenMix={handleOpenProjectMixTree}
-                  emptyText={t('fileTree.projectEmpty')}
-                  searchPlaceholder={t('fileTree.searchProjectPlaceholder')}
-                />
-              </div>
+              {projectExplorerCollapsed ? (
+                <button
+                  type="button"
+                  className="flex w-9 flex-shrink-0 flex-col items-center justify-start border-r border-gray-700 bg-gray-800 py-3 text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-100"
+                  onClick={() => setProjectExplorerCollapsed(false)}
+                  title={t('projectExplorer.expand')}
+                  aria-label={t('projectExplorer.expand')}
+                >
+                  <PanelLeftOpen size={16} />
+                </button>
+              ) : (
+                <div className="w-80 min-w-[20rem]">
+                  <ProjectExplorer
+                    tree={projectTree}
+                    selectedPath={selectedProjectPath}
+                    onSelectPath={handleProjectTreeSelect}
+                    onOpenMix={handleOpenProjectMixTree}
+                    emptyText={t('fileTree.projectEmpty')}
+                    searchPlaceholder={t('fileTree.searchProjectPlaceholder')}
+                    onToggleCollapse={() => setProjectExplorerCollapsed(true)}
+                  />
+                </div>
+              )}
               {navStack.length > 0 && activeProjectName && (
                 <div className="w-80 min-w-[20rem]">
                   <MixExplorer
@@ -2974,6 +3035,40 @@ const MixEditor: React.FC = () => {
             )}
           </>
         )}
+
+        {/* 右侧状态指示：正在执行的异步动作 / 刚完成的瞬时通知 */}
+        <div className="ml-auto flex flex-shrink-0 items-center gap-1.5" data-context-kind="status-indicator">
+          {loading && progressMessage ? (
+            <>
+              <Loader2 size={14} className="animate-spin text-blue-300" />
+              <span className="text-blue-200" title={progressMessage}>{progressMessage}</span>
+            </>
+          ) : statusNotice ? (
+            <>
+              {statusNotice.level === 'success' && (
+                <CheckCircle2 size={14} className="text-emerald-300" />
+              )}
+              {statusNotice.level === 'error' && (
+                <AlertCircle size={14} className="text-red-300" />
+              )}
+              {statusNotice.level === 'info' && (
+                <Loader2 size={14} className="text-blue-300" />
+              )}
+              <span
+                className={
+                  statusNotice.level === 'success'
+                    ? 'text-emerald-200'
+                    : statusNotice.level === 'error'
+                      ? 'text-red-200'
+                      : 'text-blue-200'
+                }
+                title={statusNotice.message}
+              >
+                {statusNotice.message}
+              </span>
+            </>
+          ) : null}
+        </div>
       </div>
     </div>
   )

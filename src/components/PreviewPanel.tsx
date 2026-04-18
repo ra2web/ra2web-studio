@@ -392,7 +392,8 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
                   loadingOverride={textLoading}
                   errorOverride={textError}
                   onChange={onTextChange}
-                  readOnly={!canSaveSelectedFile}
+                  // 保存等异步动作进行中时（actionsDisabled），同时锁住编辑器，避免改了一半触发竞态
+                  readOnly={!canSaveSelectedFile || actionsDisabled}
                   onEditorReady={onEditorReady}
                 />
               )
@@ -408,7 +409,7 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
                   loadingOverride={textLoading}
                   errorOverride={textError}
                   onChange={onTextChange}
-                  readOnly={!canSaveSelectedFile}
+                  readOnly={!canSaveSelectedFile || actionsDisabled}
                   onEditorReady={onEditorReady}
                 />
               )

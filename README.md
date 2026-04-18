@@ -1,4 +1,4 @@
-# RA2Web Studio
+# RA2WEB Studio
 
 **[简体中文](README.zh.md)**
 

@@ -1,6 +1,6 @@
 {
   "name": "ra2web-studio",
-  "description": "RA2Web Studio - 专业的在线兼容红警2 MIX文件编辑器，提供MIX文件解析、文件提取、数据预览、红警2游戏资源管理等功能。支持在线编辑红警2的mix文件，无需下载软件。",
+  "description": "RA2WEB Studio - 专业的在线兼容红警2 MIX文件编辑器，提供MIX文件解析、文件提取、数据预览、红警2游戏资源管理等功能。支持在线编辑红警2的mix文件，无需下载软件。",
   "private": true,
   "version": "0.0.0",
   "type": "module",

@@ -112,9 +112,15 @@ export const zh = {
     bytes: '字节',
   },
 
+  // ProjectExplorer
+  projectExplorer: {
+    collapse: '折叠项目文件',
+    expand: '展开项目文件',
+  },
+
   // MixEditor
   mixEditor: {
-    appTitle: 'RA2Web Studio - 王二火大 Mix文件编辑器',
+    appTitle: 'RA2WEB Studio - 王二火大 Mix文件编辑器',
     importGameRes: '导入游戏资源',
     importHint: '先导入游戏目录或归档文件，建立本地资源基座后再进入编辑界面。',
     selectArchive: '选择归档（tar.gz/exe/7z）文件',
