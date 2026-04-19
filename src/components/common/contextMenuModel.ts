@@ -33,6 +33,7 @@ export type ContextMenuCommandId =
   | 'imageGifExport'
   | 'enterCurrentMix'
   | 'renameFile'
+  | 'copyFile'
   | 'deleteFile'
   | 'openMetadata'
   | 'closeMetadata'
@@ -109,6 +110,11 @@ export interface ContextMenuBuildState {
   fileExtension: string
   canEnterMixTarget: boolean
   canModifyTarget: boolean
+  /**
+   * 是否允许「复制项目文件」命令出现。仅项目模式选中 project-file 时为 true；
+   * project-directory / mix-entry 暂不支持本期复制流程。
+   */
+  canCopyTarget: boolean
   canSaveTarget: boolean
   hasUnsavedChanges: boolean
   metadataDrawerOpen: boolean
@@ -509,6 +515,12 @@ export function buildContextMenuItems(args: {
         label: t('contextMenu.renameFile'),
         icon: 'pencil',
         disabled: state.loading || !state.canModifyTarget,
+      })
+      appendItem(items, {
+        id: 'copyFile',
+        label: t('contextMenu.copyFile'),
+        icon: 'copy',
+        disabled: state.loading || !state.canCopyTarget,
       })
       appendItem(items, {
         id: 'deleteFile',

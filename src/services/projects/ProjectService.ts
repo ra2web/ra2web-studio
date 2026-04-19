@@ -19,6 +19,7 @@ import {
   type MixArchiveBuilderEntry,
 } from '../mixEdit/MixArchiveBuilder'
 import type {
+  ProjectDestinationTarget,
   ProjectFileEntry,
   ProjectSummary,
   ProjectTreeNode,
@@ -488,6 +489,95 @@ export class ProjectService {
       owningMixPath,
       new File([rebuiltTopBuffer], getResourcePathBasename(owningMixPath), { type: 'application/octet-stream' }),
     )
+  }
+
+  /**
+   * 把项目内一个普通文件复制到同项目的另一个位置（目录或顶层 MIX 容器）。
+   * 不静默覆盖：目标已存在同名文件 → 抛错让上层提示用户改名。
+   *
+   * @returns 新文件的相对路径（mix 分支返回的是 owningMixPath，因为新条目存在 MIX 内部）
+   */
+  static async copyProjectFile(
+    projectName: string,
+    sourceRelativePath: string,
+    destination: ProjectDestinationTarget,
+    newName: string,
+  ): Promise<string> {
+    const normalizedProject = validateProjectName(projectName)
+    const normalizedSource = normalizeResourcePath(sourceRelativePath)
+    if (!normalizedSource) {
+      throw new Error('源路径不能为空')
+    }
+    const trimmedNewName = (newName ?? '').trim()
+    if (!trimmedNewName) {
+      throw new Error('新文件名不能为空')
+    }
+    const normalizedNewName = normalizeResourceFilename(trimmedNewName)
+    if (!normalizedNewName) {
+      throw new Error('新文件名不合法')
+    }
+    if (/[\\/]/.test(trimmedNewName)) {
+      throw new Error('新文件名不能包含路径分隔符')
+    }
+
+    const sourceFile = await this.readProjectFile(normalizedProject, normalizedSource)
+
+    if (destination.kind === 'directory') {
+      const normalizedDir = normalizeResourcePath(destination.relativePath)
+      const targetPath = normalizedDir
+        ? `${normalizedDir}/${normalizedNewName}`
+        : normalizedNewName
+      if (targetPath === normalizedSource) {
+        throw new Error('目标路径与源路径相同')
+      }
+      if (await FileSystemUtil.importedEntryExists('mod', targetPath, normalizedProject)) {
+        throw new Error('目标位置已存在同名文件')
+      }
+      if (normalizedDir) {
+        await this.ensureProjectDirectory(normalizedProject, normalizedDir)
+      }
+      const buffer = await sourceFile.arrayBuffer()
+      const copy = new File([buffer], normalizedNewName, {
+        type: sourceFile.type || 'application/octet-stream',
+        lastModified: sourceFile.lastModified,
+      })
+      await this.writeProjectFile(normalizedProject, targetPath, copy)
+      return targetPath
+    }
+
+    // mix 分支：写入项目中某个 MIX 文件（containerChain 决定深度，本期一般为 []）
+    const owningMixPath = normalizeResourcePath(destination.owningMixPath)
+    if (!owningMixPath) {
+      throw new Error('目标 MIX 路径无效')
+    }
+    if (owningMixPath === normalizedSource && (destination.containerChain ?? []).length === 0) {
+      // 把文件复制到自己里？不允许，避免源文件成为自己 MIX 的成员
+      throw new Error('不能把文件复制到自身')
+    }
+    // 冲突检测：先打开 MIX，确认目标 MIX 内部不存在同名条目
+    const topFile = await this.readProjectFile(normalizedProject, owningMixPath)
+    const topInfo = await MixParser.parseFile(topFile)
+    const navStack = await buildMixNavStack(topFile, topInfo, destination.containerChain ?? [])
+    const currentContainer = navStack[navStack.length - 1]
+    const conflict = currentContainer.info.files.some((entry) =>
+      sameMixEntryName(entry.filename, normalizedNewName),
+    )
+    if (conflict) {
+      throw new Error('目标 MIX 内已存在同名条目')
+    }
+    const buffer = await sourceFile.arrayBuffer()
+    const copy = new File([buffer], normalizedNewName, {
+      type: sourceFile.type || 'application/octet-stream',
+      lastModified: sourceFile.lastModified,
+    })
+    await this.writeFileIntoProjectMix({
+      projectName: normalizedProject,
+      owningMixPath,
+      containerChain: destination.containerChain ?? [],
+      sourceFile: copy,
+      targetFilename: normalizedNewName,
+    })
+    return owningMixPath
   }
 
   static async exportProjectZip(projectName: string): Promise<{ blob: Blob; filename: string }> {

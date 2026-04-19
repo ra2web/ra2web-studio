@@ -11,6 +11,7 @@ import PreviewPanel from './PreviewPanel'
 import PropertiesPanel from './PropertiesPanel'
 import ImportProgressPanel from './ImportProgressPanel'
 import ExportDialog from './export/ExportDialog'
+import CopyFileDialog from './projects/CopyFileDialog'
 import { MixParser, MixFileInfo } from '../services/MixParser'
 import { VirtualFile } from '../data/vfs/VirtualFile'
 import { DataStream } from '../data/DataStream'
@@ -53,6 +54,7 @@ import { ProjectService } from '../services/projects/ProjectService'
 import { GlobalSearchService } from '../services/search/GlobalSearchService'
 import type {
   GlobalSearchResult,
+  ProjectDestinationTarget,
   ProjectFileEntry,
   ProjectSelectionTarget,
   ProjectSummary,
@@ -214,8 +216,16 @@ const MixEditor: React.FC = () => {
   // 项目模式：左侧 ProjectExplorer 折叠态。打开 MIX 时自动折叠、关闭时自动展开，期间用户也可手动切换。
   const [projectExplorerCollapsed, setProjectExplorerCollapsed] = useState(false)
   const prevNavStackHasMixRef = useRef(false)
-  // Cameo 编辑器写盘中
-  const [cameoSaving, setCameoSaving] = useState(false)
+  // SHP 编辑器：写盘中状态 / 编辑模式开关 / 进入时的初始 preset
+  const [shpSaving, setShpSaving] = useState(false)
+  const [shpEditMode, setShpEditMode] = useState(false)
+  const [shpEditInitialPreset, setShpEditInitialPreset] =
+    useState<import('./shp/ShpEditor').ShpEditorPreset | undefined>(undefined)
+  // 编辑已有 SHP 时把字节传给 ShpEditor，编辑器自动以 frame 0 为底图。空 SHP 创建场景下保持 undefined。
+  const [shpEditExistingSource, setShpEditExistingSource] = useState<
+    | { bytes: Uint8Array; filename: string }
+    | undefined
+  >(undefined)
   const [importProgressEvent, setImportProgressEvent] = useState<GameResImportProgressEvent | null>(null)
   const [importProgressSteps, setImportProgressSteps] = useState<GameResImportStepState[]>(
     () => createInitialGameResImportSteps(),
@@ -236,6 +246,9 @@ const MixEditor: React.FC = () => {
   const [pktEditSession, setPktEditSession] = useState<EditablePktSession | null>(null)
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
   const [exportInitialTab, setExportInitialTab] = useState<ExportTab>('raw')
+  // 复制项目文件对话框
+  const [copyDialogOpen, setCopyDialogOpen] = useState(false)
+  const [copySaving, setCopySaving] = useState(false)
   const [contextMenuTarget, setContextMenuTarget] = useState<ContextMenuTarget | null>(null)
   const [searchIndex, setSearchIndex] = useState<GlobalSearchResult[]>([])
   const [searchQuery, setSearchQuery] = useState('')
@@ -1306,15 +1319,15 @@ const MixEditor: React.FC = () => {
     validateProjectEntryName,
   ])
 
-  // Cameo 编辑器保存：把生成的 SHP 字节写回项目里那个空 .shp 文件，刷新后 PreviewPanel 自动切回 ShpViewer。
-  const handleSaveCameo = useCallback(async (shpBytes: Uint8Array) => {
+  // 通用 SHP 编辑器保存：把生成的 SHP 字节写回项目里被选中的 .shp 文件
+  // 写完后刷新数据；若是从"已有 SHP → 编辑模式"进入的，保存后会退出编辑模式回 ShpViewer 看新内容
+  const handleSaveShp = useCallback(async (shpBytes: Uint8Array) => {
     if (!activeProjectName || projectSelection?.kind !== 'project-file') return
     const path = projectSelection.relativePath
     const filename = getResourcePathBasename(path)
-    setCameoSaving(true)
-    setProgressMessage(t('cameo.editor.savingProgress', { name: filename }))
+    setShpSaving(true)
+    setProgressMessage(t('shpEditor.savingProgress', { name: filename }))
     try {
-      // 复制一份让 buffer 类型为纯 ArrayBuffer，避免 TS 5 对 ArrayBufferLike 的收紧
       const bytesCopy = new Uint8Array(shpBytes.length)
       bytesCopy.set(shpBytes)
       const file = new File([bytesCopy], filename, { type: 'application/octet-stream' })
@@ -1325,13 +1338,133 @@ const MixEditor: React.FC = () => {
         activeProjectName,
         projectSelectionPath: path,
       })
-      showStatusNotice(t('cameo.editor.savedHint', { name: filename }), 'success')
+      showStatusNotice(t('shpEditor.savedHint', { name: filename }), 'success')
+      // 保存成功后退出编辑模式：让用户立即看到 ShpViewer 渲染的新 SHP
+      setShpEditMode(false)
+      setShpEditInitialPreset(undefined)
+      setShpEditExistingSource(undefined)
     } catch (error: any) {
       await dialog.alert({
-        message: t('cameo.editor.saveFailed', { error: error?.message ?? String(error) }),
+        message: t('shpEditor.saveFailed', { error: error?.message ?? String(error) }),
       })
     } finally {
-      setCameoSaving(false)
+      setShpSaving(false)
+      setProgressMessage('')
+    }
+  }, [
+    activeProjectName,
+    dialog,
+    projectSelection,
+    reloadStudioData,
+    showStatusNotice,
+    t,
+  ])
+
+  // 用户点 ShpViewer 上的"编辑 SHP"按钮 → 把当前选中的 project-file 字节读出来
+  // 喂给 ShpEditor，让编辑器自动以原 SHP frame 0 为底图。空 SHP 不需要读字节。
+  const handleEnterShpEdit = useCallback(async () => {
+    if (!activeProjectName || projectSelection?.kind !== 'project-file') return
+    const path = projectSelection.relativePath
+    const filename = getResourcePathBasename(path)
+    const entry = projectEntryMap.get(normalizeResourcePath(path))
+    const isEmpty = entry ? entry.size === 0 : false
+    setShpEditInitialPreset(undefined)
+    if (isEmpty) {
+      // 空 SHP：保持创建模式，不需要读字节
+      setShpEditExistingSource(undefined)
+      setShpEditMode(true)
+      return
+    }
+    try {
+      const file = await ProjectService.readProjectFile(activeProjectName, path)
+      const buffer = await file.arrayBuffer()
+      const bytes = new Uint8Array(buffer)
+      setShpEditExistingSource({ bytes, filename })
+      setShpEditMode(true)
+    } catch (error: any) {
+      await dialog.alert({
+        message: t('cameo.editor.existingLoadFailed', { error: error?.message ?? String(error) }),
+      })
+    }
+  }, [activeProjectName, dialog, projectEntryMap, projectSelection, t])
+
+  const handleExitShpEdit = useCallback(() => {
+    setShpEditMode(false)
+    setShpEditInitialPreset(undefined)
+    setShpEditExistingSource(undefined)
+  }, [])
+
+  // 仅项目模式下选中的 project-file 才允许复制；目录与 mix-entry 暂不在本期范围
+  const canCopyProjectFile = useMemo(() => {
+    if (studioMode !== 'projects') return false
+    if (!activeProjectName) return false
+    return projectSelection?.kind === 'project-file'
+  }, [activeProjectName, projectSelection, studioMode])
+
+  // CopyFileDialog 用：项目内已有文件路径集合（normalized + lowercased），用于实时冲突检测
+  const projectExistingFilePaths = useMemo(() => {
+    const set = new Set<string>()
+    for (const entry of projectEntries) {
+      if (entry.kind === 'file') {
+        set.add(entry.relativePath.toLowerCase())
+      }
+    }
+    return set
+  }, [projectEntries])
+
+  // 项目内顶层 MIX 的现有条目集合：key = `${owningMixPath}::${entryName.toLowerCase()}`
+  const projectExistingMixEntries = useMemo(() => {
+    const set = new Set<string>()
+    for (const mix of projectMixFiles) {
+      for (const entry of mix.info.files) {
+        set.add(`${mix.info.name}::${entry.filename.toLowerCase()}`)
+      }
+    }
+    return set
+  }, [projectMixFiles])
+
+  const handleOpenCopyDialog = useCallback(() => {
+    if (!canCopyProjectFile) return
+    setCopyDialogOpen(true)
+  }, [canCopyProjectFile])
+
+  const handleCloseCopyDialog = useCallback(() => {
+    if (copySaving) return
+    setCopyDialogOpen(false)
+  }, [copySaving])
+
+  // 用户在 CopyFileDialog 点确定 → 真正写盘 + 刷新 + 选中新文件
+  const handleCopyProjectFile = useCallback(async (
+    destination: ProjectDestinationTarget,
+    newName: string,
+  ) => {
+    if (!activeProjectName || projectSelection?.kind !== 'project-file') return
+    const sourcePath = projectSelection.relativePath
+    setCopySaving(true)
+    setProgressMessage(t('mixEditor.copyFile.savingProgress', { name: newName }))
+    try {
+      const newPath = await ProjectService.copyProjectFile(
+        activeProjectName,
+        sourcePath,
+        destination,
+        newName,
+      )
+      // mix 分支：写入到 owningMixPath 内部，新条目位于 MIX 中；选回 MIX 文件本身比较自然
+      // directory 分支：newPath 是新文件相对路径，直接选中它
+      await reloadStudioData(undefined, {
+        skipUnsavedGuard: true,
+        studioMode: 'projects',
+        activeProjectName,
+        projectSelectionPath: newPath,
+      })
+      showStatusNotice(t('mixEditor.copyFile.savedHint', { path: newPath }), 'success')
+      setCopyDialogOpen(false)
+    } catch (error: any) {
+      await dialog.alert({
+        message: t('mixEditor.copyFile.failed', { error: error?.message ?? String(error) }),
+      })
+    } finally {
+      setCopySaving(false)
       setProgressMessage('')
     }
   }, [
@@ -1543,14 +1676,34 @@ const MixEditor: React.FC = () => {
     )
   }, [projectSelection, studioMode])
 
-  // 项目模式 + 选中的是空 .shp 文件 → 触发 PreviewPanel 渲染 CameoEditor
-  const isCameoCreationCandidate = useMemo(() => {
+  // 项目模式 + 选中的是空 .shp 文件 → 自动进入 ShpEditor 创建模式
+  const isEmptyShpForCreation = useMemo(() => {
     if (studioMode !== 'projects') return false
     if (projectSelection?.kind !== 'project-file') return false
     if (projectSelection.extension.toLowerCase() !== 'shp') return false
     const entry = projectEntryMap.get(normalizeResourcePath(projectSelection.relativePath))
     return entry?.size === 0
   }, [projectEntryMap, projectSelection, studioMode])
+
+  // 当切换到不同的文件 / 不再是 SHP 时，复位编辑模式 + 清空已加载字节；选中空 SHP 时自动进入编辑模式
+  useEffect(() => {
+    if (isEmptyShpForCreation) {
+      setShpEditMode(true)
+      setShpEditInitialPreset(undefined)
+      setShpEditExistingSource(undefined) // 空 SHP 不需要 existing bytes
+      return
+    }
+    setShpEditMode(false)
+    setShpEditInitialPreset(undefined)
+    setShpEditExistingSource(undefined)
+  }, [isEmptyShpForCreation, selectedFile])
+
+  // ShpEditor 是否能编辑当前选中的文件：仅项目模式下的项目文件可编辑（要写盘）
+  const canEditSelectedShp = useMemo(() => {
+    if (studioMode !== 'projects') return false
+    if (projectSelection?.kind !== 'project-file') return false
+    return projectSelection.extension.toLowerCase() === 'shp'
+  }, [projectSelection, studioMode])
 
   const canAddSelectionToProject = useMemo(() => {
     if (studioMode === 'base' && navStack.length > 0) return true
@@ -2314,13 +2467,10 @@ const MixEditor: React.FC = () => {
     openExportDialog('raw')
   }, [currentPreviewTarget, openExportDialog, studioMode])
 
-  const handleOpenImageExport = useCallback(async () => {
-    if (studioMode === 'projects') {
-      await dialog.info('项目视角下的 SHP 图片/GIF 导出还在接入新模型，当前请先使用原始导出。')
-      return
-    }
+  const handleOpenImageExport = useCallback(() => {
+    if (!selectedFile) return
     openExportDialog('static')
-  }, [dialog, openExportDialog, studioMode])
+  }, [openExportDialog, selectedFile])
 
   const closeContextMenu = useCallback(() => {
     setContextMenuTarget(null)
@@ -2384,6 +2534,7 @@ const MixEditor: React.FC = () => {
           ? Boolean(contextMenuTarget.isMixFile)
           : canEnterCurrentMix,
       canModifyTarget: canEditSelectedEntry,
+      canCopyTarget: canCopyProjectFile,
       canSaveTarget: canSaveSelectedPktFile,
       hasUnsavedChanges: hasUnsavedPktChanges,
       metadataDrawerOpen,
@@ -2408,6 +2559,7 @@ const MixEditor: React.FC = () => {
   }, [
     activeProjectName,
     canAddSelectionToProject,
+    canCopyProjectFile,
     canEditSelectedEntry,
     canEnterCurrentMix,
     canSaveSelectedPktFile,
@@ -2554,6 +2706,11 @@ const MixEditor: React.FC = () => {
             await handleRenameSelectedFileInCurrentMix()
           }
           return
+        case 'copyFile':
+          if (await ensureTargetFileSelected()) {
+            handleOpenCopyDialog()
+          }
+          return
         case 'deleteFile':
           if (await ensureTargetFileSelected()) {
             await handleDeleteSelectedFileInCurrentMix()
@@ -2637,6 +2794,7 @@ const MixEditor: React.FC = () => {
     handleExportCurrentMix,
     handleExportProjectZip,
     handleExportTopMix,
+    handleOpenCopyDialog,
     handleOpenMetadataDrawer,
     handleOpenSearchResult,
     handleReimportBaseDirectory,
@@ -2968,6 +3126,8 @@ const MixEditor: React.FC = () => {
               onRenameFile={handleRenameSelectedFileInCurrentMix}
               onDeleteFile={handleDeleteSelectedFileInCurrentMix}
               canModifyFile={canEditSelectedEntry}
+              onCopyFile={canCopyProjectFile ? handleOpenCopyDialog : undefined}
+              canCopyFile={canCopyProjectFile}
               actionsDisabled={loading}
               onSaveFile={handleSaveSelectedPktFile}
               onDiscardChanges={handleDiscardSelectedPktFile}
@@ -2995,9 +3155,13 @@ const MixEditor: React.FC = () => {
               onEditorReady={(handle) => {
                 previewEditorRef.current = handle
               }}
-              isCameoCreationCandidate={isCameoCreationCandidate}
-              onSaveCameo={handleSaveCameo}
-              cameoSaving={cameoSaving}
+              shpEditMode={shpEditMode}
+              shpEditInitialPreset={shpEditInitialPreset}
+              onEnterShpEdit={canEditSelectedShp ? handleEnterShpEdit : undefined}
+              onExitShpEdit={canEditSelectedShp && !isEmptyShpForCreation ? handleExitShpEdit : undefined}
+              onSaveShp={canEditSelectedShp ? handleSaveShp : undefined}
+              shpSaving={shpSaving}
+              shpEditExistingSource={shpEditExistingSource}
             />
             <div
               data-context-kind="metadata-drawer"
@@ -3048,7 +3212,22 @@ const MixEditor: React.FC = () => {
         mixFiles={mixFiles}
         resourceContext={resourceContext}
         initialTab={exportInitialTab}
+        previewTarget={currentPreviewTarget}
       />
+
+      {activeProjectName && projectSelection?.kind === 'project-file' && (
+        <CopyFileDialog
+          open={copyDialogOpen}
+          projectName={activeProjectName}
+          tree={projectTree}
+          sourceRelativePath={projectSelection.relativePath}
+          existingFilePaths={projectExistingFilePaths}
+          existingMixEntries={projectExistingMixEntries}
+          saving={copySaving}
+          onCancel={handleCloseCopyDialog}
+          onConfirm={handleCopyProjectFile}
+        />
+      )}
 
       <AppContextMenu
         entries={contextMenuEntries}

@@ -17,6 +17,7 @@ const defaultState: ContextMenuBuildState = {
   fileExtension: 'pkt',
   canEnterMixTarget: false,
   canModifyTarget: true,
+  canCopyTarget: true,
   canSaveTarget: true,
   hasUnsavedChanges: true,
   metadataDrawerOpen: false,
@@ -150,6 +151,7 @@ describe('contextMenuModel', () => {
       'saveFile',
       'discardChanges',
       'renameFile',
+      'copyFile',
       'deleteFile',
     ])
 

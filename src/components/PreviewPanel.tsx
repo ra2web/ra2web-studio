@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react'
-import { Image, Box, FileText, Music, Info, Archive, Video, Download, Pencil, Trash2, Save, RotateCcw } from 'lucide-react'
+import { Image, Box, FileText, Music, Info, Archive, Video, Download, Pencil, Trash2, Save, RotateCcw, Copy } from 'lucide-react'
 import { MixFileInfo } from '../services/MixParser'
 import IniViewer from './preview/IniViewer'
 import DatViewer from './preview/DatViewer'
@@ -9,7 +9,7 @@ import CsfViewer from './preview/CsfViewer'
 import PalViewer from './preview/PalViewer'
 import PcxViewer from './preview/PcxViewer'
 import ShpViewer from './preview/ShpViewer'
-import CameoEditor from './cameo/CameoEditor'
+import ShpEditor, { type ShpEditorPreset } from './shp/ShpEditor'
 import TmpViewer from './preview/TmpViewer'
 import VxlViewer from './preview/VxlViewer'
 import VxlViewer3D from './preview/VxlViewer3D.tsx'
@@ -38,6 +38,9 @@ interface PreviewPanelProps {
   onRenameFile?: () => void
   onDeleteFile?: () => void
   canModifyFile?: boolean
+  /** 复制项目文件入口；按钮可见性由 canCopyFile 控制（仅项目模式下的 project-file 才会下传 true）。 */
+  onCopyFile?: () => void
+  canCopyFile?: boolean
   actionsDisabled?: boolean
   onSaveFile?: () => void
   onDiscardChanges?: () => void
@@ -52,12 +55,23 @@ interface PreviewPanelProps {
   onOpenImageExport?: () => void
   onEditorReady?: (handle: PreviewEditorHandle | null) => void
   /**
-   * 命中条件 (project mode + 选中的是空 .shp) 时，预览区不再走 ShpViewer，
-   * 而是渲染 CameoEditor。命中后保存按钮回调走 onSaveCameo，cameoSaving 控制写盘中状态。
+   * 通用 SHP 编辑器入口。
+   * - shpEditMode: 父组件控制是否进入编辑器；true → ext='shp' 时渲染 ShpEditor 而非 ShpViewer
+   *   （包含两种触发：空 SHP 自动进编辑、用户在 ShpViewer 上点"编辑 SHP"按钮）
+   * - shpEditInitialPreset: 进入编辑器时的初始 preset；不传由 ShpEditor 内部按文件名推断
+   * - onEnterShpEdit: ShpViewer 上的"编辑 SHP"按钮回调（仅在可编辑场景下下传，外面据此控制按钮显隐）
+   * - onExitShpEdit: ShpEditor 顶部"退出"按钮回调（编辑已有 SHP 时挂；空 SHP 创建场景不挂）
+   * - onSaveShp: 保存按钮回调（接收最终 SHP 字节）
+   * - shpSaving: 保存中状态，用于禁用按钮 + 展示 spinner
    */
-  isCameoCreationCandidate?: boolean
-  onSaveCameo?: (shpBytes: Uint8Array) => void | Promise<void>
-  cameoSaving?: boolean
+  shpEditMode?: boolean
+  shpEditInitialPreset?: ShpEditorPreset
+  onEnterShpEdit?: () => void
+  onExitShpEdit?: () => void
+  onSaveShp?: (shpBytes: Uint8Array) => void | Promise<void>
+  shpSaving?: boolean
+  /** 透传给 ShpEditor：编辑已有 SHP 时由 MixEditor 把字节读出并传进来 */
+  shpEditExistingSource?: { bytes: Uint8Array; filename: string }
 }
 
 const PreviewPanel: React.FC<PreviewPanelProps> = ({
@@ -74,6 +88,8 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
   onRenameFile,
   onDeleteFile,
   canModifyFile = false,
+  onCopyFile,
+  canCopyFile = false,
   actionsDisabled = false,
   onSaveFile,
   onDiscardChanges,
@@ -87,9 +103,13 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
   onOpenRawExport,
   onOpenImageExport,
   onEditorReady,
-  isCameoCreationCandidate = false,
-  onSaveCameo,
-  cameoSaving = false,
+  shpEditMode = false,
+  shpEditInitialPreset,
+  onEnterShpEdit,
+  onExitShpEdit,
+  onSaveShp,
+  shpSaving = false,
+  shpEditExistingSource,
 }) => {
   const { t } = useLocale()
 
@@ -327,6 +347,16 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
             </button>
             <button
               type="button"
+              className="px-3 py-1.5 rounded text-xs bg-gray-700 hover:bg-gray-600 text-gray-100 inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={() => onCopyFile?.()}
+              disabled={!canCopyFile || actionsDisabled}
+              title={t('preview.copyFile')}
+            >
+              <Copy size={14} />
+              {t('preview.copyFile')}
+            </button>
+            <button
+              type="button"
               className="px-3 py-1.5 rounded text-xs bg-red-700 hover:bg-red-600 text-white inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={() => onDeleteFile?.()}
               disabled={!canModifyFile || actionsDisabled}
@@ -440,17 +470,33 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
                 />
               )
             }
-            // 空 .shp 文件 → Cameo 编辑器（替代默认的 ShpViewer 解析失败占位）
-            if (ext === 'shp' && isCameoCreationCandidate && onSaveCameo) {
+            // SHP 编辑模式：父组件控制 shpEditMode 时渲染通用 SHP 编辑器
+            // 触发场景：(1) 空 .shp 自动进编辑 (2) 用户点 ShpViewer 上的"编辑 SHP"按钮
+            if (ext === 'shp' && shpEditMode && onSaveShp) {
               return (
-                <CameoEditor
+                <ShpEditor
                   paletteHint={{
                     mixFiles,
                     resourceContext: resourceContext ?? null,
                   }}
                   filenameHint={selectedFile.split('/').pop()}
-                  onSave={onSaveCameo}
-                  saving={cameoSaving}
+                  initialPreset={shpEditInitialPreset}
+                  onSave={onSaveShp}
+                  onExit={onExitShpEdit}
+                  saving={shpSaving}
+                  existingShpSource={shpEditExistingSource}
+                />
+              )
+            }
+            // ShpViewer：项目模式下可编辑（onEnterShpEdit 已传入），下传 onEdit 让其挂出"编辑 SHP"按钮
+            if (ext === 'shp' && activeView === 'image') {
+              return (
+                <ShpViewer
+                  selectedFile={selectedFile}
+                  mixFiles={mixFiles}
+                  target={target}
+                  resourceContext={resourceContext}
+                  onEdit={onEnterShpEdit}
                 />
               )
             }

@@ -1,11 +1,14 @@
 import { GIFEncoder, applyPalette, quantize, type GifPaletteColor } from 'gifenc'
 import { ShpFile } from '../../data/ShpFile'
+import { VirtualFile } from '../../data/vfs/VirtualFile'
 import { MixParser } from '../MixParser'
 import { IndexedColorRenderer } from '../palette/IndexedColorRenderer'
 import { loadPaletteByPath } from '../palette/PaletteLoader'
 import { PaletteParser } from '../palette/PaletteParser'
 import { PaletteResolver } from '../palette/PaletteResolver'
 import type { Rgb } from '../palette/PaletteTypes'
+import { resolvePreviewFile } from '../../components/preview/previewFileResolver'
+import { getResourcePathExtension } from '../gameRes/patterns'
 import type {
   ExportContext,
   FrameRangeOptions,
@@ -21,6 +24,33 @@ import {
   parseHexColor,
   splitSelectedFilePath,
 } from './utils'
+
+/**
+ * 把 SHP 字节读取统一抽出来：优先走 PreviewTarget（与预览侧同源，自动支持
+ * project-file / project-mix-entry / base-mix-entry），失败 / 不传时回退到
+ * 旧的 mixName/innerPath 解法（base 模式行为）。
+ */
+async function readShpBytes(
+  context: ExportContext,
+): Promise<{ vf: VirtualFile; selectedFilename: string; extension: string }> {
+  if (context.previewTarget) {
+    const resolved = await resolvePreviewFile(context.previewTarget)
+    const bytes = await resolved.readBytes()
+    return {
+      vf: VirtualFile.fromBytes(bytes, resolved.name),
+      selectedFilename: resolved.name,
+      extension: (resolved.extension || getResourcePathExtension(resolved.name)).toLowerCase(),
+    }
+  }
+  const selected = splitSelectedFilePath(context.selectedFile, context.mixFiles)
+  const vf = await MixParser.extractFile(selected.mixFile, selected.innerPath)
+  if (!vf) throw new Error('Cannot read current SHP file')
+  return {
+    vf,
+    selectedFilename: selected.filename,
+    extension: selected.extension.toLowerCase(),
+  }
+}
 
 type LoadedShpAsset = {
   selectedFilename: string
@@ -106,6 +136,7 @@ export class ShpExportRenderer {
         loaded.geometry.height,
         options.layout,
         options.gridColumns,
+        options.transparency,
       )
       const start = frameIndices[0]
       const end = frameIndices[frameIndices.length - 1]
@@ -193,13 +224,9 @@ export class ShpExportRenderer {
     context: ExportContext,
     paletteOptions: { mode: 'auto' | 'manual'; manualPalettePath: string },
   ): Promise<LoadedShpAsset> {
-    const selected = splitSelectedFilePath(context.selectedFile, context.mixFiles)
-    if (selected.extension !== 'shp') {
+    const { vf, selectedFilename, extension } = await readShpBytes(context)
+    if (extension !== 'shp') {
       throw new Error('Current file is not SHP, cannot export image')
-    }
-    const vf = await MixParser.extractFile(selected.mixFile, selected.innerPath)
-    if (!vf) {
-      throw new Error('Cannot read current SHP file')
     }
     const shp = ShpFile.fromVirtualFile(vf)
     if (!shp || shp.numImages <= 0) {
@@ -212,7 +239,7 @@ export class ShpExportRenderer {
         ? paletteOptions.manualPalettePath.trim()
         : null
     const decision = PaletteResolver.resolve({
-      assetPath: selected.selectedFile,
+      assetPath: context.selectedFile,
       assetKind: 'shp',
       mixFiles: context.mixFiles,
       resourceContext: context.resourceContext,
@@ -233,7 +260,7 @@ export class ShpExportRenderer {
       paletteSelection: decision.selection,
     }
     return {
-      selectedFilename: selected.filename,
+      selectedFilename,
       shp,
       geometry,
       palette: fixedPalette,
@@ -269,6 +296,16 @@ export class ShpExportRenderer {
       ctx.fillRect(0, 0, canvas.width, canvas.height)
     } else {
       ctx.clearRect(0, 0, canvas.width, canvas.height)
+    }
+
+    // 空帧（width=0 / height=0）：SHP 单位动画里常见的占位帧（参见 ShpFile.ts 第 135 行
+    // 显式构造 new ShpImage(new Uint8Array(0), 0, 0, x, y)）。直接跳过 putImageData，
+    // 让 fillRect / clearRect 留下的画面作为最终像素：
+    //   - opaque 模式 → 一格纯背景色
+    //   - index 模式 → 一格纯透明
+    // 不跳过会触发原生 ImageData 构造器 "The source width is zero or not a number"。
+    if (frame.width <= 0 || frame.height <= 0) {
+      return canvas
     }
 
     const requestedTransparentIndex = clamp(transparency.transparentIndex | 0, 0, 255)
@@ -308,6 +345,7 @@ export class ShpExportRenderer {
     cellHeight: number,
     layout: ShpStaticExportOptions['layout'],
     gridColumns: number,
+    transparency: ShpStaticExportOptions['transparency'],
   ): HTMLCanvasElement {
     const frameCount = frames.length
     const columns = layout === 'single-column' ? 1 : clamp(gridColumns | 0, 1, frameCount)
@@ -315,7 +353,15 @@ export class ShpExportRenderer {
     const canvas = createCanvas(cellWidth * columns, cellHeight * rows)
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('Cannot create tiled export canvas')
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    // opaque 模式：整张 sheet（含 cell 间空隙）先铺满背景色，再 drawImage 各帧。
+    // index 模式：仍走 clearRect 让透明区保持 alpha=0（与原行为一致）。
+    if (transparency.mode === 'opaque') {
+      const bg = parseHexColor(transparency.backgroundColor)
+      ctx.fillStyle = `rgb(${bg.r}, ${bg.g}, ${bg.b})`
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+    } else {
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+    }
 
     for (let i = 0; i < frameCount; i++) {
       const col = i % columns

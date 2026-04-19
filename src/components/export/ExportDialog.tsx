@@ -7,6 +7,7 @@ import type { RawAssociationExportMode } from '../../services/export/types'
 import { clamp } from '../../services/export/utils'
 import { useAppDialog } from '../common/AppDialogProvider'
 import { useLocale } from '../../i18n/LocaleContext'
+import type { PreviewTarget } from '../preview/types'
 
 type MixFileData = { file: File; info: MixFileInfo }
 type ExportTab = 'raw' | 'static' | 'gif'
@@ -22,9 +23,21 @@ interface ExportDialogProps {
   mixFiles: MixFileData[]
   resourceContext?: ResourceContext | null
   initialTab?: ExportTab
+  /**
+   * 预览侧的当前选中目标。当前主要用法：让 ShpExportRenderer 在 project 模式下
+   * 通过 resolvePreviewFile 取字节，并据此调整默认导出选项（项目源默认 opaque +
+   * magenta 色键，方便后续 AI 处理 + sprite-sheet preset 切回）。
+   */
+  previewTarget?: PreviewTarget | null
 }
 
 const DEFAULT_BACKGROUND_COLOR = '#000000'
+// project 模式默认色键：magenta 在游戏图素里几乎不会出现，是天然色键色
+const PROJECT_DEFAULT_BACKGROUND_COLOR = '#FF00FF'
+
+function isProjectSource(target: PreviewTarget | null | undefined): boolean {
+  return target?.kind === 'project-file' || target?.kind === 'mix-entry'
+}
 
 const ExportDialog: React.FC<ExportDialogProps> = ({
   open,
@@ -33,6 +46,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({
   mixFiles,
   resourceContext,
   initialTab = 'raw',
+  previewTarget,
 }) => {
   const dialog = useAppDialog()
   const { t } = useLocale()
@@ -59,9 +73,14 @@ const ExportDialog: React.FC<ExportDialogProps> = ({
   const [rangeEnd, setRangeEnd] = useState(0)
   const [paletteMode, setPaletteMode] = useState<PaletteMode>('auto')
   const [manualPalettePath, setManualPalettePath] = useState('')
-  const [transparencyMode, setTransparencyMode] = useState<TransparencyMode>('index')
+  // project 源默认 opaque + magenta（AI 友好的色键），base 源保持原 index + 黑色
+  const [transparencyMode, setTransparencyMode] = useState<TransparencyMode>(
+    () => (isProjectSource(previewTarget) ? 'opaque' : 'index'),
+  )
   const [transparentIndex, setTransparentIndex] = useState(0)
-  const [backgroundColor, setBackgroundColor] = useState(DEFAULT_BACKGROUND_COLOR)
+  const [backgroundColor, setBackgroundColor] = useState(
+    () => (isProjectSource(previewTarget) ? PROJECT_DEFAULT_BACKGROUND_COLOR : DEFAULT_BACKGROUND_COLOR),
+  )
 
   // Static image export options
   const [staticFormat, setStaticFormat] = useState<'png' | 'jpg'>('png')
@@ -87,7 +106,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({
     let disposed = false
     async function loadShpMeta() {
       try {
-        const context = { selectedFile, mixFiles, resourceContext }
+        const context = { selectedFile, mixFiles, resourceContext, previewTarget }
         const [inspection, palettePaths] = await Promise.all([
           ExportController.inspectShp(context),
           ExportController.listShpPaletteOptions(context),
@@ -111,7 +130,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({
     return () => {
       disposed = true
     }
-  }, [open, initialTab, shpCapable, selectedFile, mixFiles, resourceContext])
+  }, [open, initialTab, shpCapable, selectedFile, mixFiles, resourceContext, previewTarget])
 
   useEffect(() => {
     if (!open) return
@@ -122,8 +141,8 @@ const ExportDialog: React.FC<ExportDialogProps> = ({
 
   const frameMax = Math.max(0, frameCount - 1)
   const context = useMemo(
-    () => ({ selectedFile, mixFiles, resourceContext }),
-    [selectedFile, mixFiles, resourceContext],
+    () => ({ selectedFile, mixFiles, resourceContext, previewTarget }),
+    [selectedFile, mixFiles, resourceContext, previewTarget],
   )
 
   const runRawExport = async () => {
@@ -455,6 +474,12 @@ const ExportDialog: React.FC<ExportDialogProps> = ({
                   </label>
                 )}
               </div>
+
+              {activeTab === 'static' && frameCount > 1 && (
+                <div className="text-[11px] text-amber-200 bg-amber-900/15 border border-amber-700/40 rounded px-3 py-1.5">
+                  {t('export.spriteSheetHint')}
+                </div>
+              )}
 
               {activeTab === 'static' && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

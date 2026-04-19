@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { Pencil } from 'lucide-react'
 import { MixFileInfo } from '../../services/MixParser'
 import { ShpFile } from '../../data/ShpFile'
 import { PaletteParser } from '../../services/palette/PaletteParser'
@@ -21,11 +22,17 @@ const ShpViewer: React.FC<{
   mixFiles?: MixFileData[]
   target?: PreviewTarget | null
   resourceContext?: ResourceContext | null
+  /**
+   * 进入 SHP 编辑器的入口。仅当 PreviewPanel 判断当前文件可被编辑（项目模式 + project-file）时下传。
+   * 不传则不渲染"编辑 SHP"按钮，保持纯只读查看。
+   */
+  onEdit?: () => void
 }> = ({
   selectedFile,
   mixFiles,
   target,
   resourceContext,
+  onEdit,
 }) => {
   const { t } = useLocale()
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -216,6 +223,17 @@ const ShpViewer: React.FC<{
         </div>
         {info && (
           <div className="ml-auto">{t('viewer.size')}: {info.w} × {info.h}，{t('viewer.frameCount')}: {info.frames}</div>
+        )}
+        {onEdit && (
+          <button
+            type="button"
+            onClick={onEdit}
+            className={`${info ? '' : 'ml-auto'} inline-flex items-center gap-1 rounded bg-blue-700 px-2 py-1 text-[11px] text-white hover:bg-blue-600`}
+            title={t('shpEditor.editButton')}
+          >
+            <Pencil size={12} />
+            {t('shpEditor.editButton')}
+          </button>
         )}
       </div>
       <div className="flex-1 overflow-auto flex items-center justify-center relative" style={{ backgroundImage: 'repeating-linear-gradient(45deg, #2d2d2d 0, #2d2d2d 12px, #343434 12px, #343434 24px)' }}>

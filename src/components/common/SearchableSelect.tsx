@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown } from 'lucide-react'
 
@@ -51,10 +51,17 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
   const scrollTopRef = useRef(0)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; minWidth: number }>({
+  // placement = 'bottom' 时菜单挂在 trigger 下方；'top' 时挂在上方（自动翻转，避免被视口截断）
+  const [menuPosition, setMenuPosition] = useState<{
+    top: number
+    left: number
+    minWidth: number
+    placement: 'top' | 'bottom'
+  }>({
     top: 0,
     left: 0,
     minWidth: 280,
+    placement: 'bottom',
   })
 
   const selectedOption = useMemo(
@@ -115,31 +122,55 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
     }
   }, [open])
 
+  // 计算菜单位置 + 智能翻转：
+  // - 默认朝下（top = trigger.bottom + gap）
+  // - 当下方剩余空间不够、且上方空间更大时翻到上方（top = trigger.top - menuHeight - gap）
+  // 第一次调用时菜单还没挂载，用估算高度（搜索 ~44 + max-h-56 = 224 + footer ~22 + 内边距 ≈ 320）；
+  // 菜单挂上后下一帧用实测 offsetHeight 再校正一次，得到精确位置（避免估算偏差导致的"飘"）。
+  const updateMenuPosition = useCallback(() => {
+    const trigger = rootRef.current
+    if (!trigger || typeof window === 'undefined') return
+    const rect = trigger.getBoundingClientRect()
+    const padding = 12
+    const gap = 8
+    const measuredHeight = menuRef.current?.offsetHeight ?? 0
+    const estimatedHeight = measuredHeight > 0 ? measuredHeight : 320
+    const spaceBelow = window.innerHeight - rect.bottom - padding
+    const spaceAbove = rect.top - padding
+    // 下方装得下 → 维持朝下；下方装不下且上方比下方更宽敞 → 翻到上面
+    const placeBelow = spaceBelow >= estimatedHeight || spaceBelow >= spaceAbove
+    const rawTop = placeBelow ? rect.bottom + gap : rect.top - estimatedHeight - gap
+
+    const estimatedWidth = Math.max(rect.width, 320)
+    const maxLeft = Math.max(padding, window.innerWidth - estimatedWidth - padding)
+    setMenuPosition({
+      top: Math.max(padding, rawTop),
+      left: Math.min(Math.max(rect.left, padding), maxLeft),
+      minWidth: rect.width,
+      placement: placeBelow ? 'bottom' : 'top',
+    })
+  }, [])
+
   useEffect(() => {
     if (!open) return
-
-    const updateMenuPosition = () => {
-      const trigger = rootRef.current
-      if (!trigger || typeof window === 'undefined') return
-      const rect = trigger.getBoundingClientRect()
-      const estimatedWidth = Math.max(rect.width, 320)
-      const padding = 12
-      const maxLeft = Math.max(padding, window.innerWidth - estimatedWidth - padding)
-      setMenuPosition({
-        top: rect.bottom + 8,
-        left: Math.min(Math.max(rect.left, padding), maxLeft),
-        minWidth: rect.width,
-      })
-    }
-
     updateMenuPosition()
+    // 菜单挂载后再 measure 一次校正（包括因 query 过滤导致行高变化的情况）
+    const rafId = requestAnimationFrame(updateMenuPosition)
     window.addEventListener('resize', updateMenuPosition)
     window.addEventListener('scroll', updateMenuPosition, true)
     return () => {
+      cancelAnimationFrame(rafId)
       window.removeEventListener('resize', updateMenuPosition)
       window.removeEventListener('scroll', updateMenuPosition, true)
     }
-  }, [open])
+  }, [open, updateMenuPosition])
+
+  // query 变化或可见项数量变化时（菜单高度变） → 重新 measure 一遍校正
+  useEffect(() => {
+    if (!open) return
+    const rafId = requestAnimationFrame(updateMenuPosition)
+    return () => cancelAnimationFrame(rafId)
+  }, [open, query, filteredNormalOptions.length, pinnedOptions.length, updateMenuPosition])
 
   useEffect(() => {
     if (!open) return

@@ -10,7 +10,7 @@ import {
 
 /**
  * Cameo 后处理算子集合，全部接收一个 2D canvas context 并就地修改像素。
- * 顺序：applyTextBar → applyButtonize → applyVeteranBadge → applyTransparentCorners
+ * 顺序：applyTextBar → applyButtonize（OS Blade）→ applyVeteranBadge → applyTransparentCorners
  * 之后再交给 PaletteQuantizer 一次性量化到 cameo.pal。
  *
  * 几何细节严格对齐 OS SHP Builder 的 SHP_Cameo.pas / FormCameoGenerator.pas：
@@ -67,9 +67,17 @@ export interface TextBarOptions {
 
 export interface ButtonizeOptions {
   enabled: boolean
-  /** 顶 / 左 1px 亮边 alpha 0..255。默认 80。 */
+  /**
+   * Light 边强度（OS Blade 风格）。每个像素 R/G/B += lightness（饱和裁剪 0..255）。
+   * 作用区域：右内缩 1px 列 (W-2) + 顶部 2 行 light bar（列 4..34）+ 左上角"亮柱" patch。
+   * 范围 1..255；默认 20（与 OS DFM Buttonize_Lightness 默认一致）。
+   */
   lightness?: number
-  /** 底 / 右 1px 暗边 alpha 0..255。默认 80。 */
+  /**
+   * Dark 边强度（OS Blade 风格）。每个像素 R/G/B -= darkness（饱和裁剪 0..255）。
+   * 作用区域：左 1 列 (x=0)，纵向 y=2..H-3。
+   * 范围 1..255；默认 40（与 OS DFM Buttonize_Darkness 默认一致）。
+   */
   darkness?: number
 }
 
@@ -101,8 +109,9 @@ const DEFAULT_TEXT_FONT_FAMILY =
   '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC", "Noto Sans CJK SC", "WenQuanYi Micro Hei", system-ui, sans-serif'
 const DEFAULT_TEXT_COLOR = '#ffffff'
 
-const DEFAULT_BUTTONIZE_LIGHTNESS = 80
-const DEFAULT_BUTTONIZE_DARKNESS = 80
+// OS SHP Builder Blade 默认值（FormCameoGenerator.dfm: Buttonize_Lightness.Value=20, Buttonize_Darkness.Value=40）
+const DEFAULT_BUTTONIZE_LIGHTNESS = 20
+const DEFAULT_BUTTONIZE_DARKNESS = 40
 
 let warnedFontSizeOverflow = false
 
@@ -391,31 +400,116 @@ function drawSharpenedText(
 }
 
 /**
- * 在四条边上画 1px 半透明覆盖：上、左白色（亮边），下、右黑色（暗边），
- * 形成 OS Shp Builder 里的 "Buttonize" 立体感效果。
+ * 立体感（Buttonize）—— OS SHP Builder Blade 版本（移植自 FormCameoGenerator.pas + SHP_Cameo.pas）。
+ *
+ * 与原先 1px alpha 覆盖的本质区别：
+ * - 直接对 RGB 通道做加 / 减（饱和裁剪 0..255），而不是把白 / 黑半透明铺一层；
+ * - 几何不对称：左 1 列 dark / 右内缩 1px 列 light / 顶 2 行 light bar（列 4..34）+ 左上角"亮柱" patch；
+ * - alpha 通道保持不变（透明像素仍透明，不会被"染上"边色）。
+ *
+ * 对应 OS 调用：
+ *   DrawCameoBar_DarkSide_Blade  → 左 (0, 0, y=2..H-3) dark
+ *   DrawCameoBar_LightSide_Blade → 右 (W-2, W-2, y=1..H-2) light
+ *   DrawCameoBar_LightTop_Blade  → 顶 (4..33, y=1..2) light + (34, 2) light + 角 patch
+ *
+ * 与 s1/s2 不同：Blade 三个调用都用同一个 Value（不存在外圈 *2 / 内圈 *1 的渐变），
+ * 只有左上角 patch 用 lightness*2 形成局部高光。
+ *
+ * 边界保护：宽度 < 36 / 高度 < 6 时直接 no-op（OS 几何硬编码到列 33/34，
+ * 太窄就不再具备物理意义）。常规 60×48 cameo 不会触发。
  */
 export function applyButtonize(ctx: CanvasRenderingContext2D, options: ButtonizeOptions): void {
   if (!options.enabled) return
   const canvas = ctx.canvas
   const w = canvas.width
   const h = canvas.height
+  if (w < 36 || h < 6) return // 太小，OS Blade 几何无意义
+
   const lightness = clamp(options.lightness ?? DEFAULT_BUTTONIZE_LIGHTNESS, 0, 255)
   const darkness = clamp(options.darkness ?? DEFAULT_BUTTONIZE_DARKNESS, 0, 255)
+  if (lightness === 0 && darkness === 0) return
 
-  ctx.save()
-  // 顶 + 左：白色亮边
-  if (lightness > 0) {
-    ctx.fillStyle = `rgba(255, 255, 255, ${(lightness / 255).toFixed(3)})`
-    ctx.fillRect(0, 0, w, 1)
-    ctx.fillRect(0, 0, 1, h)
-  }
-  // 底 + 右：黑色暗边
+  const imageData = ctx.getImageData(0, 0, w, h)
+  const data = imageData.data
+
+  // (1) 左 1 列 dark：x=0, y=2..H-3
   if (darkness > 0) {
-    ctx.fillStyle = `rgba(0, 0, 0, ${(darkness / 255).toFixed(3)})`
-    ctx.fillRect(0, h - 1, w, 1)
-    ctx.fillRect(w - 1, 0, 1, h)
+    shadeRect(data, w, h, 0, 0, 2, h - 3, darkness, 'dark')
   }
-  ctx.restore()
+
+  // (2) 右内缩 1px 列 light：x=W-2, y=1..H-2
+  if (lightness > 0) {
+    shadeRect(data, w, h, w - 2, w - 2, 1, h - 2, lightness, 'light')
+
+    // (3) 顶 light bar：列 4..33，行 1..2
+    shadeRect(data, w, h, 4, 33, 1, 2, lightness, 'light')
+
+    // (4) 单点过渡：(34, 2) light
+    shadeRect(data, w, h, 34, 34, 2, 2, lightness, 'light')
+
+    // (5) 左上角"亮柱" patch：取已亮过的 (34, 2) RGB，再 + lightness*2，
+    //     写到 (1..3, 1..2)，跳过 (1, 1)。这与 OS LightTop_Blade 末尾的循环一致。
+    const sampleIdx = (2 * w + 34) * 4
+    if (data[sampleIdx + 3] > 0) {
+      const baseR = data[sampleIdx]
+      const baseG = data[sampleIdx + 1]
+      const baseB = data[sampleIdx + 2]
+      const lr = saturate(baseR + lightness * 2)
+      const lg = saturate(baseG + lightness * 2)
+      const lb = saturate(baseB + lightness * 2)
+      for (let y = 1; y <= 2; y++) {
+        for (let x = 1; x <= 3; x++) {
+          if (x === 1 && y === 1) continue // OS 显式跳过 (1, 1)
+          const off = (y * w + x) * 4
+          if (data[off + 3] === 0) continue // 透明像素不触碰
+          data[off] = lr
+          data[off + 1] = lg
+          data[off + 2] = lb
+        }
+      }
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0)
+}
+
+/**
+ * 对矩形 (x1..x2, y1..y2)（含端点）的每个像素 R/G/B 加 / 减 value（饱和裁剪 0..255）。
+ * alpha 通道与 alpha=0 的透明像素都不动。
+ */
+function shadeRect(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number,
+  x1: number,
+  x2: number,
+  y1: number,
+  y2: number,
+  value: number,
+  direction: 'dark' | 'light',
+): void {
+  const xStart = Math.max(0, x1)
+  const xEnd = Math.min(w - 1, x2)
+  const yStart = Math.max(0, y1)
+  const yEnd = Math.min(h - 1, y2)
+  if (xStart > xEnd || yStart > yEnd) return
+
+  const sign = direction === 'dark' ? -1 : 1
+  for (let y = yStart; y <= yEnd; y++) {
+    for (let x = xStart; x <= xEnd; x++) {
+      const off = (y * w + x) * 4
+      if (data[off + 3] === 0) continue // 透明像素不触碰
+      data[off] = saturate(data[off] + sign * value)
+      data[off + 1] = saturate(data[off + 1] + sign * value)
+      data[off + 2] = saturate(data[off + 2] + sign * value)
+    }
+  }
+}
+
+function saturate(v: number): number {
+  if (v < 0) return 0
+  if (v > 255) return 255
+  return v
 }
 
 /**

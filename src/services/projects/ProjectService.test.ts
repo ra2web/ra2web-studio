@@ -70,6 +70,93 @@ describe('ProjectService', () => {
     })
   })
 
+  it('copyProjectFile (directory branch): reads source, ensures dir, writes new path; rejects same-path', async () => {
+    const sourceBytes = new TextEncoder().encode('hello world')
+    const sourceFile = new File([sourceBytes], 'foo.shp', {
+      type: 'application/octet-stream',
+      lastModified: 100,
+    })
+    Object.defineProperty(sourceFile, 'arrayBuffer', {
+      value: async () => {
+        const buf = new ArrayBuffer(sourceBytes.byteLength)
+        new Uint8Array(buf).set(sourceBytes)
+        return buf
+      },
+    })
+    vi.spyOn(FileSystemUtil, 'readImportedFile').mockResolvedValue(sourceFile)
+    const existsSpy = vi.spyOn(FileSystemUtil, 'importedEntryExists').mockResolvedValue(false)
+    const ensureDirSpy = vi.spyOn(FileSystemUtil, 'ensureDirectory').mockResolvedValue('art/icons')
+    const writeSpy = vi.spyOn(FileSystemUtil, 'writeImportedFile').mockResolvedValue('art/icons/bar.shp')
+
+    const newPath = await ProjectService.copyProjectFile(
+      'Demo',
+      'src/foo.shp',
+      { kind: 'directory', projectName: 'Demo', relativePath: 'art/icons' },
+      'bar.shp',
+    )
+    expect(newPath).toBe('art/icons/bar.shp')
+    expect(existsSpy).toHaveBeenCalledWith('mod', 'art/icons/bar.shp', 'Demo')
+    expect(ensureDirSpy).toHaveBeenCalledWith('mod', 'art/icons', 'Demo')
+    // 写入：第三个参数应是新 File，basename = bar.shp
+    const writtenArgs = writeSpy.mock.calls[0]
+    expect(writtenArgs[0]).toBe('mod')
+    expect((writtenArgs[1] as File).name).toBe('bar.shp')
+    expect(writtenArgs[2]).toBe('Demo')
+    expect(writtenArgs[3]).toBe('art/icons/bar.shp')
+
+    // same-path 校验：复制到原目录 + 同名 → 抛错
+    await expect(
+      ProjectService.copyProjectFile(
+        'Demo',
+        'src/foo.shp',
+        { kind: 'directory', projectName: 'Demo', relativePath: 'src' },
+        'foo.shp',
+      ),
+    ).rejects.toThrow(/相同/)
+  })
+
+  it('copyProjectFile (directory branch): rejects when target already exists', async () => {
+    const sourceBytes = new Uint8Array([1, 2, 3])
+    const sourceFile = new File([sourceBytes], 'foo.shp')
+    Object.defineProperty(sourceFile, 'arrayBuffer', {
+      value: async () => {
+        const buf = new ArrayBuffer(sourceBytes.byteLength)
+        new Uint8Array(buf).set(sourceBytes)
+        return buf
+      },
+    })
+    vi.spyOn(FileSystemUtil, 'readImportedFile').mockResolvedValue(sourceFile)
+    vi.spyOn(FileSystemUtil, 'importedEntryExists').mockResolvedValue(true)
+
+    await expect(
+      ProjectService.copyProjectFile(
+        'Demo',
+        'src/foo.shp',
+        { kind: 'directory', projectName: 'Demo', relativePath: 'art' },
+        'foo.shp',
+      ),
+    ).rejects.toThrow(/已存在/)
+  })
+
+  it('copyProjectFile rejects empty new name and names containing path separator', async () => {
+    await expect(
+      ProjectService.copyProjectFile(
+        'Demo',
+        'src/foo.shp',
+        { kind: 'directory', projectName: 'Demo', relativePath: 'art' },
+        '   ',
+      ),
+    ).rejects.toThrow(/不能为空/)
+    await expect(
+      ProjectService.copyProjectFile(
+        'Demo',
+        'src/foo.shp',
+        { kind: 'directory', projectName: 'Demo', relativePath: 'art' },
+        'sub/bar.shp',
+      ),
+    ).rejects.toThrow(/路径分隔符/)
+  })
+
   it('exports only project-owned files into a zip', async () => {
     vi.spyOn(FileSystemUtil, 'listImportedFiles').mockResolvedValue([
       { bucket: 'mod', name: 'ra2.mix', size: 3, lastModified: 100, modName: 'Demo' },

@@ -1,6 +1,7 @@
 import type { MixFileInfo } from '../MixParser'
 import type { ResourceContext } from '../gameRes/ResourceContext'
 import type { PaletteSelectionInfo } from '../palette/PaletteTypes'
+import type { PreviewTarget } from '../../components/preview/types'
 
 export type MixFileData = { file: File; info: MixFileInfo }
 
@@ -8,6 +9,13 @@ export interface ExportContext {
   selectedFile: string
   mixFiles: MixFileData[]
   resourceContext?: ResourceContext | null
+  /**
+   * 由调用方（MixEditor）从预览侧透传的当前选中目标。
+   * 如果有：ShpExportRenderer.loadShpAsset 优先用 resolvePreviewFile 取字节，
+   * 自动支持 project-file / mix-entry / base-mix-entry 三种来源。
+   * 不传：回退现有 splitSelectedFilePath + MixParser.extractFile（base 模式行为）。
+   */
+  previewTarget?: PreviewTarget | null
 }
 
 export interface ResolvedSelectedFile {
