@@ -71,7 +71,7 @@ interface PresetDef {
 
 const PRESETS: PresetDef[] = [
   { id: 'cameo', labelKey: 'shpEditor.presetCameo', width: 60, height: 48 },
-  { id: 'loadscreen-640', labelKey: 'shpEditor.presetLoadscreen640', width: 640, height: 400 },
+  { id: 'loadscreen-640', labelKey: 'shpEditor.presetLoadscreen640', width: 640, height: 480 },
   { id: 'loadscreen-800', labelKey: 'shpEditor.presetLoadscreen800', width: 800, height: 600 },
   { id: 'sprite-sheet', labelKey: 'shpEditor.presetSpriteSheet', width: 64, height: 64, defaultCols: 8, defaultRows: 4 },
   { id: 'custom', labelKey: 'shpEditor.presetCustom', width: 60, height: 48 },

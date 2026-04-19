@@ -360,7 +360,7 @@ export const zh = {
   // 通用 SHP 编辑器（含 cameo / loadscreen / sprite-sheet / custom 多 preset）
   shpEditor: {
     title: 'SHP 编辑器',
-    intro: '把图片转成 SHP；支持 cameo (60×48)、loadscreen (640×400 / 800×600)、自定义尺寸、sprite sheet 多帧。',
+    intro: '把图片转成 SHP；支持 cameo (60×48)、loadscreen (640×480 / 800×600)、自定义尺寸、sprite sheet 多帧。',
     editButton: '编辑 SHP',
     exit: '退出编辑',
     presetLabel: 'Preset',

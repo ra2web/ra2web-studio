@@ -362,7 +362,7 @@ export const en = {
   // Universal SHP editor (cameo / loadscreen / sprite-sheet / custom presets)
   shpEditor: {
     title: 'SHP Editor',
-    intro: 'Convert images to SHP; supports cameo (60x48), loadscreen (640x400 / 800x600), custom size, and sprite sheet (multi-frame).',
+    intro: 'Convert images to SHP; supports cameo (60x48), loadscreen (640x480 / 800x600), custom size, and sprite sheet (multi-frame).',
     editButton: 'Edit SHP',
     exit: 'Exit editor',
     presetLabel: 'Preset',
