@@ -9,6 +9,7 @@ import CsfViewer from './preview/CsfViewer'
 import PalViewer from './preview/PalViewer'
 import PcxViewer from './preview/PcxViewer'
 import ShpViewer from './preview/ShpViewer'
+import CameoEditor from './cameo/CameoEditor'
 import TmpViewer from './preview/TmpViewer'
 import VxlViewer from './preview/VxlViewer'
 import VxlViewer3D from './preview/VxlViewer3D.tsx'
@@ -50,6 +51,13 @@ interface PreviewPanelProps {
   onOpenRawExport?: () => void
   onOpenImageExport?: () => void
   onEditorReady?: (handle: PreviewEditorHandle | null) => void
+  /**
+   * 命中条件 (project mode + 选中的是空 .shp) 时，预览区不再走 ShpViewer，
+   * 而是渲染 CameoEditor。命中后保存按钮回调走 onSaveCameo，cameoSaving 控制写盘中状态。
+   */
+  isCameoCreationCandidate?: boolean
+  onSaveCameo?: (shpBytes: Uint8Array) => void | Promise<void>
+  cameoSaving?: boolean
 }
 
 const PreviewPanel: React.FC<PreviewPanelProps> = ({
@@ -79,6 +87,9 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
   onOpenRawExport,
   onOpenImageExport,
   onEditorReady,
+  isCameoCreationCandidate = false,
+  onSaveCameo,
+  cameoSaving = false,
 }) => {
   const { t } = useLocale()
 
@@ -426,6 +437,20 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
                   resourceContext={resourceContext}
                   onEnterCurrentMix={onEnterCurrentMix}
                   canEnterCurrentMix={canEnterCurrentMix}
+                />
+              )
+            }
+            // 空 .shp 文件 → Cameo 编辑器（替代默认的 ShpViewer 解析失败占位）
+            if (ext === 'shp' && isCameoCreationCandidate && onSaveCameo) {
+              return (
+                <CameoEditor
+                  paletteHint={{
+                    mixFiles,
+                    resourceContext: resourceContext ?? null,
+                  }}
+                  filenameHint={selectedFile.split('/').pop()}
+                  onSave={onSaveCameo}
+                  saving={cameoSaving}
                 />
               )
             }

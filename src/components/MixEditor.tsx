@@ -214,6 +214,8 @@ const MixEditor: React.FC = () => {
   // 项目模式：左侧 ProjectExplorer 折叠态。打开 MIX 时自动折叠、关闭时自动展开，期间用户也可手动切换。
   const [projectExplorerCollapsed, setProjectExplorerCollapsed] = useState(false)
   const prevNavStackHasMixRef = useRef(false)
+  // Cameo 编辑器写盘中
+  const [cameoSaving, setCameoSaving] = useState(false)
   const [importProgressEvent, setImportProgressEvent] = useState<GameResImportProgressEvent | null>(null)
   const [importProgressSteps, setImportProgressSteps] = useState<GameResImportStepState[]>(
     () => createInitialGameResImportSteps(),
@@ -1304,6 +1306,43 @@ const MixEditor: React.FC = () => {
     validateProjectEntryName,
   ])
 
+  // Cameo 编辑器保存：把生成的 SHP 字节写回项目里那个空 .shp 文件，刷新后 PreviewPanel 自动切回 ShpViewer。
+  const handleSaveCameo = useCallback(async (shpBytes: Uint8Array) => {
+    if (!activeProjectName || projectSelection?.kind !== 'project-file') return
+    const path = projectSelection.relativePath
+    const filename = getResourcePathBasename(path)
+    setCameoSaving(true)
+    setProgressMessage(t('cameo.editor.savingProgress', { name: filename }))
+    try {
+      // 复制一份让 buffer 类型为纯 ArrayBuffer，避免 TS 5 对 ArrayBufferLike 的收紧
+      const bytesCopy = new Uint8Array(shpBytes.length)
+      bytesCopy.set(shpBytes)
+      const file = new File([bytesCopy], filename, { type: 'application/octet-stream' })
+      await ProjectService.writeProjectFile(activeProjectName, path, file)
+      await reloadStudioData(undefined, {
+        skipUnsavedGuard: true,
+        studioMode: 'projects',
+        activeProjectName,
+        projectSelectionPath: path,
+      })
+      showStatusNotice(t('cameo.editor.savedHint', { name: filename }), 'success')
+    } catch (error: any) {
+      await dialog.alert({
+        message: t('cameo.editor.saveFailed', { error: error?.message ?? String(error) }),
+      })
+    } finally {
+      setCameoSaving(false)
+      setProgressMessage('')
+    }
+  }, [
+    activeProjectName,
+    dialog,
+    projectSelection,
+    reloadStudioData,
+    showStatusNotice,
+    t,
+  ])
+
   const handleExportProjectZip = useCallback(async () => {
     if (!activeProjectName) return
     try {
@@ -1503,6 +1542,15 @@ const MixEditor: React.FC = () => {
       || projectSelection.kind === 'mix-entry'
     )
   }, [projectSelection, studioMode])
+
+  // 项目模式 + 选中的是空 .shp 文件 → 触发 PreviewPanel 渲染 CameoEditor
+  const isCameoCreationCandidate = useMemo(() => {
+    if (studioMode !== 'projects') return false
+    if (projectSelection?.kind !== 'project-file') return false
+    if (projectSelection.extension.toLowerCase() !== 'shp') return false
+    const entry = projectEntryMap.get(normalizeResourcePath(projectSelection.relativePath))
+    return entry?.size === 0
+  }, [projectEntryMap, projectSelection, studioMode])
 
   const canAddSelectionToProject = useMemo(() => {
     if (studioMode === 'base' && navStack.length > 0) return true
@@ -2947,6 +2995,9 @@ const MixEditor: React.FC = () => {
               onEditorReady={(handle) => {
                 previewEditorRef.current = handle
               }}
+              isCameoCreationCandidate={isCameoCreationCandidate}
+              onSaveCameo={handleSaveCameo}
+              cameoSaving={cameoSaving}
             />
             <div
               data-context-kind="metadata-drawer"
