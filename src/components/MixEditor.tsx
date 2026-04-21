@@ -16,6 +16,8 @@ import { MixParser, MixFileInfo } from '../services/MixParser'
 import { VirtualFile } from '../data/vfs/VirtualFile'
 import { DataStream } from '../data/DataStream'
 import { MixFile as MixFileDataStream } from '../data/MixFile'
+import { CsfFile, type CsfDraft, type CsfEntry } from '../data/CsfFile'
+import { CsfEncoder } from '../data/CsfEncoder'
 import { GameResBootstrap } from '../services/gameRes/GameResBootstrap'
 import { GameResConfig } from '../services/gameRes/GameResConfig'
 import { FileSystemUtil } from '../services/gameRes/FileSystemUtil'
@@ -82,6 +84,42 @@ type EditablePktSession = {
   draftContent: string
   loading: boolean
   error: string | null
+}
+type EditableCsfSession = {
+  filePath: string
+  /** 解析后的原始 draft，用于比较 dirty 与"放弃修改" */
+  original: CsfDraft
+  /** 编辑期间随用户改动而变 */
+  draft: CsfDraft
+  loading: boolean
+  error: string | null
+}
+
+function cloneCsfEntry(entry: CsfEntry): CsfEntry {
+  const next: CsfEntry = { key: entry.key, value: entry.value }
+  if (typeof entry.extraValue === 'string') next.extraValue = entry.extraValue
+  return next
+}
+
+function cloneCsfDraft(draft: CsfDraft): CsfDraft {
+  return {
+    version: draft.version,
+    language: draft.language,
+    entries: draft.entries.map(cloneCsfEntry),
+  }
+}
+
+function csfDraftEquals(a: CsfDraft, b: CsfDraft): boolean {
+  if (a.version !== b.version || a.language !== b.language) return false
+  if (a.entries.length !== b.entries.length) return false
+  for (let i = 0; i < a.entries.length; i++) {
+    const ea = a.entries[i]
+    const eb = b.entries[i]
+    if (ea.key !== eb.key) return false
+    if (ea.value !== eb.value) return false
+    if ((ea.extraValue ?? null) !== (eb.extraValue ?? null)) return false
+  }
+  return true
 }
 
 const LOCAL_MIX_DATABASE_FILENAME = 'local mix database.dat'
@@ -244,6 +282,7 @@ const MixEditor: React.FC = () => {
   const [startupLoadedResourceCount, setStartupLoadedResourceCount] = useState(0)
   const [startupLoadedResourceNames, setStartupLoadedResourceNames] = useState<string[]>([])
   const [pktEditSession, setPktEditSession] = useState<EditablePktSession | null>(null)
+  const [csfEditSession, setCsfEditSession] = useState<EditableCsfSession | null>(null)
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
   const [exportInitialTab, setExportInitialTab] = useState<ExportTab>('raw')
   // 复制项目文件对话框
@@ -537,10 +576,15 @@ const MixEditor: React.FC = () => {
   }, [currentPreviewTarget, selectedFile])
 
   const isPktSelected = ['ini', 'pkt', 'txt'].includes(selectedFileExtension)
+  const isCsfSelected = selectedFileExtension === 'csf'
   const hasUnsavedPktChanges = useMemo(() => {
     if (!pktEditSession) return false
     return pktEditSession.draftContent !== pktEditSession.originalContent
   }, [pktEditSession])
+  const hasUnsavedCsfChanges = useMemo(() => {
+    if (!csfEditSession) return false
+    return !csfDraftEquals(csfEditSession.original, csfEditSession.draft)
+  }, [csfEditSession])
 
   const loadTextEntryContent = useCallback(async (): Promise<string> => {
     if (!currentPreviewTarget) throw new Error('No file selected')
@@ -559,17 +603,40 @@ const MixEditor: React.FC = () => {
     })
   }, [])
 
-  const confirmDiscardPktEdits = useCallback(async (): Promise<boolean> => {
-    if (!hasUnsavedPktChanges) return true
-    const confirmed = await dialog.confirmDanger({
-      title: t('mixEditor.confirmDiscardPktChanges'),
-      message: t('mixEditor.confirmDiscardPktChangesMsg'),
-      confirmText: t('preview.discardChanges'),
+  const discardCsfEdits = useCallback(() => {
+    setCsfEditSession((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        draft: cloneCsfDraft(prev.original),
+        error: null,
+      }
     })
-    if (!confirmed) return false
-    discardPktEdits()
+  }, [])
+
+  // 这两个 confirm helper 名字保持原样兼容（多处依赖 useCallback 引用），
+  // 但都已升级为"任意脏 session 都会询问"——保证导航/模式切换时既不丢 PKT 也不丢 CSF。
+  const confirmDiscardPktEdits = useCallback(async (): Promise<boolean> => {
+    if (hasUnsavedPktChanges) {
+      const confirmed = await dialog.confirmDanger({
+        title: t('mixEditor.confirmDiscardPktChanges'),
+        message: t('mixEditor.confirmDiscardPktChangesMsg'),
+        confirmText: t('preview.discardChanges'),
+      })
+      if (!confirmed) return false
+      discardPktEdits()
+    }
+    if (hasUnsavedCsfChanges) {
+      const confirmed = await dialog.confirmDanger({
+        title: t('mixEditor.confirmDiscardPktChanges'),
+        message: t('mixEditor.confirmDiscardPktChangesMsg'),
+        confirmText: t('preview.discardChanges'),
+      })
+      if (!confirmed) return false
+      discardCsfEdits()
+    }
     return true
-  }, [dialog, discardPktEdits, hasUnsavedPktChanges, t])
+  }, [dialog, discardCsfEdits, discardPktEdits, hasUnsavedCsfChanges, hasUnsavedPktChanges, t])
 
   const restoreNavigation = useCallback(
     async (nextMixFiles: MixFileData[], target?: RestorableNavigationTarget): Promise<boolean> => {
@@ -848,6 +915,66 @@ const MixEditor: React.FC = () => {
       cancelled = true
     }
   }, [currentPreviewTarget, isPktSelected, loadTextEntryContent, t])
+
+  // CSF 编辑 session 加载（与上方 PKT 完全平行）
+  useEffect(() => {
+    let cancelled = false
+    if (!currentPreviewTarget || !isCsfSelected) {
+      setCsfEditSession(null)
+      return
+    }
+
+    const placeholder: CsfDraft = {
+      version: 0,
+      language: 0 as any,
+      entries: [],
+    }
+    setCsfEditSession({
+      filePath: currentPreviewTarget.displayPath,
+      original: placeholder,
+      draft: placeholder,
+      loading: true,
+      error: null,
+    })
+
+    void (async () => {
+      try {
+        const resolved = await resolvePreviewFile(currentPreviewTarget)
+        const bytes = await resolved.readBytes()
+        const buffer = new ArrayBuffer(bytes.byteLength)
+        new Uint8Array(buffer).set(bytes)
+        const vf = new VirtualFile(new DataStream(buffer), resolved.name)
+        const parsed = CsfFile.fromVirtualFile(vf)
+        if (cancelled) return
+        const original: CsfDraft = {
+          version: parsed.version,
+          language: parsed.language,
+          entries: parsed.entries.map(cloneCsfEntry),
+        }
+        setCsfEditSession({
+          filePath: currentPreviewTarget.displayPath,
+          original,
+          draft: cloneCsfDraft(original),
+          loading: false,
+          error: null,
+        })
+      } catch (error: any) {
+        if (cancelled) return
+        const placeholder: CsfDraft = { version: 0, language: 0 as any, entries: [] }
+        setCsfEditSession({
+          filePath: currentPreviewTarget.displayPath,
+          original: placeholder,
+          draft: placeholder,
+          loading: false,
+          error: error?.message || 'Failed to parse CSF',
+        })
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentPreviewTarget, isCsfSelected])
 
   useEffect(() => {
     if (studioMode !== 'projects' || !activeProjectName || !navStack.length || !selectedFile) return
@@ -2003,6 +2130,99 @@ const MixEditor: React.FC = () => {
     discardPktEdits()
   }, [dialog, discardPktEdits, hasUnsavedPktChanges, t])
 
+  const handleSaveSelectedCsfFile = useCallback(async () => {
+    if (!csfEditSession || csfEditSession.loading) return
+    if (!hasUnsavedCsfChanges) return
+    setLoading(true)
+    setProgressMessage(t('mixEditor.savingFile'))
+    try {
+      const bytes = CsfEncoder.encode({
+        version: csfEditSession.draft.version,
+        language: csfEditSession.draft.language,
+        entries: csfEditSession.draft.entries,
+      })
+
+      if (studioMode === 'projects' && projectSelection?.kind === 'project-file' && activeProjectName) {
+        const fileName = getResourcePathBasename(projectSelection.relativePath)
+        await ProjectService.writeProjectFile(
+          activeProjectName,
+          projectSelection.relativePath,
+          new File([toOwnedArrayBuffer(bytes)], fileName, { type: 'application/octet-stream' }),
+        )
+        await reloadStudioData(undefined, {
+          skipUnsavedGuard: true,
+          studioMode: 'projects',
+          activeProjectName,
+          projectSelectionPath: projectSelection.relativePath,
+        })
+        setCsfEditSession((prev) => {
+          if (!prev || prev.filePath !== csfEditSession.filePath) return prev
+          // 把 draft 提升为 original，hasUnsaved 归零
+          return { ...prev, original: cloneCsfDraft(prev.draft), error: null }
+        })
+        showStatusNotice(t('mixEditor.saveSummary', { name: fileName }), 'success')
+        return
+      }
+
+      if (!currentContainer || !selectedLeafName) return
+      const currentEntries = await readContainerEntries(currentContainer)
+      const selectedIndex = currentEntries.findIndex((entry) => sameMixEntryName(entry.filename, selectedLeafName))
+      if (selectedIndex < 0) {
+        await dialog.info(t('mixEditor.selectedEntryNotFound'))
+        return
+      }
+      currentEntries[selectedIndex] = {
+        ...currentEntries[selectedIndex],
+        bytes,
+      }
+      const persisted = await persistCurrentContainerEntries(currentEntries, selectedLeafName)
+      setCsfEditSession((prev) => {
+        if (!prev || prev.filePath !== selectedFile) return prev
+        return { ...prev, original: cloneCsfDraft(prev.draft), error: null }
+      })
+      const lmdLines = buildLmdSummaryLines(
+        currentContainer.name,
+        persisted.currentLmdSummary,
+        persisted.parentLmdSummaries,
+      )
+      console.debug('[MixEditor] save csf LMD summary:', lmdLines.join('\n'))
+      showStatusNotice(t('mixEditor.saveSummary', { name: selectedLeafName }), 'success')
+    } catch (err: any) {
+      console.error('Save csf failed:', err)
+      await dialog.info(err?.message || t('mixEditor.saveFailed'))
+    } finally {
+      setLoading(false)
+      setProgressMessage('')
+    }
+  }, [
+    activeProjectName,
+    buildLmdSummaryLines,
+    csfEditSession,
+    currentContainer,
+    dialog,
+    hasUnsavedCsfChanges,
+    persistCurrentContainerEntries,
+    projectSelection,
+    readContainerEntries,
+    reloadStudioData,
+    selectedFile,
+    selectedLeafName,
+    showStatusNotice,
+    studioMode,
+    t,
+  ])
+
+  const handleDiscardSelectedCsfFile = useCallback(async () => {
+    if (!hasUnsavedCsfChanges) return
+    const confirmed = await dialog.confirmDanger({
+      title: t('mixEditor.confirmDiscardPktChanges'),
+      message: t('mixEditor.confirmDiscardPktChangesMsg'),
+      confirmText: t('preview.discardChanges'),
+    })
+    if (!confirmed) return
+    discardCsfEdits()
+  }, [dialog, discardCsfEdits, hasUnsavedCsfChanges, t])
+
   const handleImportFilesToCurrentMix = useCallback(async (files: File[]) => {
     if (!files.length || !navStack.length) return
     const allowed = await confirmDiscardPktEdits()
@@ -2451,6 +2671,11 @@ const MixEditor: React.FC = () => {
     && !!pktEditSession
     && !pktEditSession.loading
     && !pktEditSession.error
+  const canSaveSelectedCsfFile = isCsfSelected
+    && canEditSelectedEntry
+    && !!csfEditSession
+    && !csfEditSession.loading
+    && !csfEditSession.error
 
   const openExportDialog = useCallback((initialTab: ExportTab) => {
     setExportInitialTab(initialTab)
@@ -2535,8 +2760,8 @@ const MixEditor: React.FC = () => {
           : canEnterCurrentMix,
       canModifyTarget: canEditSelectedEntry,
       canCopyTarget: canCopyProjectFile,
-      canSaveTarget: canSaveSelectedPktFile,
-      hasUnsavedChanges: hasUnsavedPktChanges,
+      canSaveTarget: canSaveSelectedPktFile || canSaveSelectedCsfFile,
+      hasUnsavedChanges: hasUnsavedPktChanges || hasUnsavedCsfChanges,
       metadataDrawerOpen,
       canNavigateUp: navStack.length > 1,
       editableReadOnly:
@@ -2562,8 +2787,10 @@ const MixEditor: React.FC = () => {
     canCopyProjectFile,
     canEditSelectedEntry,
     canEnterCurrentMix,
+    canSaveSelectedCsfFile,
     canSaveSelectedPktFile,
     contextMenuTarget,
+    hasUnsavedCsfChanges,
     hasUnsavedPktChanges,
     loading,
     metadataDrawerOpen,
@@ -2718,12 +2945,14 @@ const MixEditor: React.FC = () => {
           return
         case 'saveFile':
           if (await ensureTargetFileSelected()) {
-            await handleSaveSelectedPktFile()
+            if (isCsfSelected) await handleSaveSelectedCsfFile()
+            else await handleSaveSelectedPktFile()
           }
           return
         case 'discardChanges':
           if (await ensureTargetFileSelected()) {
-            await handleDiscardSelectedPktFile()
+            if (isCsfSelected) await handleDiscardSelectedCsfFile()
+            else await handleDiscardSelectedPktFile()
           }
           return
         case 'addToProject': {
@@ -2789,6 +3018,7 @@ const MixEditor: React.FC = () => {
     handleCreateProject,
     handleDeleteSelectedFileInCurrentMix,
     handleDeleteProject,
+    handleDiscardSelectedCsfFile,
     handleDiscardSelectedPktFile,
     handleEnterCurrentMix,
     handleExportCurrentMix,
@@ -2800,8 +3030,10 @@ const MixEditor: React.FC = () => {
     handleReimportBaseDirectory,
     handleRenameProject,
     handleRenameSelectedFileInCurrentMix,
+    handleSaveSelectedCsfFile,
     handleSaveSelectedPktFile,
     handleStudioModeChange,
+    isCsfSelected,
     handleNavigateUp,
     handleOpenImageExport,
     handleOpenRawExport,
@@ -3129,10 +3361,10 @@ const MixEditor: React.FC = () => {
               onCopyFile={canCopyProjectFile ? handleOpenCopyDialog : undefined}
               canCopyFile={canCopyProjectFile}
               actionsDisabled={loading}
-              onSaveFile={handleSaveSelectedPktFile}
-              onDiscardChanges={handleDiscardSelectedPktFile}
-              canSaveSelectedFile={canSaveSelectedPktFile}
-              hasUnsavedChanges={hasUnsavedPktChanges}
+              onSaveFile={isCsfSelected ? handleSaveSelectedCsfFile : handleSaveSelectedPktFile}
+              onDiscardChanges={isCsfSelected ? handleDiscardSelectedCsfFile : handleDiscardSelectedPktFile}
+              canSaveSelectedFile={canSaveSelectedPktFile || canSaveSelectedCsfFile}
+              hasUnsavedChanges={hasUnsavedPktChanges || hasUnsavedCsfChanges}
               textValue={pktEditSession?.draftContent ?? ''}
               textLoading={pktEditSession?.loading ?? false}
               textError={pktEditSession?.error ?? null}
@@ -3143,6 +3375,15 @@ const MixEditor: React.FC = () => {
                     ...prev,
                     draftContent: next,
                   }
+                })
+              }}
+              csfDraft={csfEditSession?.draft ?? null}
+              csfLoading={csfEditSession?.loading ?? false}
+              csfError={csfEditSession?.error ?? null}
+              onCsfDraftChange={(next) => {
+                setCsfEditSession((prev) => {
+                  if (!prev) return prev
+                  return { ...prev, draft: next }
                 })
               }}
               onBeforeViewChange={async () => confirmDiscardPktEdits()}

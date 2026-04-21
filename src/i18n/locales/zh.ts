@@ -577,6 +577,19 @@ export const zh = {
     copyFiltered: '复制筛选',
     showingCount: '当前显示 {{count}} 项',
     noMatches: '没有匹配项',
+    editor: {
+      addRow: '新增条目',
+      deleteRow: '删除选中',
+      keyColumn: 'Key',
+      valueColumn: 'Value',
+      extraColumn: '扩展值（STRW）',
+      language: '语言',
+      version: '版本',
+      keyDuplicate: '该 Key 已存在',
+      keyEmpty: 'Key 不能为空',
+      editingHint: '双击单元格可编辑；Enter 提交、Esc 取消；Value 用 Ctrl+Enter 提交',
+      dirtyCount: '（草稿与原始相比 {{count}} 条变化）',
+    },
   },
 
   // HvaViewer, VxlViewer, ShpViewer, TmpViewer, PalViewer

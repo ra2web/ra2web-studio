@@ -72,6 +72,14 @@ interface PreviewPanelProps {
   shpSaving?: boolean
   /** 透传给 ShpEditor：编辑已有 SHP 时由 MixEditor 把字节读出并传进来 */
   shpEditExistingSource?: { bytes: Uint8Array; filename: string }
+  /**
+   * CSF 编辑器接线：父组件在 ext='csf' 时维护 draft / loading / error，PreviewPanel
+   * 透传给 CsfViewer 启用行内编辑模式。draft=null 表示走只读 fallback。
+   */
+  csfDraft?: import('../data/CsfFile').CsfDraft | null
+  onCsfDraftChange?: (next: import('../data/CsfFile').CsfDraft) => void
+  csfLoading?: boolean
+  csfError?: string | null
 }
 
 const PreviewPanel: React.FC<PreviewPanelProps> = ({
@@ -110,6 +118,10 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
   onSaveShp,
   shpSaving = false,
   shpEditExistingSource,
+  csfDraft,
+  onCsfDraftChange,
+  csfLoading = false,
+  csfError = null,
 }) => {
   const { t } = useLocale()
 
@@ -497,6 +509,22 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
                   target={target}
                   resourceContext={resourceContext}
                   onEdit={onEnterShpEdit}
+                />
+              )
+            }
+            // CSF viewer：父组件传 csfDraft 时启用编辑模式；read-only 与原行为兼容
+            if (ext === 'csf' && activeView === 'viewer') {
+              return (
+                <CsfViewer
+                  selectedFile={selectedFile}
+                  mixFiles={mixFiles}
+                  target={target}
+                  resourceContext={resourceContext}
+                  draft={csfDraft ?? undefined}
+                  onDraftChange={onCsfDraftChange}
+                  loadingOverride={csfLoading}
+                  errorOverride={csfError}
+                  readOnly={!canSaveSelectedFile || actionsDisabled}
                 />
               )
             }

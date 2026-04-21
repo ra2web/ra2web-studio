@@ -575,6 +575,19 @@ export const en = {
     copyFiltered: 'Copy Filtered',
     showingCount: 'Showing {{count}} items',
     noMatches: 'No matches',
+    editor: {
+      addRow: 'Add row',
+      deleteRow: 'Delete selected',
+      keyColumn: 'Key',
+      valueColumn: 'Value',
+      extraColumn: 'Extra (STRW)',
+      language: 'Lang',
+      version: 'Version',
+      keyDuplicate: 'Key already exists',
+      keyEmpty: 'Key cannot be empty',
+      editingHint: 'Double-click a cell to edit; Enter to commit, Esc to cancel; Value uses Ctrl+Enter',
+      dirtyCount: '({{count}} entries differ from original)',
+    },
   },
 
   viewer: {

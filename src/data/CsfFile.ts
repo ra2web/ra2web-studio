@@ -32,6 +32,16 @@ export interface CsfEntry {
   extraValue?: string
 }
 
+/**
+ * 编辑器使用的可写 draft 形态：从 CsfFile 解析后克隆得到，编辑期间维护脏状态比较，
+ * 保存时再交给 CsfEncoder 重新编码成原始 CSF 字节。
+ */
+export interface CsfDraft {
+  version: number
+  language: CsfLanguage
+  entries: CsfEntry[]
+}
+
 export interface CsfStats {
   declaredLabels: number
   declaredValues: number
