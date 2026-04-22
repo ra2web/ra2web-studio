@@ -288,7 +288,7 @@ export const AppDialogProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     <AppDialogContext.Provider value={contextValue}>
       {children}
       {current && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 px-4">
+        <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/60 px-4">
           <div className="w-full max-w-md rounded border border-gray-700 bg-gray-900 shadow-2xl">
             <div className="border-b border-gray-700 px-4 py-3">
               <h3

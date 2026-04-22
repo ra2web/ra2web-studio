@@ -18,6 +18,28 @@ import { DataStream } from '../data/DataStream'
 import { MixFile as MixFileDataStream } from '../data/MixFile'
 import { CsfFile, type CsfDraft, type CsfEntry } from '../data/CsfFile'
 import { CsfEncoder } from '../data/CsfEncoder'
+import { VxlFile } from '../data/VxlFile'
+import { HvaFile } from '../data/HvaFile'
+import { VxlEncoder } from '../data/VxlEncoder'
+import { HvaEncoder } from '../data/HvaEncoder'
+import {
+  cloneHvaDraft,
+  cloneVxlDraft,
+  hvaDraftEquals,
+  vxlDraftEquals,
+  type HvaDraft,
+  type VxlDraft,
+} from '../data/vxl/VxlDraft'
+import {
+  cloneAnimMetadata,
+  emptyAnimMetadata,
+  animMetadataEquals,
+  parseAnimMetadata,
+  serializeAnimMetadata,
+  type AnimMetadata,
+} from '../data/vxl/AnimMetadata'
+import VxlEditor, { type VxlEditorChangePayload } from './vxl/VxlEditor'
+import PalettePickerDialog, { type PaletteEntry } from './vxl/PalettePickerDialog'
 import { GameResBootstrap } from '../services/gameRes/GameResBootstrap'
 import { GameResConfig } from '../services/gameRes/GameResConfig'
 import { FileSystemUtil } from '../services/gameRes/FileSystemUtil'
@@ -91,6 +113,22 @@ type EditableCsfSession = {
   original: CsfDraft
   /** 编辑期间随用户改动而变 */
   draft: CsfDraft
+  loading: boolean
+  error: string | null
+}
+type EditableVxlSession = {
+  filePath: string
+  /** 同名 .hva 在项目内的相对路径；不存在则 null */
+  hvaFilePath: string | null
+  /** 同名 .anim.json 在项目内的相对路径（永远是 vxl 路径替换扩展名） */
+  animFilePath: string
+  vxlOriginal: VxlDraft
+  vxl: VxlDraft
+  hvaOriginal: HvaDraft | null
+  hva: HvaDraft | null
+  /** 游戏化预览动画 metadata（rotor 配置等）。原始为 null 表示磁盘上没有 .anim.json */
+  animOriginal: AnimMetadata | null
+  anim: AnimMetadata
   loading: boolean
   error: string | null
 }
@@ -283,6 +321,14 @@ const MixEditor: React.FC = () => {
   const [startupLoadedResourceNames, setStartupLoadedResourceNames] = useState<string[]>([])
   const [pktEditSession, setPktEditSession] = useState<EditablePktSession | null>(null)
   const [csfEditSession, setCsfEditSession] = useState<EditableCsfSession | null>(null)
+  const [vxlEditSession, setVxlEditSession] = useState<EditableVxlSession | null>(null)
+  const [vxlEditMode, setVxlEditMode] = useState(false)
+  const [vxlSaving, setVxlSaving] = useState(false)
+  // 替换调色板对话框（VXL 编辑器内调用）
+  const [palettePickerOpen, setPalettePickerOpen] = useState(false)
+  const [palettePickerEntries, setPalettePickerEntries] = useState<PaletteEntry[]>([])
+  const [palettePickerLoading, setPalettePickerLoading] = useState(false)
+  const palettePickerResolverRef = useRef<((bytes: Uint8Array | null) => void) | null>(null)
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
   const [exportInitialTab, setExportInitialTab] = useState<ExportTab>('raw')
   // 复制项目文件对话框
@@ -577,6 +623,7 @@ const MixEditor: React.FC = () => {
 
   const isPktSelected = ['ini', 'pkt', 'txt'].includes(selectedFileExtension)
   const isCsfSelected = selectedFileExtension === 'csf'
+  const isVxlSelected = selectedFileExtension === 'vxl'
   const hasUnsavedPktChanges = useMemo(() => {
     if (!pktEditSession) return false
     return pktEditSession.draftContent !== pktEditSession.originalContent
@@ -585,6 +632,17 @@ const MixEditor: React.FC = () => {
     if (!csfEditSession) return false
     return !csfDraftEquals(csfEditSession.original, csfEditSession.draft)
   }, [csfEditSession])
+  const hasUnsavedVxlChanges = useMemo(() => {
+    if (!vxlEditSession) return false
+    if (!vxlDraftEquals(vxlEditSession.vxlOriginal, vxlEditSession.vxl)) return true
+    if (vxlEditSession.hva && vxlEditSession.hvaOriginal) {
+      if (!hvaDraftEquals(vxlEditSession.hvaOriginal, vxlEditSession.hva)) return true
+    }
+    // anim：originalNull + draft empty 视为干净；否则按内容比较
+    const animOrigOrEmpty = vxlEditSession.animOriginal ?? emptyAnimMetadata()
+    if (!animMetadataEquals(animOrigOrEmpty, vxlEditSession.anim)) return true
+    return false
+  }, [vxlEditSession])
 
   const loadTextEntryContent = useCallback(async (): Promise<string> => {
     if (!currentPreviewTarget) throw new Error('No file selected')
@@ -614,8 +672,21 @@ const MixEditor: React.FC = () => {
     })
   }, [])
 
+  const discardVxlEdits = useCallback(() => {
+    setVxlEditSession((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        vxl: cloneVxlDraft(prev.vxlOriginal),
+        hva: prev.hvaOriginal ? cloneHvaDraft(prev.hvaOriginal) : null,
+        anim: prev.animOriginal ? cloneAnimMetadata(prev.animOriginal) : emptyAnimMetadata(),
+        error: null,
+      }
+    })
+  }, [])
+
   // 这两个 confirm helper 名字保持原样兼容（多处依赖 useCallback 引用），
-  // 但都已升级为"任意脏 session 都会询问"——保证导航/模式切换时既不丢 PKT 也不丢 CSF。
+  // 但都已升级为"任意脏 session 都会询问"——保证导航/模式切换时既不丢 PKT 也不丢 CSF/VXL。
   const confirmDiscardPktEdits = useCallback(async (): Promise<boolean> => {
     if (hasUnsavedPktChanges) {
       const confirmed = await dialog.confirmDanger({
@@ -635,8 +706,20 @@ const MixEditor: React.FC = () => {
       if (!confirmed) return false
       discardCsfEdits()
     }
+    if (hasUnsavedVxlChanges) {
+      const confirmed = await dialog.confirmDanger({
+        title: t('vxl.editor.confirmDiscardTitle'),
+        message: t('vxl.editor.confirmDiscardMsg'),
+        confirmText: t('vxl.editor.discard'),
+      })
+      if (!confirmed) return false
+      discardVxlEdits()
+    }
     return true
-  }, [dialog, discardCsfEdits, discardPktEdits, hasUnsavedCsfChanges, hasUnsavedPktChanges, t])
+  }, [
+    dialog, discardCsfEdits, discardPktEdits, discardVxlEdits,
+    hasUnsavedCsfChanges, hasUnsavedPktChanges, hasUnsavedVxlChanges, t,
+  ])
 
   const restoreNavigation = useCallback(
     async (nextMixFiles: MixFileData[], target?: RestorableNavigationTarget): Promise<boolean> => {
@@ -2223,6 +2306,304 @@ const MixEditor: React.FC = () => {
     discardCsfEdits()
   }, [dialog, discardCsfEdits, hasUnsavedCsfChanges, t])
 
+  // ---------------- VXL editor handlers ----------------
+
+  /** 入口：读项目里的 .vxl + 试读同目录同名 .hva → 设 session + 进全屏。 */
+  const handleEnterVxlEdit = useCallback(async () => {
+    if (!isVxlSelected) return
+    if (studioMode !== 'projects' || !activeProjectName) return
+    if (projectSelection?.kind !== 'project-file') return
+    const vxlPath = projectSelection.relativePath
+    const dot = vxlPath.lastIndexOf('.')
+    const hvaPath = dot > 0 ? `${vxlPath.slice(0, dot)}.hva` : null
+    const animPath = dot > 0 ? `${vxlPath.slice(0, dot)}.anim.json` : `${vxlPath}.anim.json`
+    setVxlEditSession({
+      filePath: vxlPath,
+      hvaFilePath: null,
+      animFilePath: animPath,
+      vxlOriginal: { embeddedPalette: new Uint8Array(768), sections: [] },
+      vxl: { embeddedPalette: new Uint8Array(768), sections: [] },
+      hvaOriginal: null,
+      hva: null,
+      animOriginal: null,
+      anim: emptyAnimMetadata(),
+      loading: true,
+      error: null,
+    })
+    setVxlEditMode(true)
+    try {
+      // 读 VXL 字节
+      const vxlFile = await ProjectService.readProjectFile(activeProjectName, vxlPath)
+      const vxlBuffer = await vxlFile.arrayBuffer()
+      const vxlBytes = new Uint8Array(vxlBuffer)
+      const vxlVf = VirtualFile.fromBytes(vxlBytes, getResourcePathBasename(vxlPath))
+      const parsedVxl = new VxlFile(vxlVf)
+      const vxlOriginal: VxlDraft = {
+        embeddedPalette: new Uint8Array(parsedVxl.embeddedPalette),
+        sections: parsedVxl.sections,
+      }
+
+      // 试读同名 HVA
+      let hvaOriginal: HvaDraft | null = null
+      let resolvedHvaPath: string | null = null
+      if (hvaPath) {
+        try {
+          const hvaFile = await ProjectService.readProjectFile(activeProjectName, hvaPath)
+          const hvaBuffer = await hvaFile.arrayBuffer()
+          const hvaBytes = new Uint8Array(hvaBuffer)
+          const hvaVf = VirtualFile.fromBytes(hvaBytes, getResourcePathBasename(hvaPath))
+          const parsedHva = new HvaFile(hvaVf)
+          if (parsedHva.sections.length > 0) {
+            hvaOriginal = { sections: parsedHva.sections }
+            resolvedHvaPath = hvaPath
+          }
+        } catch {
+          // 同名 hva 不存在或解析失败 → 视为没有 HVA，不阻止 vxl 编辑
+        }
+      }
+
+      // 试读 .anim.json
+      let animOriginal: AnimMetadata | null = null
+      let animDraft: AnimMetadata = emptyAnimMetadata()
+      try {
+        const animFile = await ProjectService.readProjectFile(activeProjectName, animPath)
+        const animText = await animFile.text()
+        const parsed = parseAnimMetadata(animText)
+        if (parsed) {
+          animOriginal = parsed
+          animDraft = cloneAnimMetadata(parsed)
+        }
+      } catch {
+        // 不存在 → animOriginal=null，draft=empty（保存时若 draft 仍是 empty 不写）
+      }
+
+      setVxlEditSession({
+        filePath: vxlPath,
+        hvaFilePath: resolvedHvaPath,
+        animFilePath: animPath,
+        vxlOriginal,
+        vxl: cloneVxlDraft(vxlOriginal),
+        hvaOriginal,
+        hva: hvaOriginal ? cloneHvaDraft(hvaOriginal) : null,
+        animOriginal,
+        anim: animDraft,
+        loading: false,
+        error: null,
+      })
+    } catch (error: any) {
+      setVxlEditSession((prev) => prev ? { ...prev, loading: false, error: error?.message ?? String(error) } : prev)
+      await dialog.alert({
+        message: t('vxl.editor.loadFailed', { error: error?.message ?? String(error) }),
+      })
+      setVxlEditMode(false)
+    }
+  }, [activeProjectName, dialog, isVxlSelected, projectSelection, studioMode, t])
+
+  const handleExitVxlEdit = useCallback(async () => {
+    if (vxlSaving) return
+    if (hasUnsavedVxlChanges) {
+      const ok = await dialog.confirmDanger({
+        title: t('vxl.editor.confirmDiscardTitle'),
+        message: t('vxl.editor.confirmDiscardMsg'),
+        confirmText: t('vxl.editor.discard'),
+      })
+      if (!ok) return
+    }
+    setVxlEditMode(false)
+    setVxlEditSession(null)
+  }, [dialog, hasUnsavedVxlChanges, t, vxlSaving])
+
+  const handleVxlDraftChange = useCallback((next: VxlEditorChangePayload) => {
+    setVxlEditSession((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        vxl: next.vxl ?? prev.vxl,
+        hva: next.hva !== undefined ? next.hva : prev.hva,
+        anim: next.anim ?? prev.anim,
+      }
+    })
+  }, [])
+
+  const handleSaveVxl = useCallback(async () => {
+    if (!vxlEditSession || vxlEditSession.loading) return
+    if (!hasUnsavedVxlChanges) return
+    if (!activeProjectName) return
+    setVxlSaving(true)
+    setProgressMessage(t('mixEditor.savingFile'))
+    try {
+      // 编码 vxl
+      const vxlBytes = VxlEncoder.encode({
+        embeddedPalette: vxlEditSession.vxl.embeddedPalette,
+        sections: vxlEditSession.vxl.sections,
+      })
+      const vxlBuf = toOwnedArrayBuffer(vxlBytes)
+      const vxlFilename = getResourcePathBasename(vxlEditSession.filePath)
+      await ProjectService.writeProjectFile(
+        activeProjectName,
+        vxlEditSession.filePath,
+        new File([vxlBuf], vxlFilename, { type: 'application/octet-stream' }),
+      )
+
+      // 如果 hva 有 draft 且与 original 不同 → 同保存
+      if (vxlEditSession.hva && vxlEditSession.hvaFilePath && vxlEditSession.hvaOriginal) {
+        if (!hvaDraftEquals(vxlEditSession.hvaOriginal, vxlEditSession.hva)) {
+          const hvaBytes = HvaEncoder.encode({ sections: vxlEditSession.hva.sections })
+          const hvaBuf = toOwnedArrayBuffer(hvaBytes)
+          const hvaFilename = getResourcePathBasename(vxlEditSession.hvaFilePath)
+          await ProjectService.writeProjectFile(
+            activeProjectName,
+            vxlEditSession.hvaFilePath,
+            new File([hvaBuf], hvaFilename, { type: 'application/octet-stream' }),
+          )
+        }
+      }
+
+      // 如果 anim metadata 与磁盘不同 → 写 .anim.json
+      const animOrigOrEmpty = vxlEditSession.animOriginal ?? emptyAnimMetadata()
+      if (!animMetadataEquals(animOrigOrEmpty, vxlEditSession.anim)) {
+        const animText = serializeAnimMetadata(vxlEditSession.anim)
+        const animFilename = getResourcePathBasename(vxlEditSession.animFilePath)
+        await ProjectService.writeProjectFile(
+          activeProjectName,
+          vxlEditSession.animFilePath,
+          new File([animText], animFilename, { type: 'application/json' }),
+        )
+      }
+
+      await reloadStudioData(undefined, {
+        skipUnsavedGuard: true,
+        studioMode: 'projects',
+        activeProjectName,
+        projectSelectionPath: vxlEditSession.filePath,
+      })
+
+      // 提升 originals = draft，hasUnsaved 归零
+      setVxlEditSession((prev) => {
+        if (!prev || prev.filePath !== vxlEditSession.filePath) return prev
+        return {
+          ...prev,
+          vxlOriginal: cloneVxlDraft(prev.vxl),
+          hvaOriginal: prev.hva ? cloneHvaDraft(prev.hva) : null,
+          animOriginal: cloneAnimMetadata(prev.anim),
+          error: null,
+        }
+      })
+      showStatusNotice(t('vxl.editor.saveSuccess', { name: vxlFilename }), 'success')
+    } catch (error: any) {
+      console.error('Save VXL failed:', error)
+      await dialog.alert({
+        message: t('vxl.editor.saveFailed', { error: error?.message ?? String(error) }),
+      })
+    } finally {
+      setVxlSaving(false)
+      setProgressMessage('')
+    }
+  }, [activeProjectName, dialog, hasUnsavedVxlChanges, reloadStudioData, showStatusNotice, t, vxlEditSession])
+
+  const canEnterVxlEdit = useMemo(() => {
+    if (studioMode !== 'projects' || !activeProjectName) return false
+    if (projectSelection?.kind !== 'project-file') return false
+    return isVxlSelected
+  }, [activeProjectName, isVxlSelected, projectSelection, studioMode])
+
+  /**
+   * 收集所有可用调色板：
+   *  - 当前项目里所有 .pal 文件（按相对路径）
+   *  - 基座 MIX 中已发现的所有 .pal 路径（resourceContext.listAllPalettePaths()
+   *    或退化用 mixFiles 扫描）
+   * 项目模式下二者合并；基座模式下只有 mix 一组。
+   */
+  const collectPaletteEntries = useCallback(async (): Promise<PaletteEntry[]> => {
+    const out: PaletteEntry[] = []
+    // 1) 项目内 .pal
+    if (studioMode === 'projects' && activeProjectName) {
+      try {
+        const files = await ProjectService.listProjectFiles(activeProjectName)
+        for (const f of files) {
+          if (f.kind !== 'file') continue
+          if ((f.extension ?? '').toLowerCase() !== 'pal') continue
+          out.push({ source: 'project', path: f.relativePath, basename: f.name })
+        }
+      } catch (e) {
+        console.warn('[VxlEditor] listProjectFiles failed', e)
+      }
+    }
+    // 2) 基座 MIX .pal
+    const mixPaths = resourceContext?.listAllPalettePaths()
+      ?? mixFiles.flatMap((mix) =>
+        mix.info.files
+          .filter((entry) => entry.filename.toLowerCase().endsWith('.pal'))
+          .map((entry) => `${mix.info.name}/${entry.filename}`),
+      )
+    for (const p of mixPaths) {
+      const slash = p.lastIndexOf('/')
+      const basename = slash >= 0 ? p.slice(slash + 1) : p
+      out.push({ source: 'mix', path: p, basename })
+    }
+    return out
+  }, [activeProjectName, mixFiles, resourceContext, studioMode])
+
+  /** 把 .pal 文件原始字节（6-bit RGB）做 6→8bit 缩放 → 768 字节，写到 vxl.embeddedPalette。 */
+  const scalePalBytes = useCallback((raw: Uint8Array): Uint8Array | null => {
+    if (raw.byteLength < 768) return null
+    const scaled = new Uint8Array(768)
+    for (let i = 0; i < 768; i++) scaled[i] = (raw[i] << 2) & 0xff
+    return scaled
+  }, [])
+
+  const handlePalettePicked = useCallback(async (entry: PaletteEntry) => {
+    setPalettePickerLoading(true)
+    try {
+      let raw: Uint8Array | null = null
+      if (entry.source === 'project') {
+        if (!activeProjectName) throw new Error('no active project')
+        const file = await ProjectService.readProjectFile(activeProjectName, entry.path)
+        raw = new Uint8Array(await file.arrayBuffer())
+      } else {
+        const slash = entry.path.indexOf('/')
+        if (slash <= 0) throw new Error('bad mix path')
+        const mixName = entry.path.slice(0, slash)
+        const inner = entry.path.slice(slash + 1)
+        const mix = mixFiles.find((m) => m.info.name === mixName)
+        if (!mix) throw new Error(`mix ${mixName} not loaded`)
+        const vf = await MixParser.extractFile(mix.file, inner)
+        if (!vf) throw new Error('extract failed')
+        raw = vf.getBytes()
+      }
+      const scaled = scalePalBytes(raw)
+      if (!scaled) throw new Error('palette parse failed')
+      palettePickerResolverRef.current?.(scaled)
+      palettePickerResolverRef.current = null
+      setPalettePickerOpen(false)
+    } catch (e) {
+      await dialog.alert({ title: t('vxl.editor.replacePaletteFailedTitle'), message: String(e) })
+    } finally {
+      setPalettePickerLoading(false)
+    }
+  }, [activeProjectName, dialog, mixFiles, scalePalBytes, t])
+
+  const handlePalettePickerCancel = useCallback(() => {
+    palettePickerResolverRef.current?.(null)
+    palettePickerResolverRef.current = null
+    setPalettePickerOpen(false)
+  }, [])
+
+  /** 提供给 VxlEditor 的回调：弹出 PalettePickerDialog → resolve 选中的 768 字节。 */
+  const handleVxlPickPalette = useCallback(async (): Promise<Uint8Array | null> => {
+    setPalettePickerLoading(true)
+    setPalettePickerOpen(true)
+    try {
+      const entries = await collectPaletteEntries()
+      setPalettePickerEntries(entries)
+    } finally {
+      setPalettePickerLoading(false)
+    }
+    return new Promise<Uint8Array | null>((resolve) => {
+      palettePickerResolverRef.current = resolve
+    })
+  }, [collectPaletteEntries])
+
   const handleImportFilesToCurrentMix = useCallback(async (files: File[]) => {
     if (!files.length || !navStack.length) return
     const allowed = await confirmDiscardPktEdits()
@@ -3386,6 +3767,7 @@ const MixEditor: React.FC = () => {
                   return { ...prev, draft: next }
                 })
               }}
+              onEnterVxlEdit={canEnterVxlEdit ? () => { void handleEnterVxlEdit() } : undefined}
               onBeforeViewChange={async () => confirmDiscardPktEdits()}
               onOpenRawExport={() => {
                 void handleOpenRawExport()
@@ -3541,6 +3923,38 @@ const MixEditor: React.FC = () => {
           ) : null}
         </div>
       </div>
+
+      {/* VXL 编辑器全屏 portal（仅 vxlEditMode + session 都齐时挂出） */}
+      {vxlEditMode && vxlEditSession && (
+        <VxlEditor
+          session={vxlEditSession}
+          onChange={handleVxlDraftChange}
+          onSave={() => { void handleSaveVxl() }}
+          onExit={() => { void handleExitVxlEdit() }}
+          saving={vxlSaving}
+          onPickFile={(accept) => new Promise<File | null>((resolve) => {
+            const input = document.createElement('input')
+            input.type = 'file'
+            input.accept = accept
+            input.onchange = () => {
+              const file = input.files?.[0] ?? null
+              resolve(file)
+            }
+            input.oncancel = () => resolve(null)
+            input.click()
+          })}
+          onPickPalette={handleVxlPickPalette}
+        />
+      )}
+
+      {/* 替换调色板对话框（VxlEditor 触发） */}
+      <PalettePickerDialog
+        open={palettePickerOpen}
+        entries={palettePickerEntries}
+        loading={palettePickerLoading}
+        onCancel={handlePalettePickerCancel}
+        onPick={(entry) => { void handlePalettePicked(entry) }}
+      />
     </div>
   )
 }

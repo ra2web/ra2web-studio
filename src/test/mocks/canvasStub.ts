@@ -93,6 +93,18 @@ class CanvasContextStub {
   save() {}
   restore() {}
   scale() {}
+  setTransform(..._args: any[]) {}
+  resetTransform() {}
+  translate(..._args: any[]) {}
+  rotate(..._args: any[]) {}
+  beginPath() {}
+  closePath() {}
+  moveTo(..._args: any[]) {}
+  lineTo(..._args: any[]) {}
+  stroke() {}
+  strokeRect(..._args: any[]) {}
+  strokeStyle: any = '#000'
+  lineWidth = 1
 
   /**
    * 用当前 fillStyle 填充矩形。仅识别 'rgb(r, g, b)' / 'rgba(r, g, b, a)' / '#RRGGBB' 三种格式；

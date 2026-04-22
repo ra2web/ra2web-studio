@@ -80,6 +80,11 @@ interface PreviewPanelProps {
   onCsfDraftChange?: (next: import('../data/CsfFile').CsfDraft) => void
   csfLoading?: boolean
   csfError?: string | null
+  /**
+   * VXL 编辑入口：仅项目模式 project-file 下传，VxlViewer3D toolbar 据此挂出"编辑 VXL"按钮
+   * 点击后由 MixEditor 全屏 portal 接管。
+   */
+  onEnterVxlEdit?: () => void
 }
 
 const PreviewPanel: React.FC<PreviewPanelProps> = ({
@@ -122,6 +127,7 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
   onCsfDraftChange,
   csfLoading = false,
   csfError = null,
+  onEnterVxlEdit,
 }) => {
   const { t } = useLocale()
 
@@ -525,6 +531,18 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
                   loadingOverride={csfLoading}
                   errorOverride={csfError}
                   readOnly={!canSaveSelectedFile || actionsDisabled}
+                />
+              )
+            }
+            // VxlViewer3D：项目模式下接 onEdit，toolbar 挂"编辑 VXL"按钮，点了进全屏 portal
+            if (ext === 'vxl' && activeView === 'viewer3d') {
+              return (
+                <VxlViewer3D
+                  selectedFile={selectedFile}
+                  mixFiles={mixFiles}
+                  target={target}
+                  resourceContext={resourceContext}
+                  onEdit={onEnterVxlEdit}
                 />
               )
             }
