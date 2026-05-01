@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { AlertCircle, CheckCircle2, Loader2, PanelLeftOpen } from 'lucide-react'
+import { AlertCircle, CheckCircle2, DownloadCloud, Loader2, PanelLeftOpen } from 'lucide-react'
 import Toolbar from './Toolbar'
 import ActionSidebar from './ActionSidebar'
 import FileTree from './FileTree'
@@ -232,6 +232,8 @@ function findFirstProjectFilePath(nodes: ProjectTreeNode[]): string | null {
 
 const NON_ERROR_STAGE_ORDER = GAME_RES_IMPORT_STAGE_ORDER.filter((stage) => stage !== 'error')
 const STARTUP_LOADED_RESOURCE_LIMIT = 10
+const DEFAULT_ONLINE_ARCHIVE_URL = import.meta.env.VITE_RA2WEB_STUDIO_ARCHIVE_URL?.trim()
+  || 'https://download.ra2web.com/full-pack.7z'
 
 function applyProgressEventToSteps(
   steps: GameResImportStepState[],
@@ -281,6 +283,7 @@ const MixEditor: React.FC = () => {
   const [activeTopMixName, setActiveTopMixName] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [progressMessage, setProgressMessage] = useState<string>('')
+  const [onlineArchiveUrl, setOnlineArchiveUrl] = useState(DEFAULT_ONLINE_ARCHIVE_URL)
   // 底栏右侧状态指示：异步操作完成后短暂展示一条非阻塞的提示，不再用全屏 dialog 打断用户。
   const [statusNotice, setStatusNotice] = useState<{
     id: number
@@ -1176,6 +1179,71 @@ const MixEditor: React.FC = () => {
       setProgressMessage('')
     }
   }, [confirmDiscardPktEdits, reloadStudioData, handleImportProgressEvent, resetImportProgress, dialog, t])
+
+  const handleReimportBaseOnlineArchive = useCallback(async (event?: React.FormEvent<HTMLFormElement>) => {
+    event?.preventDefault()
+    const trimmedUrl = onlineArchiveUrl.trim()
+    if (!trimmedUrl) {
+      await dialog.info(t('mixEditor.onlineArchiveUrlRequired'))
+      return
+    }
+
+    let archiveUrl: URL
+    try {
+      archiveUrl = new URL(trimmedUrl)
+    } catch {
+      await dialog.info(t('mixEditor.invalidOnlineArchiveUrl'))
+      return
+    }
+
+    if (archiveUrl.protocol !== 'http:' && archiveUrl.protocol !== 'https:') {
+      await dialog.info(t('mixEditor.invalidOnlineArchiveUrl'))
+      return
+    }
+    if (archiveUrl.protocol === 'http:' && window.location.protocol === 'https:') {
+      await dialog.info(t('mixEditor.insecureOnlineArchiveUrl'))
+      return
+    }
+
+    const allowed = await confirmDiscardPktEdits()
+    if (!allowed) return
+    setLoading(true)
+    resetImportProgress(t('importProgress.prepareOnlineImport'))
+    try {
+      if (!FileSystemUtil.isOpfsSupported()) {
+        await dialog.info(t('mixEditor.opfsNotSupported'))
+        return
+      }
+      const result = await GameResBootstrap.reimportBaseFromOnlineArchive(
+        archiveUrl,
+        setProgressMessage,
+        handleImportProgressEvent,
+      )
+      if (result.errors.length > 0) {
+        await dialog.info(t('mixEditor.baseArchiveImportError', { errors: result.errors.slice(0, 8).join('\n') }))
+      }
+      await reloadStudioData(undefined, { skipUnsavedGuard: true, studioMode: 'base' })
+    } catch (e: any) {
+      handleImportProgressEvent({
+        stage: 'error',
+        stageLabel: t('importProgress.importFailed'),
+        message: e?.message || t('mixEditor.reimportBaseOnlineArchiveFailed'),
+        errorMessage: e?.message || t('mixEditor.reimportBaseOnlineArchiveFailed'),
+      })
+      await dialog.info(e?.message || t('mixEditor.reimportBaseOnlineArchiveFailed'))
+    } finally {
+      setLoading(false)
+      setProgressMessage('')
+    }
+  }, [
+    confirmDiscardPktEdits,
+    dialog,
+    handleImportProgressEvent,
+    onlineArchiveUrl,
+    reloadStudioData,
+    resetImportProgress,
+    t,
+  ])
 
   const setWorkspaceMix = useCallback((mixName: string, selectFirstFile: boolean) => {
     const mix = mixFiles.find((m) => m.info.name === mixName)
@@ -3607,6 +3675,33 @@ const MixEditor: React.FC = () => {
               <div className="mt-4 text-sm text-yellow-300">
                 {t('mixEditor.missingFiles', { files: missingRequiredFiles.join(', ') || t('mixEditor.unknownMissing') })}
               </div>
+              <form className="mt-5" onSubmit={handleReimportBaseOnlineArchive}>
+                <label
+                  className="mb-2 block text-xs font-semibold uppercase tracking-wide text-gray-400"
+                  htmlFor="online-archive-url"
+                >
+                  {t('mixEditor.onlineArchiveUrlLabel')}
+                </label>
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <input
+                    id="online-archive-url"
+                    type="url"
+                    className="min-w-0 flex-1 rounded border border-gray-600 bg-gray-950 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-400 disabled:cursor-not-allowed disabled:opacity-60"
+                    value={onlineArchiveUrl}
+                    onChange={(event) => setOnlineArchiveUrl(event.currentTarget.value)}
+                    placeholder={t('mixEditor.onlineArchiveUrlPlaceholder')}
+                    disabled={loading}
+                  />
+                  <button
+                    type="submit"
+                    className="inline-flex items-center justify-center gap-2 rounded bg-emerald-600 px-4 py-2 text-sm text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={loading || !onlineArchiveUrl.trim()}
+                  >
+                    <DownloadCloud className="h-4 w-4" aria-hidden="true" />
+                    {t('mixEditor.onlineImportButton')}
+                  </button>
+                </div>
+              </form>
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm"

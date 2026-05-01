@@ -69,6 +69,21 @@ export class GameResBootstrap {
     return merged
   }
 
+  static async reimportBaseFromOnlineArchive(
+    archiveUrl: URL,
+    onProgress?: (message: string) => void,
+    onProgressEvent?: (event: GameResImportProgressEvent) => void,
+  ): Promise<GameResImportResult> {
+    const options: ImportOptions = { onProgress, onProgressEvent, modName: null }
+    const archiveFile = await GameResImporter.downloadArchiveFromUrl(archiveUrl, options)
+    await FileSystemUtil.clearBucket('base')
+    const result = await GameResImporter.importArchive(archiveFile, 'base', options)
+    if (result.imported > 0) {
+      GameResConfig.markImported(null)
+    }
+    return result
+  }
+
   static async importPatchFiles(
     files: File[],
     onProgress?: (message: string) => void,

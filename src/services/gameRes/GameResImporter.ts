@@ -42,6 +42,25 @@ function toPercent(processed: number, total: number): number | undefined {
   return Math.max(0, Math.min(100, percent))
 }
 
+function toOwnedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(buffer).set(bytes)
+  return buffer
+}
+
+function formatBytes(byteCount: number): string {
+  if (!Number.isFinite(byteCount) || byteCount <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = byteCount
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex++
+  }
+  const digits = value >= 100 || unitIndex === 0 ? 0 : 1
+  return `${value.toFixed(digits)} ${units[unitIndex]}`
+}
+
 function emitProgress(
   options: ImportOptions,
   event: Omit<GameResImportProgressEvent, 'stageLabel'>,
@@ -52,6 +71,126 @@ function emitProgress(
   }
   options.onProgressEvent?.(fullEvent)
   options.onProgress?.(fullEvent.message)
+}
+
+function stripHeaderQuotes(value: string): string {
+  const trimmed = value.trim()
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1)
+  }
+  return trimmed
+}
+
+function decodeHeaderFilename(value: string): string {
+  const unquoted = stripHeaderQuotes(value)
+  const encodedPart = unquoted.includes("''") ? unquoted.split("''").slice(1).join("''") : unquoted
+  try {
+    return decodeURIComponent(encodedPart)
+  } catch {
+    return encodedPart
+  }
+}
+
+function filenameFromContentDisposition(header: string | null): string | null {
+  if (!header) return null
+  const extendedMatch = header.match(/filename\*\s*=\s*([^;]+)/i)
+  if (extendedMatch?.[1]) return decodeHeaderFilename(extendedMatch[1])
+  const quotedMatch = header.match(/filename\s*=\s*"([^"]+)"/i)
+  if (quotedMatch?.[1]) return quotedMatch[1]
+  const unquotedMatch = header.match(/filename\s*=\s*([^;]+)/i)
+  if (unquotedMatch?.[1]) return stripHeaderQuotes(unquotedMatch[1])
+  return null
+}
+
+function sanitizeDownloadedFilename(filename: string): string {
+  const cleaned = filename
+    .replace(/[/\\?%*:|"<>]/g, '-')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+  return cleaned || 'online-archive.7z'
+}
+
+function hasImportableArchiveExtension(filename: string): boolean {
+  const lower = filename.toLowerCase()
+  return (
+    lower.endsWith('.zip')
+    || lower.endsWith('.7z')
+    || lower.endsWith('.exe')
+    || lower.endsWith('.tgz')
+    || lower.endsWith('.tar.gz')
+    || lower.endsWith('.mix')
+    || lower.endsWith('.mmx')
+    || lower.endsWith('.yro')
+  )
+}
+
+function filenameFromUrl(url: URL): string {
+  const pathname = url.pathname.replace(/\/+$/, '')
+  const lastSegment = pathname.split('/').pop() || ''
+  if (!lastSegment) return 'online-archive.7z'
+  try {
+    return decodeURIComponent(lastSegment)
+  } catch {
+    return lastSegment
+  }
+}
+
+function deriveDownloadedArchiveFilename(url: URL, headers: Headers): string {
+  const headerName = filenameFromContentDisposition(headers.get('content-disposition'))
+  const filename = sanitizeDownloadedFilename(headerName || filenameFromUrl(url))
+  return hasImportableArchiveExtension(filename) ? filename : `${filename}.7z`
+}
+
+async function readResponseBytes(
+  response: Response,
+  sourceUrl: URL,
+  options: ImportOptions,
+): Promise<Uint8Array> {
+  const totalBytes = Number(response.headers.get('content-length') || 0)
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    emitProgress(options, {
+      stage: 'load_archive',
+      message: `在线归档下载完成：${formatBytes(bytes.byteLength)}`,
+      currentItem: sourceUrl.toString(),
+      percentage: 100,
+    })
+    return bytes
+  }
+
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let loadedBytes = 0
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (!value) continue
+    chunks.push(value)
+    loadedBytes += value.byteLength
+    emitProgress(options, {
+      stage: 'load_archive',
+      message: totalBytes > 0
+        ? `正在下载在线归档：${formatBytes(loadedBytes)} / ${formatBytes(totalBytes)}`
+        : `正在下载在线归档：${formatBytes(loadedBytes)}`,
+      currentItem: sourceUrl.toString(),
+      percentage: toPercent(loadedBytes, totalBytes),
+    })
+  }
+
+  const output = new Uint8Array(loadedBytes)
+  let offset = 0
+  for (const chunk of chunks) {
+    output.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  emitProgress(options, {
+    stage: 'load_archive',
+    message: `在线归档下载完成：${formatBytes(loadedBytes)}`,
+    currentItem: sourceUrl.toString(),
+    percentage: 100,
+  })
+  return output
 }
 
 function walkEmFsFiles(fs: any, dir: string, output: string[]): void {
@@ -358,6 +497,51 @@ async function importOneFile(
 }
 
 export class GameResImporter {
+  static async downloadArchiveFromUrl(
+    archiveUrl: URL,
+    options: ImportOptions = {},
+  ): Promise<File> {
+    emitProgress(options, {
+      stage: 'prepare',
+      message: `准备在线导入 ${archiveUrl.toString()}...`,
+      currentItem: archiveUrl.toString(),
+    })
+    emitProgress(options, {
+      stage: 'load_archive',
+      message: `正在连接在线归档 ${archiveUrl.toString()}...`,
+      currentItem: archiveUrl.toString(),
+    })
+
+    let response: Response
+    try {
+      response = await fetch(archiveUrl.toString(), { cache: 'no-cache' })
+    } catch (e: any) {
+      const errMsg = e?.message ?? String(e)
+      emitProgress(options, {
+        stage: 'error',
+        message: '在线归档下载失败',
+        currentItem: archiveUrl.toString(),
+        errorMessage: errMsg,
+      })
+      throw new Error(`在线归档下载失败：${errMsg}`)
+    }
+
+    if (!response.ok) {
+      const message = `在线归档下载失败：HTTP ${response.status} ${response.statusText}`.trim()
+      emitProgress(options, {
+        stage: 'error',
+        message,
+        currentItem: archiveUrl.toString(),
+        errorMessage: message,
+      })
+      throw new Error(message)
+    }
+
+    const filename = deriveDownloadedArchiveFilename(archiveUrl, response.headers)
+    const bytes = await readResponseBytes(response, archiveUrl, options)
+    return new File([toOwnedArrayBuffer(bytes)], filename)
+  }
+
   static async importDirectory(
     dirHandle: any,
     bucket: ResourceBucket,
