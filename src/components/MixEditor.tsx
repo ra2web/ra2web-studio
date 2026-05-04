@@ -74,6 +74,7 @@ import {
 import type { GameResImportProgressEvent, GameResImportStepState } from '../services/gameRes/types'
 import { resolvePreviewFile } from './preview/previewFileResolver'
 import type { PreviewEditorHandle, PreviewTarget } from './preview/types'
+import type { AudioPackageSplitResult } from './preview/AudioBagViewer'
 import { ProjectService } from '../services/projects/ProjectService'
 import { GlobalSearchService } from '../services/search/GlobalSearchService'
 import type {
@@ -1356,7 +1357,7 @@ const MixEditor: React.FC = () => {
   const openBaseArchivePicker = useCallback(() => {
     openFilePicker(
       {
-        accept: '.tar.gz,.tgz,.exe,.7z,.zip,.mix',
+        accept: '.tar.gz,.tgz,.exe,.7z,.zip,.mix,.idx,.bag',
         multiple: true,
       },
       (files) => {
@@ -1411,7 +1412,7 @@ const MixEditor: React.FC = () => {
   const openProjectArchivePicker = useCallback(() => {
     openFilePicker(
       {
-        accept: '.zip,.7z,.exe,.tgz,.tar.gz,.mix,.mmx,.yro,.ini,.txt,.pkt,.csf,.pcx,.shp,.vxl,.hva,.wav,.bik,.map,.mpr',
+        accept: '.zip,.7z,.exe,.tgz,.tar.gz,.mix,.mmx,.yro,.ini,.txt,.pkt,.csf,.pcx,.shp,.vxl,.hva,.wav,.idx,.bag,.bik,.map,.mpr',
         multiple: true,
       },
       (files) => {
@@ -1753,6 +1754,30 @@ const MixEditor: React.FC = () => {
     showStatusNotice,
     t,
   ])
+
+  const handleAudioPackageSplitComplete = useCallback(async (result: AudioPackageSplitResult) => {
+    if (!activeProjectName) return
+    if (result.kind === 'project-file') {
+      await reloadStudioData(undefined, {
+        skipUnsavedGuard: true,
+        studioMode: 'projects',
+        activeProjectName,
+        projectSelectionPath: result.idxPath,
+      })
+      showStatusNotice(`已生成 ${result.idxPath} / ${result.bagPath}`, 'success')
+      return
+    }
+
+    await reloadStudioData({
+      stackNames: navStack.map((node) => node.name),
+      selectedLeafName: result.idxEntryName,
+    }, {
+      skipUnsavedGuard: true,
+      studioMode: 'projects',
+      activeProjectName,
+    })
+    showStatusNotice(`已生成 ${result.idxEntryName} / ${result.bagEntryName}`, 'success')
+  }, [activeProjectName, navStack, reloadStudioData, showStatusNotice])
 
   const handleExportProjectZip = useCallback(async () => {
     if (!activeProjectName) return
@@ -3870,6 +3895,7 @@ const MixEditor: React.FC = () => {
               onOpenImageExport={() => {
                 void handleOpenImageExport()
               }}
+              onAudioPackageSplitComplete={handleAudioPackageSplitComplete}
               onEditorReady={(handle) => {
                 previewEditorRef.current = handle
               }}

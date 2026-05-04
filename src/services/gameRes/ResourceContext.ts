@@ -3,7 +3,7 @@ import type { MixFileInfo } from '../MixParser'
 import { MixParser } from '../MixParser'
 import { FileSystemUtil } from './FileSystemUtil'
 import { GameResConfig } from './GameResConfig'
-import { getArchivePriority, isMixLikeFile, isStandaloneIniLikeFile } from './patterns'
+import { getArchivePriority, isAudioPackageFile, isMixLikeFile, isStandaloneIniLikeFile } from './patterns'
 import type { ImportedResourceFile, ResourceBucket, ResourceReadiness } from './types'
 
 export type ResourceLoadProgressPhase =
@@ -195,7 +195,7 @@ export class ResourceContext {
           loadedCount,
           totalCount,
         })
-      } else if (isStandaloneIniLikeFile(item.name)) {
+      } else if (isStandaloneIniLikeFile(item.name) || isAudioPackageFile(item.name)) {
         standaloneFiles.push({
           bucket: item.bucket,
           priority: getArchivePriority(item.name, item.bucket),

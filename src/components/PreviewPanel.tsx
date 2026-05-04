@@ -16,6 +16,7 @@ import VxlViewer3D from './preview/VxlViewer3D.tsx'
 import HvaViewer from './preview/HvaViewer'
 import MixDirectoryViewer from './preview/MixDirectoryViewer'
 import WavViewer from './preview/WavViewer'
+import AudioBagViewer, { type AudioPackageSplitResult } from './preview/AudioBagViewer'
 import MapViewer from './preview/MapViewer'
 import BikViewer from './preview/BikViewer'
 import type { ResourceContext } from '../services/gameRes/ResourceContext'
@@ -53,6 +54,7 @@ interface PreviewPanelProps {
   onBeforeViewChange?: (nextView: string) => Promise<boolean> | boolean
   onOpenRawExport?: () => void
   onOpenImageExport?: () => void
+  onAudioPackageSplitComplete?: (result: AudioPackageSplitResult) => void | Promise<void>
   onEditorReady?: (handle: PreviewEditorHandle | null) => void
   /**
    * 通用 SHP 编辑器入口。
@@ -115,6 +117,7 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
   onBeforeViewChange,
   onOpenRawExport,
   onOpenImageExport,
+  onAudioPackageSplitComplete,
   onEditorReady,
   shpEditMode = false,
   shpEditInitialPreset,
@@ -153,6 +156,8 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
       case 'lun':
         return <Image size={48} className="text-orange-400" />
       case 'wav':
+      case 'idx':
+      case 'bag':
         return <Music size={48} className="text-yellow-400" />
       case 'bik':
         return <Video size={48} className="text-rose-400" />
@@ -175,7 +180,9 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
     const keyMap: Record<string, string> = {
       ini: 'preview.fileType_ini', pkt: 'preview.fileType_pkt', txt: 'preview.fileType_txt', csf: 'preview.fileType_csf',
       pal: 'preview.fileType_pal', shp: 'preview.fileType_shp', vxl: 'preview.fileType_vxl',
-      pcx: 'preview.fileType_pcx', wav: 'preview.fileType_wav', bik: 'preview.fileType_bik',
+      pcx: 'preview.fileType_pcx', wav: 'preview.fileType_wav',
+      idx: 'preview.fileType_idx', bag: 'preview.fileType_bag',
+      bik: 'preview.fileType_bik',
       map: 'preview.fileType_map', mpr: 'preview.fileType_map',
       mix: 'preview.fileType_mix', mmx: 'preview.fileType_mix', yro: 'preview.fileType_mix',
     }
@@ -256,6 +263,14 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
     ],
     wav: [
       { key: 'audio', label: t('viewLabels.audio'), Component: WavViewer },
+      { key: 'hex', label: t('viewLabels.hex'), Component: HexViewer },
+    ],
+    idx: [
+      { key: 'package', label: t('viewLabels.audioPackage'), Component: AudioBagViewer },
+      { key: 'hex', label: t('viewLabels.hex'), Component: HexViewer },
+    ],
+    bag: [
+      { key: 'package', label: t('viewLabels.audioPackage'), Component: AudioBagViewer },
       { key: 'hex', label: t('viewLabels.hex'), Component: HexViewer },
     ],
     bik: [
@@ -543,6 +558,18 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
                   target={target}
                   resourceContext={resourceContext}
                   onEdit={onEnterVxlEdit}
+                />
+              )
+            }
+            if ((ext === 'idx' || ext === 'bag') && activeView === 'package') {
+              return (
+                <AudioBagViewer
+                  selectedFile={selectedFile}
+                  mixFiles={mixFiles}
+                  target={target}
+                  resourceContext={resourceContext}
+                  actionsDisabled={actionsDisabled}
+                  onSplitComplete={onAudioPackageSplitComplete}
                 />
               )
             }

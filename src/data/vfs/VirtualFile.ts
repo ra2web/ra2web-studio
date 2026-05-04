@@ -90,7 +90,7 @@ export class VirtualFile {
     // Ensure stream position doesn't affect this; we want the whole buffer part for this file.
     // The DataStream constructor already takes care of byteOffset and byteLength for the view.
     return new Uint8Array(
-      this.stream.buffer,
+      this.stream.dataView.buffer,
       this.stream.byteOffset,
       this.stream.byteLength,
     );

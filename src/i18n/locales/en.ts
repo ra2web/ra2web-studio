@@ -435,6 +435,8 @@ export const en = {
     fileType_pcx: 'PCX image',
     fileType_tmp: 'TMP map tile',
     fileType_wav: 'WAV audio',
+    fileType_idx: 'IDX audio index',
+    fileType_bag: 'BAG audio package',
     fileType_bik: 'BIK video',
     fileType_map: 'Map file',
     fileType_mix: 'RA2 archive',
@@ -507,6 +509,7 @@ export const en = {
     viewer2d: '2D frames',
     viewer3d: '3D',
     audio: 'Audio',
+    audioPackage: 'Audio Package',
     video: 'Video',
   },
 

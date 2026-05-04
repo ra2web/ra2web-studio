@@ -37,6 +37,12 @@ type MixContainerNode = {
   fileObj: File | VirtualFile
 }
 
+type ProjectMixWriteItem = {
+  sourceFile?: File
+  targetFilename?: string
+  bytes?: Uint8Array
+}
+
 function normalizeProjectName(name: string): string {
   return name.trim()
 }
@@ -64,12 +70,6 @@ function normalizeMixEntryName(name: string): string {
 
 function sameMixEntryName(a: string, b: string): boolean {
   return normalizeMixEntryName(a) === normalizeMixEntryName(b)
-}
-
-function cloneBytes(bytes: Uint8Array): Uint8Array {
-  const copy = new Uint8Array(bytes.length)
-  copy.set(bytes)
-  return copy
 }
 
 function buildTreeFromEntries(entries: ProjectFileEntry[]): ProjectTreeNode[] {
@@ -155,7 +155,7 @@ async function readContainerEntries(container: MixContainerNode): Promise<MixArc
     entries.push({
       filename: entry.filename,
       hash,
-      bytes: cloneBytes(vf.getBytes()),
+      bytes: vf.getBytes(),
     })
   }
   return entries
@@ -191,7 +191,7 @@ async function rebuildAncestorMixes(
   if (!navStack.length) {
     throw new Error('No MIX container to write back')
   }
-  let replacementBytes = cloneBytes(currentMixBytes)
+  let replacementBytes = currentMixBytes
   let replacementName = navStack[navStack.length - 1].name
   for (let depth = navStack.length - 2; depth >= 0; depth--) {
     const parent = navStack[depth]
@@ -452,6 +452,24 @@ export class ProjectService {
     sourceFile: File
     targetFilename?: string
   }): Promise<void> {
+    await this.writeFilesIntoProjectMix({
+      projectName: args.projectName,
+      owningMixPath: args.owningMixPath,
+      containerChain: args.containerChain,
+      files: [{
+        sourceFile: args.sourceFile,
+        targetFilename: args.targetFilename,
+      }],
+    })
+  }
+
+  static async writeFilesIntoProjectMix(args: {
+    projectName: string
+    owningMixPath: string
+    containerChain?: string[]
+    files: ProjectMixWriteItem[]
+  }): Promise<void> {
+    if (!args.files.length) return
     const normalizedProject = validateProjectName(args.projectName)
     const owningMixPath = normalizeResourcePath(args.owningMixPath)
     const containerChain = [...(args.containerChain ?? [])]
@@ -460,24 +478,32 @@ export class ProjectService {
     const navStack = await buildMixNavStack(topFile, topInfo, containerChain)
     const currentContainer = navStack[navStack.length - 1]
     const currentEntries = await readContainerEntries(currentContainer)
-    const targetFilename = normalizeResourceFilename(args.targetFilename ?? args.sourceFile.name)
-    if (!targetFilename) {
-      throw new Error('目标文件名不能为空')
-    }
 
-    const nextBytes = new Uint8Array(await args.sourceFile.arrayBuffer())
-    const existingIndex = currentEntries.findIndex((entry) => sameMixEntryName(entry.filename, targetFilename))
-    if (existingIndex >= 0) {
-      currentEntries[existingIndex] = {
-        ...currentEntries[existingIndex],
-        filename: targetFilename,
-        bytes: nextBytes,
+    for (const item of args.files) {
+      const targetFilename = normalizeResourceFilename(item.targetFilename ?? item.sourceFile?.name ?? '')
+      if (!targetFilename) {
+        throw new Error('目标文件名不能为空')
       }
-    } else {
-      currentEntries.push({
-        filename: targetFilename,
-        bytes: nextBytes,
-      })
+      const nextBytes = item.bytes ?? (
+        item.sourceFile ? new Uint8Array(await item.sourceFile.arrayBuffer()) : null
+      )
+      if (!nextBytes) {
+        throw new Error(`目标文件 ${targetFilename} 缺少写入数据`)
+      }
+
+      const existingIndex = currentEntries.findIndex((entry) => sameMixEntryName(entry.filename, targetFilename))
+      if (existingIndex >= 0) {
+        currentEntries[existingIndex] = {
+          ...currentEntries[existingIndex],
+          filename: targetFilename,
+          bytes: nextBytes,
+        }
+      } else {
+        currentEntries.push({
+          filename: targetFilename,
+          bytes: nextBytes,
+        })
+      }
     }
 
     const rebuiltCurrent = MixArchiveBuilder.build(MixArchiveBuilder.upsertLocalMixDatabase(currentEntries))

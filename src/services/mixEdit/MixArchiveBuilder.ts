@@ -98,9 +98,7 @@ function finalizeEntries(entries: MixArchiveBuilderEntry[]): FinalizedEntry[] {
       throw new Error(`MIX build failed: duplicate entry hash (${normalizedName})`)
     }
     hashSeen.add(hash)
-    const bytes = new Uint8Array(entry.bytes.length)
-    bytes.set(entry.bytes)
-    finalized.push({ filename: normalizedName, bytes, hash })
+    finalized.push({ filename: normalizedName, bytes: entry.bytes, hash })
   }
   return finalized
 }

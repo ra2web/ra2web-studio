@@ -12,6 +12,11 @@ export function isStandaloneIniLikeFile(filename: string): boolean {
   return lower.endsWith('.ini') || lower.endsWith('.csf')
 }
 
+export function isAudioPackageFile(filename: string): boolean {
+  const lower = filename.toLowerCase()
+  return lower.endsWith('.idx') || lower.endsWith('.bag')
+}
+
 export function normalizeResourceFilename(filename: string): string {
   return filename.replace(/\\/g, '/').split('/').pop()?.trim() ?? filename.trim()
 }

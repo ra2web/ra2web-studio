@@ -434,6 +434,8 @@ export const zh = {
     fileType_pcx: 'PCX 图像文件',
     fileType_tmp: 'TMP 地图图块文件',
     fileType_wav: 'WAV 音频文件',
+    fileType_idx: 'IDX 音频索引文件',
+    fileType_bag: 'BAG 音频包文件',
     fileType_bik: 'BIK 视频文件',
     fileType_map: '地图文件',
     fileType_mix: '王二火大归档文件',
@@ -506,6 +508,7 @@ export const zh = {
     viewer2d: '2D帧采样',
     viewer3d: '3D',
     audio: '音频',
+    audioPackage: '音频包',
     video: '视频',
   },
 

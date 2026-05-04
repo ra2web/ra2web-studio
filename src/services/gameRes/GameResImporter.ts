@@ -2,6 +2,7 @@ import JSZip from 'jszip'
 import sevenZipWasmUrl from '7z-wasm/7zz.wasm?url'
 import { FileSystemUtil } from './FileSystemUtil'
 import {
+  isAudioPackageFile,
   isMixLikeFile,
   isStandaloneIniLikeFile,
   normalizeResourceFilename,
@@ -33,7 +34,7 @@ function normalizeImportedEntryName(name: string, options: ImportOptions): strin
 
 function shouldImport(name: string, options: ImportOptions): boolean {
   if (options.allowAllFiles) return true
-  return isMixLikeFile(name) || isStandaloneIniLikeFile(name)
+  return isMixLikeFile(name) || isStandaloneIniLikeFile(name) || isAudioPackageFile(name)
 }
 
 function toPercent(processed: number, total: number): number | undefined {
@@ -716,7 +717,12 @@ export class GameResImporter {
         currentItem: archiveFile.name,
       })
 
-      if (options.allowAllFiles || isMixLikeFile(lowerName) || isStandaloneIniLikeFile(lowerName)) {
+      if (
+        options.allowAllFiles
+        || isMixLikeFile(lowerName)
+        || isStandaloneIniLikeFile(lowerName)
+        || isAudioPackageFile(lowerName)
+      ) {
         emitProgress(options, {
           stage: 'load_archive',
           message: '检测到单文件资源，跳过归档加载',
