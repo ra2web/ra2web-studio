@@ -2,6 +2,7 @@ import React, { useRef } from 'react'
 import { RA2_ISO_TILE_HEIGHT, RA2_ISO_TILE_WIDTH, EMPTY_OVERLAY } from '../../data/map/constants'
 import { forEachIsoCell, hitTestDiamond, projectCell } from '../../data/map/isoCoords'
 import { MapDocument } from '../../data/map/MapDocument'
+import { walkTubeCells } from '../../data/map/fa2Tube'
 import type { MapEditorTool } from '../../data/map/mapTools'
 import type { TheaterArt, TilePixels } from '../../data/map/TheaterArt'
 
@@ -239,11 +240,14 @@ const MapViewport: React.FC<MapViewportProps> = ({
     for (const tube of doc.tubes) {
       ctx.strokeStyle = '#22d3ee'
       ctx.lineWidth = 2 / scale
-      const start = projectCell(tube.startX, tube.startY, doc.getCell(tube.startX, tube.startY).height, doc.isoSize)
-      const end = projectCell(tube.endX, tube.endY, doc.getCell(tube.endX, tube.endY).height, doc.isoSize)
+      const cells = walkTubeCells(tube)
+      if (cells.length === 0) continue
       ctx.beginPath()
-      ctx.moveTo(start.px, start.py)
-      ctx.lineTo(end.px, end.py)
+      cells.forEach((cell, index) => {
+        const point = projectCell(cell.x, cell.y, doc.getCell(cell.x, cell.y).height, doc.isoSize)
+        if (index === 0) ctx.moveTo(point.px, point.py)
+        else ctx.lineTo(point.px, point.py)
+      })
       ctx.stroke()
     }
 

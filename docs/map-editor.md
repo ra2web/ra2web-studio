@@ -20,7 +20,8 @@
 | P4 贴图 | `map-editor-p4-sprites` | Overlay/单位 SHP（werhd ImageFinder） |
 | P5 拷贝与小地图 | `map-editor-p5-copy-minimap` | `[Countries]`/`[Houses]`、RA2/YR 新建、区域拷贝粘贴、编辑器内小地图、SpecialFlags、Marble 预览开关、载具 VXL 地格预览 |
 | P6 悬崖与 SmoothAt | `map-editor-p6-smooth-cliff` | FA2 SmoothAt 3×3 LAT、Front/Back CliffModifier（FAData 崖块表） |
-| P7 测试与交付 | `map-editor-p7-tests` | 单元 + 组件 + e2e；阶段 tag 齐全 |
+| P7 隧道/岸线/桥 | `map-editor-p7-tubes-shore` | FA2 Tube 8 向 autocreate、CreateShore、Overlay 桥/墙接缝、随机地形物 |
+| P8 测试与交付 | `map-editor-p8-tests` | 单元 + 组件 + e2e；阶段 tag 齐全 |
 
 ## 验收标准
 

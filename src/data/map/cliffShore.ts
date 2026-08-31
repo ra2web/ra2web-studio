@@ -2,6 +2,7 @@ import { isValidIsoCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
 import { TheaterRules, type TheaterIndex } from './theaterIndex'
 import { placeFa2Cliff } from './fa2Cliff'
+import { createShoreAt } from './fa2Shore'
 import type { MapTheater } from './constants'
 
 function bresenham(x0: number, y0: number, x1: number, y1: number): Array<{ rx: number; ry: number }> {
@@ -55,30 +56,7 @@ export function placeCliffLine(
   }
 }
 
-const SHORE_NEIGHBORS = [
-  [0, -1], [1, 0], [0, 1], [-1, 0],
-]
-
-/** 若当前格邻接水域，则写成 ShorePieces 首块（FA2 CreateShore 的局部近似）。 */
+/** FA2 CreateShore：以点击格为中心修岸并贴合 ShorePieces。 */
 export function applyShoreAt(doc: MapDocument, rx: number, ry: number, theater: TheaterIndex): void {
-  const rules = new TheaterRules(theater)
-  const water = rules.getGeneralValue('WaterSet')
-  const shore = rules.getGeneralValue('ShorePieces')
-  if (water < 0 || shore < 0) return
-  const currentSet = rules.getSetNum(doc.getCell(rx, ry).tileNum)
-  if (currentSet === water) return
-  let touchesWater = false
-  for (const [dx, dy] of SHORE_NEIGHBORS) {
-    const nx = rx + dx
-    const ny = ry + dy
-    if (!isValidIsoCell(nx, ny, doc.width, doc.height)) continue
-    if (rules.getSetNum(doc.getCell(nx, ny).tileNum) === water) {
-      touchesWater = true
-      break
-    }
-  }
-  if (!touchesWater) return
-  const cell = doc.getCell(rx, ry)
-  cell.tileNum = rules.getTileNumFromSet(shore)
-  doc.setCell(cell)
+  createShoreAt(doc, rx, ry, theater)
 }

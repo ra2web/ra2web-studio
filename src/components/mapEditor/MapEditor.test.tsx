@@ -37,6 +37,9 @@ describe('MapEditor', () => {
     expect(screen.getByRole('button', { name: /阵营|Houses/ })).toBeInTheDocument()
     expect(screen.getByTestId('map-minimap')).toBeInTheDocument()
     expect(screen.getByText(/复制区域|Copy region/)).toBeInTheDocument()
+    expect(screen.getByText(/^桥$|^Bridge$/)).toBeInTheDocument()
+    expect(screen.getByText(/^墙$|^Wall$/)).toBeInTheDocument()
+    expect(screen.getByText(/随机地形物|Random terrain/)).toBeInTheDocument()
   })
 
   it('paints ore through the viewport and keeps overlay', () => {

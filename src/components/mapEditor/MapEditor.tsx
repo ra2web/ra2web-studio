@@ -6,10 +6,12 @@ import {
 import { EMPTY_OVERLAY } from '../../data/map/constants'
 import { applyShoreAt, placeCliffLine } from '../../data/map/cliffShore'
 import { copyRegion, normalizeCopyRect, pasteRegion, type MapClipboard, type MapCopyRect } from '../../data/map/copyPaste'
+import { Fa2Tube, nextTubeId } from '../../data/map/fa2Tube'
 import { applyLatAt } from '../../data/map/lat'
 import { MapCommandStack, flattenHeight, paintHeight, paintTile } from '../../data/map/MapCommandStack'
 import { MapDocument, createMapObjectId } from '../../data/map/MapDocument'
-import { applyOreBrush, clearOverlay, OBJECT_TOOLS, type MapEditorTool } from '../../data/map/mapTools'
+import { applyOreBrush, clearOverlay, OBJECT_TOOLS, placeRandomTerrain, type MapEditorTool } from '../../data/map/mapTools'
+import { FA2_WALL_OVERLAYS, handleTrail, placeBridgeLine, refreshTrailsAround, type BridgeKind } from '../../data/map/overlayTools'
 import { validateMap } from '../../data/map/mapValidate'
 import { resizeMap } from '../../data/map/resizeMap'
 import { emptyRulesObjectLists, parseRulesObjectLists, type RulesObjectLists } from '../../data/map/rulesObjects'
@@ -58,6 +60,9 @@ const TOOLS: { id: MapEditorTool; labelKey: string }[] = [
   { id: 'basenode', labelKey: 'mapEditor.toolBaseNode' },
   { id: 'copy', labelKey: 'mapEditor.toolCopy' },
   { id: 'paste', labelKey: 'mapEditor.toolPaste' },
+  { id: 'bridge', labelKey: 'mapEditor.toolBridge' },
+  { id: 'wall', labelKey: 'mapEditor.toolWall' },
+  { id: 'randomTerrain', labelKey: 'mapEditor.toolRandomTerrain' },
 ]
 
 type MapEditorProps = {
@@ -92,11 +97,14 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [mapWidth, setMapWidth] = useState(session.document.width)
   const [mapHeight, setMapHeight] = useState(session.document.height)
   const [marbleMadness, setMarbleMadness] = useState(false)
+  const [bridgeKind, setBridgeKind] = useState<BridgeKind>('small')
+  const [tubeBidirectional, setTubeBidirectional] = useState(true)
   const [selectionRect, setSelectionRect] = useState<MapCopyRect | null>(null)
   const [viewSize, setViewSize] = useState({ w: 800, h: 600 })
   const viewRef = useRef<HTMLDivElement | null>(null)
   const tubeStartRef = useRef<{ rx: number; ry: number } | null>(null)
   const cliffStartRef = useRef<{ rx: number; ry: number } | null>(null)
+  const bridgeStartRef = useRef<{ rx: number; ry: number } | null>(null)
   const copyRangeRef = useRef<{ start: { rx: number; ry: number }; end: { rx: number; ry: number } } | null>(null)
   const clipboardRef = useRef<MapClipboard | null>(null)
   const pasteOnceRef = useRef(false)
@@ -171,10 +179,13 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         applyOreBrush(working, rx, ry)
         break
       case 'overlay':
+      case 'wall':
         working.setOverlay(rx, ry, overlayId, 0)
+        handleTrail(working, rx, ry)
         break
       case 'eraseOverlay':
         clearOverlay(working, rx, ry)
+        refreshTrailsAround(working, rx, ry)
         break
       case 'infantry':
         working.infantry.push({
@@ -207,6 +218,9 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
       case 'terrain':
         working.terrains.push({ id: createMapObjectId(), name: objectName, rx, ry })
         break
+      case 'randomTerrain':
+        placeRandomTerrain(working, rx, ry, rulesLists.terrain)
+        break
       case 'smudge':
         working.smudges.push({ id: createMapObjectId(), name: objectName, rx, ry, extra: 0 })
         break
@@ -233,16 +247,22 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
           tubeStartRef.current = { rx, ry }
         } else {
           const start = tubeStartRef.current
-          working.tubes.push({
-            id: String(working.tubes.length),
-            startX: start.rx,
-            startY: start.ry,
-            startDir: 0,
-            endX: rx,
-            endY: ry,
-            parts: [0],
-          })
+          const created = Fa2Tube.autocreate(start.rx, start.ry, rx, ry)
+          if (created.isValid()) {
+            working.tubes.push(created.toMapTube(nextTubeId(working.tubes)))
+            if (tubeBidirectional) {
+              working.tubes.push(created.reverse().toMapTube(nextTubeId(working.tubes)))
+            }
+          }
           tubeStartRef.current = null
+        }
+        break
+      case 'bridge':
+        if (!bridgeStartRef.current) {
+          bridgeStartRef.current = { rx, ry }
+        } else {
+          placeBridgeLine(working, bridgeStartRef.current, { rx, ry }, bridgeKind)
+          bridgeStartRef.current = null
         }
         break
       case 'cliff':
@@ -282,7 +302,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     }
     setSelected({ rx, ry })
     bump(working)
-  }, [autoLat, brush, bump, doc, objectName, overlayId, owner, theaterArt, tileNum, tool])
+  }, [autoLat, bridgeKind, brush, bump, doc, objectName, overlayId, owner, rulesLists.terrain, theaterArt, tileNum, tool, tubeBidirectional])
 
   const strokeRef = useRef<{ commit: () => void } | null>(null)
   const handleStrokeStart = useCallback(() => {
@@ -298,7 +318,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
       }
       return
     }
-    if (OBJECT_TOOLS.includes(tool) || tool === 'tube' || tool === 'cliff' || tool === 'cliffFront' || tool === 'cliffBack' || tool === 'basenode' || tool === 'paste') {
+    if (OBJECT_TOOLS.includes(tool) || tool === 'tube' || tool === 'cliff' || tool === 'cliffFront' || tool === 'cliffBack' || tool === 'bridge' || tool === 'basenode' || tool === 'paste') {
       const before = doc.toIniString()
       strokeRef.current = {
         commit: () => {
@@ -377,7 +397,12 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
               key={item.id}
               type="button"
               className={`mb-1 block w-full rounded px-2 py-2 text-left text-sm ${tool === item.id ? 'bg-blue-600' : 'hover:bg-gray-800'}`}
-              onClick={() => setTool(item.id)}
+              onClick={() => {
+                setTool(item.id)
+                if (item.id === 'wall' && !(FA2_WALL_OVERLAYS as readonly number[]).includes(overlayId)) {
+                  setOverlayId(FA2_WALL_OVERLAYS[0])
+                }
+              }}
             >
               {t(item.labelKey as never)}
             </button>
@@ -401,7 +426,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                   : tool === 'unit' ? rulesLists.units
                     : tool === 'aircraft' ? rulesLists.aircraft
                       : tool === 'structure' ? rulesLists.structures
-                        : tool === 'terrain' ? rulesLists.terrain
+                        : tool === 'terrain' || tool === 'randomTerrain' ? rulesLists.terrain
                           : tool === 'smudge' ? rulesLists.smudges
                             : [...rulesLists.infantry, ...rulesLists.units, ...rulesLists.structures]
               ).map((name) => <option key={name} value={name} />)}
@@ -420,6 +445,33 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
               </select>
             )}
           </label>
+          {tool === 'wall' && (
+            <label className="mt-2 block text-xs text-gray-400">
+              {t('mapEditor.toolWall')}
+              <select className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={overlayId} onChange={(event) => setOverlayId(Number(event.target.value))} data-testid="map-wall-type">
+                {FA2_WALL_OVERLAYS.map((id) => (
+                  <option key={id} value={id}>{id}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {tool === 'bridge' && (
+            <label className="mt-2 block text-xs text-gray-400">
+              {t('mapEditor.toolBridge')}
+              <select className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={bridgeKind} onChange={(event) => setBridgeKind(event.target.value as BridgeKind)} data-testid="map-bridge-kind">
+                <option value="small">{t('mapEditor.bridgeSmall')}</option>
+                <option value="big">{t('mapEditor.bridgeBig')}</option>
+                <option value="track">{t('mapEditor.bridgeTrack')}</option>
+                <option value="concrete">{t('mapEditor.bridgeConcrete')}</option>
+              </select>
+            </label>
+          )}
+          {tool === 'tube' && (
+            <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
+              <input type="checkbox" checked={tubeBidirectional} onChange={(event) => setTubeBidirectional(event.target.checked)} data-testid="map-tube-bidirectional" />
+              {t('mapEditor.tubeBidirectional')}
+            </label>
+          )}
           <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
             <input type="checkbox" checked={autoLat} onChange={(event) => setAutoLat(event.target.checked)} />
             {t('mapEditor.autoLat')}
@@ -733,10 +785,11 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             <div className="space-y-2 text-sm">
               {doc.tubes.map((tube) => (
                 <div key={tube.id} className="rounded border border-gray-800 p-2 text-xs">
-                  {tube.startX},{tube.startY} → {tube.endX},{tube.endY}
+                  {tube.startX},{tube.startY} → {tube.endX},{tube.endY} dir={tube.startDir} parts={tube.parts.join(',')}
                 </div>
               ))}
               <p className="text-xs text-gray-400">{t('mapEditor.tubeHint')}</p>
+              <p className="text-xs text-gray-400">{t('mapEditor.bridgeHint')}</p>
               <p className="text-xs text-gray-400">{t('mapEditor.cliffHint')}</p>
               <p className="text-xs text-gray-400">{t('mapEditor.copyHint')}</p>
             </div>

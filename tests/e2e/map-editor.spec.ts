@@ -21,6 +21,7 @@ test('can create a new FA2 map and open the editor', async ({ page }) => {
   await expect(page.getByTestId('map-viewport')).toBeVisible()
   await expect(page.getByTestId('map-minimap')).toBeVisible()
   await expect(page.getByTestId('map-tool-rail')).toBeVisible()
+  await expect(page.getByRole('button', { name: /^桥$|^Bridge$/ })).toBeVisible()
   await page.getByRole('button', { name: /矿石|Ore/ }).first().click()
   await page.getByRole('button', { name: /阵营|Houses/ }).click()
   await expect(page.getByTestId('map-logic-panel').getByText('Americans')).toBeVisible()
