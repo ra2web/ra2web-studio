@@ -5,6 +5,7 @@ import { MapDocument } from '../../data/map/MapDocument'
 import { walkTubeCells } from '../../data/map/fa2Tube'
 import type { MapEditorTool } from '../../data/map/mapTools'
 import type { TheaterArt, TilePixels } from '../../data/map/TheaterArt'
+import { emptyHideView, isCellHidden, type MapHideView } from '../../data/map/fa2Hide'
 
 export type MapViewportPick = {
   rx: number
@@ -32,6 +33,7 @@ type MapViewportProps = {
   marbleMadness?: boolean
   theaterArt?: TheaterArt | null
   artRevision?: number
+  hideView?: MapHideView
   onPanChange: (panX: number, panY: number) => void
   onScaleChange: (scale: number) => void
   onPaint: (rx: number, ry: number) => void
@@ -97,6 +99,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
   marbleMadness = false,
   theaterArt,
   artRevision = 0,
+  hideView = emptyHideView(),
   onPanChange,
   onScaleChange,
   onPaint,
@@ -132,6 +135,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
 
     forEachIsoCell(doc.width, doc.height, ({ rx, ry }) => {
       const cell = doc.getCell(rx, ry)
+      if (isCellHidden(rx, ry, cell.tileNum, hideView, theaterArt?.index)) return
       const tileNum = marbleMadness && theaterArt ? theaterArt.marbleTile(cell.tileNum) : cell.tileNum
       const origin = projectCell(rx, ry, cell.height, doc.isoSize)
       const overlay = doc.getOverlay(rx, ry)
@@ -203,6 +207,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
 
     const mark = (rx: number, ry: number, color: string, label?: string, objectName?: string, facing = 0) => {
       const cell = doc.getCell(rx, ry)
+      if (isCellHidden(rx, ry, cell.tileNum, hideView, theaterArt?.index)) return
       const origin = projectCell(rx, ry, cell.height, doc.isoSize)
       if (objectName) {
         const sprite = theaterArt?.peekObject(objectName, 0, facing)
@@ -252,7 +257,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
     }
 
     ctx.restore()
-  }, [artRevision, doc, marbleMadness, panX, panY, scale, selected, selectionRect, theaterArt])
+  }, [artRevision, doc, hideView, marbleMadness, panX, panY, scale, selected, selectionRect, theaterArt])
 
   React.useEffect(() => {
     draw()
@@ -276,7 +281,11 @@ const MapViewport: React.FC<MapViewportProps> = ({
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas) return
-    canvas.setPointerCapture(event.pointerId)
+    try {
+      canvas.setPointerCapture(event.pointerId)
+    } catch {
+      /* jsdom / non-pointer hosts */
+    }
     pointersRef.current.set(event.pointerId, { id: event.pointerId, x: event.clientX, y: event.clientY })
     if (pointersRef.current.size === 2) {
       const [a, b] = [...pointersRef.current.values()]

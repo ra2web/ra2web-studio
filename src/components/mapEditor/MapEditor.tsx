@@ -11,7 +11,8 @@ import { createSlopesAround, changeMapHeight } from '../../data/map/fa2Slopes'
 import { autoLevel, heightenGround, lookupFromTheater, lowerGround } from '../../data/map/fa2Height'
 import { applyIniEdit, isPackedIniSection, listIniKeys, listIniSections } from '../../data/map/fa2IniEdit'
 import { Fa2Tube, nextTubeId } from '../../data/map/fa2Tube'
-import { runUserScript } from '../../data/map/fa2UserScript'
+import { runUserScript, createBrowserUserScriptUi } from '../../data/map/fa2UserScript'
+import { emptyHideView, hideFieldAt, hideTileSetAt, showAllFields, showAllTileSets } from '../../data/map/fa2Hide'
 import { applyLatAt } from '../../data/map/lat'
 import { MapCommandStack, flattenHeight, paintHeight, paintTile } from '../../data/map/MapCommandStack'
 import { MapDocument, createMapObjectId } from '../../data/map/MapDocument'
@@ -72,6 +73,8 @@ const TOOLS: { id: MapEditorTool; labelKey: string }[] = [
   { id: 'bridge', labelKey: 'mapEditor.toolBridge' },
   { id: 'wall', labelKey: 'mapEditor.toolWall' },
   { id: 'randomTerrain', labelKey: 'mapEditor.toolRandomTerrain' },
+  { id: 'hideTileset', labelKey: 'mapEditor.toolHideTileset' },
+  { id: 'hideField', labelKey: 'mapEditor.toolHideField' },
 ]
 
 type MapEditorProps = {
@@ -107,6 +110,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [mapWidth, setMapWidth] = useState(session.document.width)
   const [mapHeight, setMapHeight] = useState(session.document.height)
   const [marbleMadness, setMarbleMadness] = useState(false)
+  const [hideView, setHideView] = useState(emptyHideView)
   const [bridgeKind, setBridgeKind] = useState<BridgeKind>('small')
   const [tubeBidirectional, setTubeBidirectional] = useState(true)
   const [oreRandom, setOreRandom] = useState(false)
@@ -387,6 +391,16 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         if (clipboardRef.current) pasteRegion(working, clipboardRef.current, rx, ry)
         break
       }
+      case 'hideTileset': {
+        setHideView((prev) => hideTileSetAt(prev, working.getCell(rx, ry).tileNum, theaterArt?.index))
+        setSelected({ rx, ry })
+        return
+      }
+      case 'hideField': {
+        setHideView((prev) => hideFieldAt(prev, rx, ry))
+        setSelected({ rx, ry })
+        return
+      }
       default:
         break
     }
@@ -406,6 +420,10 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
           clipboardRef.current = copyRegion(doc, normalizeCopyRect(range.start, range.end))
         },
       }
+      return
+    }
+    if (tool === 'hideTileset' || tool === 'hideField') {
+      strokeRef.current = { commit: () => {} }
       return
     }
     if (OBJECT_TOOLS.includes(tool) || tool === 'tube' || tool === 'cliff' || tool === 'cliffFront' || tool === 'cliffBack' || tool === 'bridge' || tool === 'basenode' || tool === 'paste') {
@@ -647,13 +665,29 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             <input type="checkbox" checked={marbleMadness} onChange={(event) => setMarbleMadness(event.target.checked)} data-testid="map-marble-toggle" />
             {t('mapEditor.marbleMadness')}
           </label>
+          <button
+            type="button"
+            className="mt-2 w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
+            data-testid="map-show-tilesets"
+            onClick={() => setHideView((prev) => showAllTileSets(prev))}
+          >
+            {t('mapEditor.showAllTilesets')}
+          </button>
+          <button
+            type="button"
+            className="mt-1 w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
+            data-testid="map-show-fields"
+            onClick={() => setHideView((prev) => showAllFields(prev))}
+          >
+            {t('mapEditor.showAllFields')}
+          </button>
           <div className="mt-3 text-xs text-gray-400">{t('mapEditor.tileSets')}</div>
           <div className="mt-1 max-h-48 overflow-y-auto rounded border border-gray-800" data-testid="map-tileset-browser">
             {theaterArt?.index?.sets.map((set) => (
               <button
                 key={set.setIndex}
                 type="button"
-                className={`block w-full truncate px-2 py-1 text-left text-[11px] ${tileNum >= set.startTileNum && tileNum < set.startTileNum + set.tilesInSet ? 'bg-blue-700' : 'hover:bg-gray-800'}`}
+                className={`block w-full truncate px-2 py-1 text-left text-[11px] ${tileNum >= set.startTileNum && tileNum < set.startTileNum + set.tilesInSet ? 'bg-blue-700' : 'hover:bg-gray-800'} ${hideView.tileSets.has(set.setIndex) ? 'opacity-40' : ''}`}
                 onClick={() => {
                   setTileNum(set.startTileNum)
                   setTool('tile')
@@ -677,6 +711,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             selected={selected}
             selectionRect={selectionRect}
             marbleMadness={marbleMadness}
+            hideView={hideView}
             theaterArt={theaterArt}
             artRevision={artRevision}
             onPanChange={(nextX, nextY) => {
@@ -1099,7 +1134,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                 data-testid="map-run-script"
                 onClick={() => {
                   commitEdit('userScript', () => {
-                    const result = runUserScript(doc, scriptText)
+                    const result = runUserScript(doc, scriptText, { ui: createBrowserUserScriptUi() })
                     setScriptReport(result.report || result.error || '')
                   })
                 }}
@@ -1151,6 +1186,28 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
               }}
             >
               {t('mapEditor.autoCreateShores')}
+            </button>
+            <button
+              type="button"
+              className="rounded bg-gray-800 px-2 py-2 text-xs"
+              data-testid="map-show-tilesets-mobile"
+              onClick={() => {
+                setHideView((prev) => showAllTileSets(prev))
+                setMobileToolsOpen(false)
+              }}
+            >
+              {t('mapEditor.showAllTilesets')}
+            </button>
+            <button
+              type="button"
+              className="rounded bg-gray-800 px-2 py-2 text-xs"
+              data-testid="map-show-fields-mobile"
+              onClick={() => {
+                setHideView((prev) => showAllFields(prev))
+                setMobileToolsOpen(false)
+              }}
+            >
+              {t('mapEditor.showAllFields')}
             </button>
           </div>
         </div>

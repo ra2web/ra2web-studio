@@ -24,6 +24,8 @@ test('can create a new FA2 map and open the editor', async ({ page }) => {
   await expect(page.getByTestId('map-tool-rail')).toBeVisible()
   await expect(page.getByRole('button', { name: /^桥$|^Bridge$/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /矿脉洞|Veinhole/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /隐藏瓦片集|Hide tileset/ })).toBeVisible()
+  await expect(page.getByTestId('map-show-fields')).toBeVisible()
   await page.getByRole('button', { name: /地图工具|Map tools/ }).click()
   await expect(page.getByTestId('map-user-script')).toBeVisible()
   await expect(page.getByTestId('map-search-waypoint')).toBeVisible()

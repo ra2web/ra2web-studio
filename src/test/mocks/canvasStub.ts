@@ -101,8 +101,13 @@ class CanvasContextStub {
   closePath() {}
   moveTo(..._args: any[]) {}
   lineTo(..._args: any[]) {}
+  arc(..._args: any[]) {}
+  fill() {}
   stroke() {}
   strokeRect(..._args: any[]) {}
+  fillText(..._args: any[]) {}
+  font = '10px sans-serif'
+  textAlign: CanvasTextAlign = 'start'
   strokeStyle: any = '#000'
   lineWidth = 1
 

@@ -1,7 +1,16 @@
 import { MapDocument, createMapObjectId } from './MapDocument'
 import { MapIni } from './MapIni'
 import { resizeMap } from './resizeMap'
-import type { MapSmudge, MapTechno, MapTerrainObject } from './types'
+import type {
+  MapAiTrigger,
+  MapSmudge,
+  MapTag,
+  MapTechno,
+  MapTerrainObject,
+  MapTrigger,
+  MapTriggerAction,
+  MapTriggerEvent,
+} from './types'
 
 /** FA2 UserScriptsDlg 解析出的一条命令。 */
 export type UserScriptFn = {
@@ -29,13 +38,46 @@ const NO_REPLACE_FIRST = new Set([
   'IsInfantryDeleted', 'IsTerrainDeleted', 'GetInfantry', 'GetAircraft',
   'GetStructure', 'GetVehicle', 'GetHouse', 'GetCountry', 'GetHouseIndex',
   'Or', 'And', 'Not',
+  'Ask', 'UInputGetInteger', 'UInputGetString', 'UInputGetHouse', 'UInputGetCountry',
+  'UInputGetTrigger', 'UInputGetTag', 'UInputSelect', 'AddTrigger', 'AddAITrigger', 'AddTag',
 ])
 
-const UI_COMMANDS = new Set([
-  'AskContinue', 'Message', 'Ask', 'UInputGetInteger', 'UInputGetString',
-  'UInputGetHouse', 'UInputGetCountry', 'UInputGetTrigger', 'UInputGetTag',
-  'UInputSelect', 'AddTrigger', 'AddAITrigger', 'AddTag',
-])
+export type UserScriptChoice = {
+  value: string
+  label: string
+}
+
+/** FA2 阻塞式对话框。无宿主时：AskContinue/SetSafeMode/Resize 默认继续，UInput 跳过该行。 */
+export type UserScriptUi = {
+  confirm(message: string, title?: string): boolean
+  alert(message: string, title?: string): void
+  prompt(message: string, title?: string): string | null
+  pick(caption: string, options: UserScriptChoice[]): string | null
+}
+
+export function createBrowserUserScriptUi(): UserScriptUi {
+  return {
+    confirm(message, title) {
+      return window.confirm(title ? `${title}\n\n${message}` : message)
+    },
+    alert(message, title) {
+      window.alert(title ? `${title}\n\n${message}` : message)
+    },
+    prompt(message, title) {
+      return window.prompt(title ? `${title}\n${message}` : message)
+    },
+    pick(caption, options) {
+      const listed = options.map((item, index) => `${index}: ${item.label}`).join('\n')
+      const raw = window.prompt(`${caption}\n${listed}`, options[0]?.value ?? '')
+      if (raw == null) return null
+      const asIndex = Number(raw)
+      if (Number.isInteger(asIndex) && asIndex >= 0 && options[asIndex]) return options[asIndex].value
+      const match = options.find((item) => item.value === raw || item.label === raw)
+      if (match) return match.value
+      return raw.trim().split(/\s+/)[0] || raw
+    },
+  }
+}
 
 export function isValSet(value: string): boolean {
   const lower = value.toLowerCase()
@@ -319,14 +361,111 @@ function occupiedTechno(list: Array<{ rx: number; ry: number }>, rx: number, ry:
   return list.some((item) => item.rx === rx && item.ry === ry)
 }
 
+/** FA2 `GetFreeID()`：`0` + 从 1000000 递增，避开 Triggers/Tags/AI/队伍等 ID 与同名段。 */
+export function getFreeFa2Id(doc: MapDocument): string {
+  const used = new Set<string>([
+    ...doc.scripts.map((item) => item.id),
+    ...doc.taskForces.map((item) => item.id),
+    ...doc.teams.map((item) => item.id),
+    ...doc.triggers.map((item) => item.id),
+    ...doc.tags.map((item) => item.id),
+    ...doc.aiTriggers.map((item) => item.id),
+    ...doc.extraSections.map((item) => item.name),
+    ...doc.houses.map((item) => item.name),
+  ])
+  let n = 1_000_000
+  while (used.has(`0${n}`)) n++
+  return `0${n}`
+}
+
+function parseEventsLine(value: string): MapTriggerEvent[] {
+  const fields = value.split(',')
+  const count = Number(fields.shift()) || 0
+  const events: MapTriggerEvent[] = []
+  for (let i = 0; i < count; i++) {
+    const type = Number(fields.shift()) || 0
+    const paramKind = Number(fields.shift()) || 0
+    const params = fields.splice(0, paramKind === 2 ? 2 : 1)
+    events.push({ type, paramKind, params })
+  }
+  return events
+}
+
+function parseActionsLine(value: string): MapTriggerAction[] {
+  const fields = value.split(',')
+  const count = Number(fields.shift()) || 0
+  const actions: MapTriggerAction[] = []
+  for (let i = 0; i < count; i++) {
+    const type = Number(fields.shift()) || 0
+    const params = fields.splice(0, 7)
+    while (params.length < 7) params.push('0')
+    actions.push({ type, params })
+  }
+  return actions
+}
+
+export function parseTriggerCsv(id: string, triggerLine: string, eventsLine: string, actionsLine: string): MapTrigger {
+  const fields = triggerLine.split(',')
+  return {
+    id,
+    houseName: fields[0] || '<none>',
+    attachedTriggerId: fields[1] || '<none>',
+    name: fields[2] || id,
+    disabled: fields[3] === '1',
+    easy: fields[4] !== '0',
+    medium: fields[5] !== '0',
+    hard: fields[6] !== '0',
+    events: parseEventsLine(eventsLine),
+    actions: parseActionsLine(actionsLine),
+  }
+}
+
+function parseTagCsv(id: string, line: string): MapTag {
+  const fields = line.split(',')
+  return {
+    id,
+    repeatType: Number(fields[0]) || 0,
+    name: fields[1] || id,
+    triggerId: fields[2] || '',
+  }
+}
+
+function parseAiTriggerCsv(id: string, line: string): MapAiTrigger {
+  const fields = line.split(',')
+  return {
+    id,
+    name: fields[0] || id,
+    team1: fields[1] || '<none>',
+    ownerHouse: fields[2] || '<all>',
+    techLevel: Number(fields[3]) || 0,
+    conditionType: Number(fields[4]) || -1,
+    conditionObject: fields[5] || '<none>',
+    comparator: fields[6] || '0',
+    startingCredits: Number(fields[15]) || 0,
+    sideIndex: Number(fields[16]) || 0,
+    baseDefense: fields[17] === '1',
+    team2: fields[18] || '<none>',
+    enabledEasy: fields[19] !== '0',
+    enabledMedium: fields[20] !== '0',
+    enabledHard: fields[21] !== '0',
+    raw: line,
+  }
+}
+
+function firstToken(value: string): string {
+  return value.trim().split(/\s+/)[0] || value
+}
+
 export type RunUserScriptOptions = {
   random?: () => number
   maxLoops?: number
+  ui?: UserScriptUi
 }
 
 /**
- * FA2 `CUserScriptsDlg::OnOK` 无交互子集。
+ * FA2 `CUserScriptsDlg::OnOK`。
  * 默认 SafeMode；`AllowAdd`/`AllowDelete`/`SetSafeMode("false")` 后才改图。
+ * `ui` 对齐 MessageBox / InputBox / ComboUInput；测试可注入。
  */
 export function runUserScript(
   doc: MapDocument,
@@ -338,6 +477,7 @@ export function runUserScript(
   const vars = new Map<string, string>()
   const random = options.random ?? Math.random
   const maxLoops = options.maxLoops ?? 10000
+  const ui = options.ui
   let safeMode = true
   let addAllowed = false
   let deleteAllowed = false
@@ -359,12 +499,6 @@ export function runUserScript(
     for (const [key, value] of env) vars.set(key, value)
     const params = replaceParams(fn, vars)
     const name = fn.name
-
-    if (UI_COMMANDS.has(name)) {
-      lines.push(`${name} skipped (interactive)`)
-      continue
-    }
-
     const need = (count: number) => params.length < count
 
     switch (name) {
@@ -372,7 +506,17 @@ export function runUserScript(
         if (need(2)) return fail(`script error at ${name}`)
         if (skipBool(params, 2)) break
         const lower = params[0].toLowerCase()
-        safeMode = !(lower === 'false' || lower === 'no')
+        const enabled = !(lower === 'false' || lower === 'no')
+        if (!enabled && ui) {
+          const reason = [
+            'This script wants to disable INI protection. For some scripts this may be necessary, but it can seriously damage your Map. Reason why script wants to disable INI protection:',
+            params[1],
+            '',
+            'Disable INI protection?',
+          ].join('\n')
+          if (!ui.confirm(reason, 'Disable INI protection?')) break
+        }
+        safeMode = enabled
         lines.push(safeMode ? 'INI Protection enabled' : 'INI Protection disabled')
         break
       }
@@ -608,6 +752,7 @@ export function runUserScript(
       case 'Resize': {
         if (need(4)) return fail(`script error at ${name}`)
         if (skipBool(params, 4)) break
+        if (ui && !ui.confirm('This script wants to resize the map. Resize map?', 'Resize map?')) break
         const width = atoi(params[2])
         const height = atoi(params[3])
         if (width > 200 || height > 200) return fail('Resizing map failed')
@@ -767,6 +912,152 @@ export function runUserScript(
         if (skipBool(params, 2)) break
         const index = doc.houses.findIndex((house) => house.name === params[1])
         vars.set(params[0], index >= 0 ? String(index) : '')
+        break
+      }
+      case 'AskContinue': {
+        if (need(1)) return fail(`script error at ${name}`)
+        if (skipBool(params, 1)) break
+        if (ui && !ui.confirm(params[0], 'Continue?')) {
+          return { ok: true, report: lines.join('\n') }
+        }
+        break
+      }
+      case 'Message': {
+        if (need(2)) return fail(`script error at ${name}`)
+        if (skipBool(params, 2)) break
+        ui?.alert(params[0], params[1])
+        lines.push(params[0])
+        break
+      }
+      case 'Ask': {
+        if (need(3)) return fail(`script error at ${name}`)
+        if (skipBool(params, 3)) break
+        const yes = ui ? ui.confirm(params[1], params[2]) : true
+        vars.set(params[0], yes ? '1' : '0')
+        break
+      }
+      case 'UInputGetInteger': {
+        if (need(4)) return fail(`script error at ${name}`)
+        if (skipBool(params, 4)) break
+        if (!ui) break
+        const minText = params[2]
+        const maxText = params[3]
+        let value: number | null = null
+        for (let attempt = 0; attempt < 32; attempt++) {
+          const raw = ui.prompt(params[1], 'Enter Integer')
+          if (raw == null) return { ok: true, report: lines.join('\n') }
+          if (raw.length === 0) continue
+          const n = atoi(raw)
+          if (minText.length > 0 && n < atoi(minText)) continue
+          if (maxText.length > 0 && n > atoi(maxText)) continue
+          value = n
+          break
+        }
+        if (value == null) return fail(`script error at ${name}`)
+        vars.set(params[0], String(value))
+        break
+      }
+      case 'UInputGetString': {
+        if (need(2)) return fail(`script error at ${name}`)
+        if (skipBool(params, 2)) break
+        if (!ui) break
+        let text = ''
+        for (let attempt = 0; attempt < 32; attempt++) {
+          const raw = ui.prompt(params[1], 'Enter String')
+          if (raw == null) return { ok: true, report: lines.join('\n') }
+          if (raw.length === 0) continue
+          text = raw
+          break
+        }
+        if (!text) return fail(`script error at ${name}`)
+        vars.set(params[0], text)
+        break
+      }
+      case 'UInputGetHouse': {
+        if (need(2)) return fail(`script error at ${name}`)
+        if (skipBool(params, 2)) break
+        if (!ui) break
+        const picked = ui.pick(params[1], doc.houses.map((house) => ({ value: house.name, label: house.name })))
+        vars.set(params[0], picked ?? '')
+        break
+      }
+      case 'UInputGetCountry': {
+        if (need(2)) return fail(`script error at ${name}`)
+        if (skipBool(params, 2)) break
+        if (!ui) break
+        const picked = ui.pick(params[1], doc.countries.map((country) => ({ value: country, label: country })))
+        vars.set(params[0], picked ?? '')
+        break
+      }
+      case 'UInputGetTrigger': {
+        if (need(2)) return fail(`script error at ${name}`)
+        if (skipBool(params, 2)) break
+        if (!ui) break
+        const picked = ui.pick(params[1], doc.triggers.map((item) => ({
+          value: item.id,
+          label: `${item.id} (${item.name})`,
+        })))
+        vars.set(params[0], picked ? firstToken(picked) : '')
+        break
+      }
+      case 'UInputGetTag': {
+        if (need(2)) return fail(`script error at ${name}`)
+        if (skipBool(params, 2)) break
+        if (!ui) break
+        const picked = ui.pick(params[1], doc.tags.map((item) => ({
+          value: item.id,
+          label: `${item.id} ${item.name}`,
+        })))
+        vars.set(params[0], picked ? firstToken(picked) : '')
+        break
+      }
+      case 'UInputSelect': {
+        if (need(4)) return fail(`script error at ${name}`)
+        if (skipBool(params, 4)) break
+        if (!ui) break
+        const options = (params[3] ?? '').split(',').filter(Boolean).map((item) => ({ value: item, label: item }))
+        const picked = ui.pick(params[1], options)
+        vars.set(params[0], picked ?? '')
+        break
+      }
+      case 'AddTrigger': {
+        if (need(5)) return fail(`script error at ${name}`)
+        if (skipBool(params, 5)) break
+        if (!addAllowed) break
+        const id = getFreeFa2Id(doc)
+        if (params[0].length > 0) vars.set(params[0], id)
+        doc.triggers.push(parseTriggerCsv(id, params[1], params[2], params[3]))
+        const makeTag = !(params[4].toLowerCase() === 'false' || params[4].toLowerCase() === 'no')
+        if (makeTag) {
+          const tagId = getFreeFa2Id(doc)
+          doc.tags.push({
+            id: tagId,
+            repeatType: 0,
+            name: getParam(params[1], 2),
+            triggerId: id,
+          })
+        }
+        lines.push(`Trigger ${getParam(params[1], 2)} added`)
+        break
+      }
+      case 'AddAITrigger': {
+        if (need(2)) return fail(`script error at ${name}`)
+        if (skipBool(params, 2)) break
+        if (!addAllowed) break
+        const id = getFreeFa2Id(doc)
+        if (params[0].length > 0) vars.set(params[0], id)
+        doc.aiTriggers.push(parseAiTriggerCsv(id, params[1]))
+        lines.push(`AI Trigger ${getParam(params[1], 0)} added`)
+        break
+      }
+      case 'AddTag': {
+        if (need(2)) return fail(`script error at ${name}`)
+        if (skipBool(params, 2)) break
+        if (!addAllowed) break
+        const id = getFreeFa2Id(doc)
+        if (params[0].length > 0) vars.set(params[0], id)
+        doc.tags.push(parseTagCsv(id, params[1]))
+        lines.push(`Tag ${getParam(params[1], 1)} added`)
         break
       }
       default:

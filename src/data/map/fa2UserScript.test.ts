@@ -108,4 +108,83 @@ AddInfantry("Americans,E1,256,12,12,0,Guard,0,none,0,-1,0,0,0")
     expect(doc.height).toBe(18)
     expect(doc.getCell(12 + (20 - 16) + 2 - 1, 12 + 2 + 1).tileNum).toBe(7)
   })
+
+  it('adds FA2 AddTrigger / Tag / AITrigger after AllowAdd', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const result = runUserScript(doc, `
+AllowAdd("TRUE")
+AddTrigger("%TriggerID%", "Americans,<none>,Reveal Map Debug Trigger,0,1,1,1,0", "1,13,0,10", "1,16,0,0,0,0,0,0,A", "TRUE")
+AddAITrigger("%AI%", "Apoc Attack,<none>,Russians,10,0,<none>,0,0,0,0,0,0,0,0,0,0,1,0,<none>,1,1,1")
+AddTag("%Tag2%", "0,Manual Tag,01000000")
+Print("%TriggerID%")
+`)
+    expect(result.ok).toBe(true)
+    expect(doc.triggers[0]?.id).toBe('01000000')
+    expect(doc.triggers[0]?.name).toBe('Reveal Map Debug Trigger')
+    expect(doc.triggers[0]?.events[0]).toEqual({ type: 13, paramKind: 0, params: ['10'] })
+    expect(doc.triggers[0]?.actions[0]?.type).toBe(16)
+    expect(doc.tags[0]?.triggerId).toBe('01000000')
+    expect(doc.tags[0]?.name).toBe('Reveal Map Debug Trigger')
+    expect(doc.aiTriggers[0]?.name).toBe('Apoc Attack')
+    expect(doc.tags.some((item) => item.name === 'Manual Tag')).toBe(true)
+    expect(result.report).toContain('01000000')
+    expect(doc.toIniString()).toMatch(/\[Triggers\]/)
+    expect(doc.toIniString()).toMatch(/Reveal Map Debug Trigger/)
+  })
+
+  it('skips AddTrigger without AllowAdd like FA2', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const result = runUserScript(doc, `
+AddTrigger("%TriggerID%", "Americans,<none>,Nope,0,1,1,1,0", "0", "0", "TRUE")
+`)
+    expect(result.ok).toBe(true)
+    expect(doc.triggers).toHaveLength(0)
+  })
+
+  it('stops the script when AskContinue is declined', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const result = runUserScript(doc, `
+AskContinue("go?")
+Print("after")
+`, {
+      ui: {
+        confirm: () => false,
+        alert: () => {},
+        prompt: () => null,
+        pick: () => null,
+      },
+    })
+    expect(result.ok).toBe(true)
+    expect(result.report).not.toContain('after')
+  })
+
+  it('collects Message, Ask, UInput and pick results from the host', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    doc.triggers.push({
+      id: '01000005', houseName: 'Americans', attachedTriggerId: '<none>', name: 'Demo',
+      disabled: false, easy: true, medium: true, hard: true, events: [], actions: [],
+    })
+    const alerts: string[] = []
+    const result = runUserScript(doc, `
+Ask("%yes%", "ready?", "Ask")
+UInputGetInteger("%n%", "num", "1", "9")
+UInputGetString("%s%", "name")
+UInputGetHouse("%h%", "house")
+UInputGetTrigger("%t%", "trigger")
+Message("done %n% %s% %h% %t% %yes%", "ok")
+Print("%n%,%s%,%h%,%t%,%yes%")
+`, {
+      ui: {
+        confirm: () => true,
+        alert: (message) => { alerts.push(message) },
+        prompt: (message) => (message === 'num' ? '4' : 'Alpha'),
+        pick: (_caption, options) => options.find((item) => item.value === 'Americans')?.value
+          ?? options[0]?.value
+          ?? '',
+      },
+    })
+    expect(result.ok).toBe(true)
+    expect(result.report).toContain('4,Alpha,Americans,01000005,1')
+    expect(alerts[0]).toContain('done 4 Alpha Americans 01000005 1')
+  })
 })

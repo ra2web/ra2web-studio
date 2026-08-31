@@ -33,6 +33,8 @@ export type MapEditorTool =
   | 'bridge'
   | 'wall'
   | 'randomTerrain'
+  | 'hideTileset'
+  | 'hideField'
 
 export const TERRAIN_TOOLS: MapEditorTool[] = ['raise', 'lower', 'flatten', 'tile', 'cliff', 'cliffFront', 'cliffBack', 'shore']
 export const OVERLAY_TOOLS: MapEditorTool[] = ['overlay', 'ore', 'gems', 'veinhole', 'veins', 'eraseOverlay', 'wall', 'bridge']

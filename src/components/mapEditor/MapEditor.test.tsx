@@ -42,6 +42,9 @@ describe('MapEditor', () => {
     expect(screen.getByText(/^桥$|^Bridge$/)).toBeInTheDocument()
     expect(screen.getByText(/^墙$|^Wall$/)).toBeInTheDocument()
     expect(screen.getByText(/随机地形物|Random terrain/)).toBeInTheDocument()
+    expect(screen.getByText(/隐藏瓦片集|Hide tileset/)).toBeInTheDocument()
+    expect(screen.getByText(/隐藏格子|Hide field/)).toBeInTheDocument()
+    expect(screen.getByTestId('map-show-tilesets')).toBeInTheDocument()
     expect(screen.getByText(/^宝石$|^Gems$/)).toBeInTheDocument()
     expect(screen.getByText(/矿脉洞|Veinhole/)).toBeInTheDocument()
   })
@@ -140,6 +143,29 @@ describe('MapEditor', () => {
     fireEvent.click(screen.getByTestId('map-add-tag'))
     expect(screen.getAllByDisplayValue('New Tag').length).toBeGreaterThanOrEqual(2)
     expect(screen.getByTestId('map-tileset-browser')).toBeInTheDocument()
+  })
+
+  it('hides a field without writing map INI', () => {
+    const session = makeSession()
+    const before = session.document.toIniString()
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /隐藏格子|Hide field/ }))
+    fireEvent.click(screen.getByTestId('map-viewport'))
+    expect(session.document.toIniString()).toBe(before)
+  })
+
+  it('runs a user script after confirming FA2 INI protection prompt', () => {
+    const session = makeSession()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.spyOn(window, 'alert').mockImplementation(() => {})
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /地图工具|Map tools/ }))
+    fireEvent.click(screen.getByTestId('map-run-script'))
+    expect(screen.getByTestId('map-script-report').textContent).toMatch(/16x16/)
   })
 })
 
