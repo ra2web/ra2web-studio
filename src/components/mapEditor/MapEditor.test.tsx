@@ -36,6 +36,8 @@ describe('MapEditor', () => {
     expect(screen.getByRole('button', { name: /触发器|Triggers/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /阵营|Houses/ })).toBeInTheDocument()
     expect(screen.getByTestId('map-minimap')).toBeInTheDocument()
+    expect(screen.getByTestId('map-resize-left')).toBeInTheDocument()
+    expect(screen.getByTestId('map-resize-top')).toBeInTheDocument()
     expect(screen.getByText(/复制区域|Copy region/)).toBeInTheDocument()
     expect(screen.getByText(/^桥$|^Bridge$/)).toBeInTheDocument()
     expect(screen.getByText(/^墙$|^Wall$/)).toBeInTheDocument()
@@ -55,6 +57,9 @@ describe('MapEditor', () => {
     expect(screen.getByTestId('map-search-waypoint')).toBeInTheDocument()
     expect(screen.getByTestId('map-height-rect')).toBeInTheDocument()
     expect(screen.getByTestId('map-auto-shore')).toBeInTheDocument()
+    expect(screen.getByTestId('map-ini-section')).toBeInTheDocument()
+    expect(screen.getByTestId('map-change-height')).toBeInTheDocument()
+    expect(screen.getByTestId('map-slope-correction')).toBeInTheDocument()
   })
 
   it('paints ore through the viewport and keeps overlay', () => {
@@ -68,6 +73,18 @@ describe('MapEditor', () => {
     expect(onChange).toHaveBeenCalled()
     const overlay = session.document.getOverlay(12, 12)
     expect(overlay.id).not.toBe(255)
+  })
+
+  it('writes Basic.Name through the INI editor', () => {
+    const session = makeSession()
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /地图工具|Map tools/ }))
+    fireEvent.change(screen.getByTestId('map-ini-key'), { target: { value: 'Name' } })
+    fireEvent.change(screen.getByTestId('map-ini-value'), { target: { value: 'Renamed' } })
+    fireEvent.click(screen.getByTestId('map-ini-set'))
+    expect(session.document.basic.name).toBe('Renamed')
   })
 
   it('exposes house color and playerControl', () => {
@@ -94,6 +111,9 @@ describe('MapEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: /触发器|Triggers/ }))
     fireEvent.click(screen.getByText(/添加触发器|Add trigger/))
     expect(await screen.findByTestId('map-event-type')).toBeInTheDocument()
+    expect(screen.getByTestId('map-tags-panel')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('map-add-tag'))
+    expect(screen.getAllByDisplayValue('New Tag').length).toBeGreaterThanOrEqual(2)
     expect(screen.getByTestId('map-tileset-browser')).toBeInTheDocument()
   })
 })

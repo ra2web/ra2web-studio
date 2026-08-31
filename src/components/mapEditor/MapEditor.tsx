@@ -7,6 +7,8 @@ import { EMPTY_OVERLAY } from '../../data/map/constants'
 import { applyShoreAt, placeCliffLine } from '../../data/map/cliffShore'
 import { copyRegion, normalizeCopyRect, pasteRegion, type MapClipboard, type MapCopyRect } from '../../data/map/copyPaste'
 import { autoCreateShores } from '../../data/map/fa2Shore'
+import { createSlopesAround, changeMapHeight } from '../../data/map/fa2Slopes'
+import { applyIniEdit, isPackedIniSection, listIniKeys, listIniSections } from '../../data/map/fa2IniEdit'
 import { Fa2Tube, nextTubeId } from '../../data/map/fa2Tube'
 import { runUserScript } from '../../data/map/fa2UserScript'
 import { applyLatAt } from '../../data/map/lat'
@@ -107,12 +109,17 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [tubeBidirectional, setTubeBidirectional] = useState(true)
   const [oreRandom, setOreRandom] = useState(false)
   const [heightRect, setHeightRect] = useState(false)
+  const [slopeCorrection, setSlopeCorrection] = useState(true)
+  const [resizeLeft, setResizeLeft] = useState(0)
+  const [resizeTop, setResizeTop] = useState(0)
+  const [heightDelta, setHeightDelta] = useState(1)
+  const [iniSection, setIniSection] = useState('Basic')
+  const [iniKey, setIniKey] = useState('Name')
+  const [iniValue, setIniValue] = useState('')
+  const [toolsNote, setToolsNote] = useState('')
   const [scriptText, setScriptText] = useState('SetSafeMode("false","edit")\nAllowAdd("map")\nPrint("%Width%x%Height%")')
   const [scriptReport, setScriptReport] = useState('')
   const [waypointSearch, setWaypointSearch] = useState('')
-  const [extraSection, setExtraSection] = useState('ScriptExtra')
-  const [extraKey, setExtraKey] = useState('')
-  const [extraValue, setExtraValue] = useState('')
   const [selectionRect, setSelectionRect] = useState<MapCopyRect | null>(null)
   const [viewSize, setViewSize] = useState({ w: 800, h: 600 })
   const viewRef = useRef<HTMLDivElement | null>(null)
@@ -198,12 +205,15 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     switch (tool) {
       case 'raise':
         paintHeight(working, rx, ry, 1, brush, heightRect ? 'rect' : 'diamond')
+        if (slopeCorrection && theaterArt?.index) createSlopesAround(working, rx, ry, theaterArt.index, brush)
         break
       case 'lower':
         paintHeight(working, rx, ry, -1, brush, heightRect ? 'rect' : 'diamond')
+        if (slopeCorrection && theaterArt?.index) createSlopesAround(working, rx, ry, theaterArt.index, brush)
         break
       case 'flatten':
         flattenHeight(working, rx, ry, brush)
+        if (slopeCorrection && theaterArt?.index) createSlopesAround(working, rx, ry, theaterArt.index, brush)
         break
       case 'tile':
         paintTile(working, rx, ry, tileNum, brush)
@@ -366,7 +376,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     }
     setSelected({ rx, ry })
     bump(working)
-  }, [autoLat, bridgeKind, brush, bump, doc, heightRect, objectName, oreRandom, overlayId, owner, rulesLists.terrain, theaterArt, tileNum, tool, tubeBidirectional])
+  }, [autoLat, bridgeKind, brush, bump, doc, heightRect, objectName, oreRandom, overlayId, owner, rulesLists.terrain, slopeCorrection, theaterArt, tileNum, tool, tubeBidirectional])
 
   const strokeRef = useRef<{ commit: () => void } | null>(null)
   const handleStrokeStart = useCallback(() => {
@@ -409,6 +419,15 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     setSelected({ rx: pick.rx, ry: pick.ry })
     if (pick.longPress) setLogicTab('basic')
   }, [])
+
+  const iniSections = useMemo(
+    () => (logicTab === 'maptools' ? listIniSections(doc) : []),
+    [doc, logicTab, revision],
+  )
+  const iniEntries = useMemo(
+    () => (logicTab === 'maptools' ? listIniKeys(doc, iniSection) : []),
+    [doc, iniSection, logicTab, revision],
+  )
 
   const undo = () => {
     if (stackRef.current.undo(doc)) bump(doc)
@@ -550,6 +569,10 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             <input type="checkbox" checked={heightRect} onChange={(event) => setHeightRect(event.target.checked)} data-testid="map-height-rect" />
             {t('mapEditor.heightRect')}
           </label>
+          <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
+            <input type="checkbox" checked={slopeCorrection} onChange={(event) => setSlopeCorrection(event.target.checked)} data-testid="map-slope-correction" />
+            {t('mapEditor.slopeCorrection')}
+          </label>
           <button
             type="button"
             className="mt-2 w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
@@ -648,10 +671,17 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                 <label className="block flex-1">{t('mapEditor.width')}<input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={mapWidth} onChange={(event) => setMapWidth(Number(event.target.value))} /></label>
                 <label className="block flex-1">{t('mapEditor.height')}<input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={mapHeight} onChange={(event) => setMapHeight(Number(event.target.value))} /></label>
               </div>
+              <div className="flex gap-2">
+                <label className="block flex-1">{t('mapEditor.resizeLeft')}<input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={resizeLeft} onChange={(event) => setResizeLeft(Number(event.target.value))} data-testid="map-resize-left" /></label>
+                <label className="block flex-1">{t('mapEditor.resizeTop')}<input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={resizeTop} onChange={(event) => setResizeTop(Number(event.target.value))} data-testid="map-resize-top" /></label>
+              </div>
               <button type="button" className="rounded bg-gray-800 px-2 py-1" onClick={() => {
-                const error = resizeMap(doc, mapWidth, mapHeight)
-                if (!error) bump(doc)
+                commitEdit('resize', () => {
+                  const error = resizeMap(doc, mapWidth, mapHeight, { left: resizeLeft, top: resizeTop })
+                  setToolsNote(error ?? '')
+                })
               }}>{t('mapEditor.resize')}</button>
+              {toolsNote && <p className="text-[11px] text-amber-300" data-testid="map-tools-note">{toolsNote}</p>}
               <div className="text-xs text-gray-400">{t('mapEditor.validate')}</div>
               <ul className="max-h-32 overflow-y-auto text-[11px] text-amber-300" data-testid="map-validate">
                 {validateMap(doc).map((issue) => <li key={`${issue.code}-${issue.message}`}>{issue.message}</li>)}
@@ -923,27 +953,62 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                   </button>
                 ))}
               </div>
-              <div className="text-xs font-medium text-gray-300">{t('mapEditor.extraIni')}</div>
-              <input className="w-full rounded bg-gray-800 px-2 py-1 text-xs" value={extraSection} onChange={(event) => setExtraSection(event.target.value)} placeholder="Section" />
+              <div className="text-xs font-medium text-gray-300">{t('mapEditor.changeMapHeight')}</div>
               <div className="flex gap-1">
-                <input className="min-w-0 flex-1 rounded bg-gray-800 px-2 py-1 text-xs" value={extraKey} onChange={(event) => setExtraKey(event.target.value)} placeholder="Key" />
-                <input className="min-w-0 flex-1 rounded bg-gray-800 px-2 py-1 text-xs" value={extraValue} onChange={(event) => setExtraValue(event.target.value)} placeholder="Value" />
+                <input type="number" className="min-w-0 flex-1 rounded bg-gray-800 px-2 py-1 text-xs" value={heightDelta} onChange={(event) => setHeightDelta(Number(event.target.value))} data-testid="map-height-delta" />
+                <button
+                  type="button"
+                  className="rounded bg-gray-800 px-2 py-1 text-xs"
+                  data-testid="map-change-height"
+                  onClick={() => {
+                    commitEdit('changeHeight', () => {
+                      const error = changeMapHeight(doc, heightDelta)
+                      setToolsNote(error ?? '')
+                    })
+                  }}
+                >
+                  {t('mapEditor.applyHeight')}
+                </button>
+              </div>
+              <div className="text-xs font-medium text-gray-300">{t('mapEditor.iniEditor')}</div>
+              <select
+                className="w-full rounded bg-gray-800 px-2 py-1 text-xs"
+                data-testid="map-ini-section"
+                value={iniSection}
+                onChange={(event) => {
+                  setIniSection(event.target.value)
+                  const first = listIniKeys(doc, event.target.value)[0]
+                  setIniKey(first?.key ?? '')
+                  setIniValue(first?.value ?? '')
+                }}
+              >
+                {iniSections.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+              <input className="w-full rounded bg-gray-800 px-2 py-1 text-xs" value={iniSection} onChange={(event) => setIniSection(event.target.value)} placeholder="Section" />
+              <div className="max-h-20 overflow-y-auto text-[11px]">
+                {iniEntries.map((entry) => (
+                  <button
+                    key={entry.key}
+                    type="button"
+                    className={`block w-full truncate px-1 py-0.5 text-left ${entry.key === iniKey ? 'bg-blue-800' : 'hover:bg-gray-800'}`}
+                    onClick={() => { setIniKey(entry.key); setIniValue(entry.value) }}
+                  >
+                    {entry.key}={entry.value}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-1">
+                <input className="min-w-0 flex-1 rounded bg-gray-800 px-2 py-1 text-xs" value={iniKey} onChange={(event) => setIniKey(event.target.value)} placeholder="Key" data-testid="map-ini-key" />
+                <input className="min-w-0 flex-1 rounded bg-gray-800 px-2 py-1 text-xs" value={iniValue} onChange={(event) => setIniValue(event.target.value)} placeholder="Value" data-testid="map-ini-value" />
               </div>
               <button
                 type="button"
                 className="rounded bg-gray-800 px-2 py-1 text-xs"
+                data-testid="map-ini-set"
                 onClick={() => {
-                  if (!extraSection.trim() || !extraKey.trim()) return
-                  commitEdit('setIni', () => {
-                    const sectionName = extraSection.trim()
-                    const found = doc.extraSections.find((item) => item.name.toLowerCase() === sectionName.toLowerCase())
-                    if (!found) {
-                      doc.extraSections.push({ name: sectionName, entries: [{ key: extraKey.trim(), value: extraValue }] })
-                      return
-                    }
-                    const entry = found.entries.find((item) => item.key.toLowerCase() === extraKey.trim().toLowerCase())
-                    if (entry) entry.value = extraValue
-                    else found.entries.push({ key: extraKey.trim(), value: extraValue })
+                  if (!iniSection.trim() || !iniKey.trim() || isPackedIniSection(iniSection)) return
+                  commitEdit('ini', () => {
+                    applyIniEdit(doc, (ini) => { ini.setValue(iniSection.trim(), iniKey.trim(), iniValue) })
                   })
                 }}
               >
@@ -970,7 +1035,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
               >
                 {t('mapEditor.runScript')}
               </button>
-              <pre className="max-h-24 overflow-auto whitespace-pre-wrap text-[11px] text-amber-200" data-testid="map-script-report">{scriptReport}</pre>
+              <pre className="max-h-24 overflow-auto whitespace-pre-wrap text-[11px] text-amber-200" data-testid="map-script-report">{scriptReport || toolsNote}</pre>
             </div>
           )}
           {logicTab === 'tubes' && (

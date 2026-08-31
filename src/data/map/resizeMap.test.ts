@@ -46,6 +46,21 @@ describe('resizeMap', () => {
     expect(resizeMap(doc, 16, 16)).toBeNull()
     expect(doc.units).toHaveLength(0)
   })
+
+  it('shifts cells by FA2 left/top like ResizeMap', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const origin = { rx: 12, ry: 12 }
+    const cell = doc.getCell(origin.rx, origin.ry)
+    cell.tileNum = 7
+    cell.height = 3
+    doc.setCell(cell)
+    doc.setOverlay(origin.rx, origin.ry, 102, 4)
+    expect(resizeMap(doc, 20, 18, { left: 1, top: 2 })).toBeNull()
+    const moved = { rx: origin.rx + (20 - 16) + 2 - 1, ry: origin.ry + 2 + 1 }
+    expect(doc.getCell(moved.rx, moved.ry).tileNum).toBe(7)
+    expect(doc.getCell(moved.rx, moved.ry).height).toBe(3)
+    expect(doc.getOverlay(moved.rx, moved.ry)).toEqual({ id: 102, value: 4 })
+  })
 })
 
 describe('validateMap', () => {

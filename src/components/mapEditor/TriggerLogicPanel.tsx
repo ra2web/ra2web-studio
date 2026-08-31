@@ -172,6 +172,41 @@ const TriggerLogicPanel: React.FC<TriggerLogicPanelProps> = ({ doc, owner, bump 
           <button type="button" className="mt-1 text-[11px] text-sky-400" onClick={() => { trigger.actions.push({ type: 0, params: ['0', '0', '0', '0', '0', '0', '0'] }); bump(doc) }}>+ action</button>
         </div>
       ))}
+      <div className="pt-2 text-xs font-medium text-gray-300">{t('mapEditor.tags')}</div>
+      <div className="space-y-1" data-testid="map-tags-panel">
+        {doc.tags.map((tag, index) => (
+          <div key={tag.id} className="rounded bg-gray-950 p-1 text-[11px]">
+            <input className="w-full rounded bg-gray-800 px-1 py-1" value={tag.name} onChange={(event) => { tag.name = event.target.value; bump(doc) }} />
+            <div className="mt-1 flex gap-1">
+              <select className="min-w-0 flex-1 rounded bg-gray-800 px-1 py-1" value={tag.triggerId} onChange={(event) => { tag.triggerId = event.target.value; bump(doc) }}>
+                {doc.triggers.map((trigger) => <option key={trigger.id} value={trigger.id}>{trigger.name}</option>)}
+              </select>
+              <select className="w-16 rounded bg-gray-800 px-1 py-1" value={tag.repeatType} onChange={(event) => { tag.repeatType = Number(event.target.value); bump(doc) }}>
+                <option value={0}>0</option>
+                <option value={1}>1</option>
+                <option value={2}>2</option>
+              </select>
+              <button type="button" className="text-red-400" onClick={() => { doc.tags.splice(index, 1); bump(doc) }}>×</button>
+            </div>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="rounded bg-gray-800 px-2 py-1 text-xs"
+          onClick={() => {
+            doc.tags.push({
+              id: createMapObjectId(),
+              repeatType: 2,
+              name: 'New Tag',
+              triggerId: doc.triggers[0]?.id ?? '',
+            })
+            bump(doc)
+          }}
+          data-testid="map-add-tag"
+        >
+          {t('mapEditor.addTag')}
+        </button>
+      </div>
     </div>
   )
 }

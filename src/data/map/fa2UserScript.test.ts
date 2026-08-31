@@ -96,4 +96,16 @@ AddInfantry("Americans,E1,256,12,12,0,Guard,0,none,0,-1,0,0,0")
     expect(doc.infantry[0]?.rx).toBe(12)
     expect(doc.infantry[0]?.ry).toBe(12)
   })
+
+  it('resizes with FA2 left/top like Resize(X,Y,NW,NH)', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const cell = doc.getCell(12, 12)
+    cell.tileNum = 7
+    doc.setCell(cell)
+    const result = runUserScript(doc, `Resize("1","2","20","18")`)
+    expect(result.ok).toBe(true)
+    expect(doc.width).toBe(20)
+    expect(doc.height).toBe(18)
+    expect(doc.getCell(12 + (20 - 16) + 2 - 1, 12 + 2 + 1).tileNum).toBe(7)
+  })
 })

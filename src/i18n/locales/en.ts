@@ -896,6 +896,14 @@ export const en = {
     heightRect: 'Rectangular height brush (FA2 HeightenTile)',
     extraIni: 'Extra INI',
     setIniKey: 'Set INI key',
+    resizeLeft: 'Left offset',
+    resizeTop: 'Top offset',
+    slopeCorrection: 'Slope correction (FA2 CreateSlopesAt)',
+    changeMapHeight: 'Change map height',
+    applyHeight: 'Apply',
+    iniEditor: 'INI editor',
+    tags: 'Tags',
+    addTag: 'Add tag',
   },
 
   map: {

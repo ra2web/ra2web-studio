@@ -24,7 +24,8 @@
 | P8 TMP 与朝向 | `map-editor-p8-tmp-facing` | 从剧院 TMP 读 Shore/Cliff 目录与 bZHeight；SmoothAt `its!=iss`；VXL/SHP 地格预览按朝向（HVA frame 0） |
 | P9 矿石与矿脉 | `map-editor-p9-ore-veins` | FA2 SmoothTiberium、宝石、VeinHole/Veins、AllowTiberium |
 | P10 脚本与地图工具 | `map-editor-p10-scripts-tools` | FA2 UserScripts 解析/解释器、VariableNames 面板、全图 AutoCreateShores、搜索航点、矩形 HeightenTile、附加 INI |
-| P11 测试与交付 | `map-editor-p11-tests` | 单元 + 组件 + e2e；阶段 tag 齐全；对照 FA2 剩余编辑面 |
+| P11 坡度与改尺寸 | `map-editor-p11-slopes-resize` | FA2 CreateSlopesAt、ResizeMap left/top、全图改高度、CAll 式 INI 编辑、Tags 面板 |
+| P12 测试与交付 | `map-editor-p12-tests` | 单元 + 组件 + e2e；阶段 tag 齐全；对照 FA2 剩余编辑面 |
 
 ## 验收标准
 
@@ -42,10 +43,9 @@
 - 游戏内 Play 启动
 - 完整 Marble Madness 美术替换（可保留开关位）
 
-## 对照 FA2 仍待移植（P11+）
+## 对照 FA2 仍待移植（P12+）
 
 - AutoLevel（IsoView 沿崖块抬高 morphable 格，依赖 TMP `bMorphable` / ChangeTileHeight）
-- FA2 ResizeMap 的 left/top 平移（当前只改宽高）
 - UserScripts 交互命令（Message / Ask / UInput* / AddTrigger）
 - 真 `marble.mix` Marble Madness 美术
 - FA2 其余编辑面未覆盖项（以 IsoView / 菜单对照）

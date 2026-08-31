@@ -908,6 +908,14 @@ export const zh = {
     heightRect: '矩形高程刷（FA2 HeightenTile）',
     extraIni: '附加 INI',
     setIniKey: '写入 INI',
+    resizeLeft: '左侧偏移',
+    resizeTop: '上侧偏移',
+    slopeCorrection: '坡度修正（FA2 CreateSlopesAt）',
+    changeMapHeight: '全图改高度',
+    applyHeight: '应用',
+    iniEditor: 'INI 编辑',
+    tags: '标签',
+    addTag: '添加标签',
   },
 
   // MapViewer

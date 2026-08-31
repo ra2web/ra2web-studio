@@ -21,6 +21,8 @@ export type TheaterTileSetInfo = {
   marbleMadnessSet: number
   /** theater.ini `AllowTiberium=true`；FA2 矿石笔刷只刷这类集。 */
   allowTiberium: boolean
+  /** theater.ini `Morphable=true`；FA2 抬高/降低与 CreateSlopesAt 只改这类瓦片。 */
+  morphable: boolean
 }
 
 export type TheaterIndex = {
@@ -47,6 +49,7 @@ export function parseTheaterIni(text: string): TheaterIndex {
     const marbleRaw = section.entries.find((item) => item.key.toLowerCase() === 'marblemadness')?.value
     const marbleMadnessSet = marbleRaw !== undefined && marbleRaw !== '' ? Number(marbleRaw) : -1
     const allowRaw = section.entries.find((item) => item.key.toLowerCase() === 'allowtiberium')?.value
+    const morphRaw = section.entries.find((item) => item.key.toLowerCase() === 'morphable')?.value
     sets.push({
       setIndex,
       fileName,
@@ -55,6 +58,7 @@ export function parseTheaterIni(text: string): TheaterIndex {
       startTileNum: tileNum,
       marbleMadnessSet: Number.isFinite(marbleMadnessSet) ? marbleMadnessSet : -1,
       allowTiberium: allowRaw?.trim().toLowerCase() === 'true',
+      morphable: morphRaw?.trim().toLowerCase() === 'true',
     })
     tileNum += tilesInSet
   }
@@ -107,6 +111,10 @@ export class TheaterRules {
 
   allowsTiberium(tileNum: number): boolean {
     return tileNumToSet(this.index, tileNum)?.allowTiberium === true
+  }
+
+  isMorphable(tileNum: number): boolean {
+    return tileNumToSet(this.index, tileNum)?.morphable === true
   }
 
   getTileNumFromSet(setNum: number, tileIndex = 0): number {

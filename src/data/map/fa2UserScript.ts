@@ -611,7 +611,7 @@ export function runUserScript(
         const width = atoi(params[2])
         const height = atoi(params[3])
         if (width > 200 || height > 200) return fail('Resizing map failed')
-        const error = resizeMap(doc, width, height)
+        const error = resizeMap(doc, width, height, { left: atoi(params[0]), top: atoi(params[1]) })
         if (error) return fail(error)
         break
       }

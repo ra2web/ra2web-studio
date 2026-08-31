@@ -78,6 +78,7 @@ describe('parseTheaterIni', () => {
     expect(index.sets[1].startTileNum).toBe(1)
     expect(index.general.SandTile).toBe(1)
     expect(index.sets[0].marbleMadnessSet).toBe(-1)
+    expect(index.sets[0].morphable).toBe(false)
     expect(tmpFileName(index.sets[0], 0, '.tem')).toBe('clear01.tem')
     expect(new TheaterRules(index).getCLATSet(1)).toBe(2)
   })
@@ -97,6 +98,18 @@ TilesInSet=1
 `)
     expect(index.sets[0].marbleMadnessSet).toBe(1)
     expect(marbleTileNum(index, 0)).toBe(1)
+  })
+
+  it('reads Morphable from theater.ini like FA2 Loading.cpp', () => {
+    const index = parseTheaterIni(`
+[TileSet0000]
+FileName=CLEAR
+SetName=Clear
+TilesInSet=1
+Morphable=true
+`)
+    expect(index.sets[0].morphable).toBe(true)
+    expect(new TheaterRules(index).isMorphable(0)).toBe(true)
   })
 })
 
