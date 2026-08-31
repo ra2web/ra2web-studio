@@ -150,15 +150,22 @@ const MapViewport: React.FC<MapViewportProps> = ({
         ctx.fillStyle = fill
         ctx.fill()
       }
-      if (overlay.id !== EMPTY_OVERLAY && pixels) {
-        ctx.fillStyle = overlay.id >= 102 && overlay.id <= 166 ? 'rgba(212,160,23,0.45)' : 'rgba(100,116,139,0.45)'
-        ctx.beginPath()
-        ctx.moveTo(origin.px, origin.py)
-        ctx.lineTo(origin.px + RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
-        ctx.lineTo(origin.px, origin.py + RA2_ISO_TILE_HEIGHT)
-        ctx.lineTo(origin.px - RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
-        ctx.closePath()
-        ctx.fill()
+      if (overlay.id !== EMPTY_OVERLAY) {
+        const ovl = theaterArt?.peekOverlay(overlay.id, overlay.value)
+        if (ovl === undefined) theaterArt?.requestOverlay(overlay.id, overlay.value)
+        if (ovl) {
+          const sprite = tileCanvas(tileCacheRef.current, `ovl:${overlay.id}:${overlay.value}`, ovl)
+          ctx.drawImage(sprite, origin.px - ovl.width / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2 - ovl.height)
+        } else if (pixels) {
+          ctx.fillStyle = overlay.id >= 102 && overlay.id <= 166 ? 'rgba(212,160,23,0.45)' : 'rgba(100,116,139,0.45)'
+          ctx.beginPath()
+          ctx.moveTo(origin.px, origin.py)
+          ctx.lineTo(origin.px + RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
+          ctx.lineTo(origin.px, origin.py + RA2_ISO_TILE_HEIGHT)
+          ctx.lineTo(origin.px - RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
+          ctx.closePath()
+          ctx.fill()
+        }
       }
       if (selected && selected.rx === rx && selected.ry === ry) {
         ctx.beginPath()
@@ -173,9 +180,18 @@ const MapViewport: React.FC<MapViewportProps> = ({
       }
     })
 
-    const mark = (rx: number, ry: number, color: string, label?: string) => {
+    const mark = (rx: number, ry: number, color: string, label?: string, objectName?: string) => {
       const cell = doc.getCell(rx, ry)
       const origin = projectCell(rx, ry, cell.height, doc.isoSize)
+      if (objectName) {
+        const sprite = theaterArt?.peekObject(objectName)
+        if (sprite === undefined) theaterArt?.requestObject(objectName)
+        if (sprite) {
+          const canvasSprite = tileCanvas(tileCacheRef.current, `obj:${objectName}`, sprite)
+          ctx.drawImage(canvasSprite, origin.px - sprite.width / 2, origin.py + 16 - sprite.height)
+          return
+        }
+      }
       ctx.fillStyle = color
       ctx.beginPath()
       ctx.arc(origin.px, origin.py + 10, 5, 0, Math.PI * 2)
@@ -188,11 +204,11 @@ const MapViewport: React.FC<MapViewportProps> = ({
       }
     }
 
-    for (const unit of doc.units) mark(unit.rx, unit.ry, '#60a5fa', unit.name)
-    for (const inf of doc.infantry) mark(inf.rx, inf.ry, '#34d399', inf.name)
-    for (const air of doc.aircraft) mark(air.rx, air.ry, '#c084fc', air.name)
-    for (const building of doc.structures) mark(building.rx, building.ry, '#fb7185', building.name)
-    for (const terrain of doc.terrains) mark(terrain.rx, terrain.ry, '#4ade80', terrain.name)
+    for (const unit of doc.units) mark(unit.rx, unit.ry, '#60a5fa', unit.name, unit.name)
+    for (const inf of doc.infantry) mark(inf.rx, inf.ry, '#34d399', inf.name, inf.name)
+    for (const air of doc.aircraft) mark(air.rx, air.ry, '#c084fc', air.name, air.name)
+    for (const building of doc.structures) mark(building.rx, building.ry, '#fb7185', building.name, building.name)
+    for (const terrain of doc.terrains) mark(terrain.rx, terrain.ry, '#4ade80', terrain.name, terrain.name)
     for (const smudge of doc.smudges) mark(smudge.rx, smudge.ry, '#a8a29e')
     for (const waypoint of doc.waypoints) {
       mark(waypoint.rx, waypoint.ry, '#facc15', String(waypoint.number))

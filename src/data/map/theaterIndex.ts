@@ -2,13 +2,13 @@ import { pad } from '../../util/string'
 import { MapIni } from './MapIni'
 import type { MapTheater } from './constants'
 
-export const THEATER_ASSETS: Record<MapTheater, { ini: string; pal: string; ext: string }> = {
-  TEMPERATE: { ini: 'temperat.ini', pal: 'isotem.pal', ext: '.tem' },
-  SNOW: { ini: 'snow.ini', pal: 'isosno.pal', ext: '.sno' },
-  URBAN: { ini: 'urban.ini', pal: 'isourb.pal', ext: '.urb' },
-  NEWURBAN: { ini: 'urbann.ini', pal: 'isoubn.pal', ext: '.ubn' },
-  LUNAR: { ini: 'lunar.ini', pal: 'isolun.pal', ext: '.lun' },
-  DESERT: { ini: 'desert.ini', pal: 'isodes.pal', ext: '.des' },
+export const THEATER_ASSETS: Record<MapTheater, { ini: string; pal: string; ext: string; unitPal: string; overlayPal: string; newTheaterChar: string }> = {
+  TEMPERATE: { ini: 'temperat.ini', pal: 'isotem.pal', ext: '.tem', unitPal: 'unittem.pal', overlayPal: 'isotem.pal', newTheaterChar: 'T' },
+  SNOW: { ini: 'snow.ini', pal: 'isosno.pal', ext: '.sno', unitPal: 'unitsno.pal', overlayPal: 'isosno.pal', newTheaterChar: 'A' },
+  URBAN: { ini: 'urban.ini', pal: 'isourb.pal', ext: '.urb', unitPal: 'uniturb.pal', overlayPal: 'isourb.pal', newTheaterChar: 'U' },
+  NEWURBAN: { ini: 'urbann.ini', pal: 'isoubn.pal', ext: '.ubn', unitPal: 'unitubn.pal', overlayPal: 'isoubn.pal', newTheaterChar: 'N' },
+  LUNAR: { ini: 'lunar.ini', pal: 'isolun.pal', ext: '.lun', unitPal: 'unitlun.pal', overlayPal: 'isolun.pal', newTheaterChar: 'L' },
+  DESERT: { ini: 'desert.ini', pal: 'isodes.pal', ext: '.des', unitPal: 'unitdes.pal', overlayPal: 'isodes.pal', newTheaterChar: 'D' },
 }
 
 export type TheaterTileSetInfo = {

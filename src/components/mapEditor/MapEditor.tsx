@@ -123,6 +123,10 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     return () => { cancelled = true }
   }, [resourceContext])
 
+  useEffect(() => {
+    if (theaterArt) theaterArt.overlayNames = rulesLists.overlays
+  }, [rulesLists.overlays, theaterArt])
+
   const handlePaint = useCallback((rx: number, ry: number) => {
     const working = doc
     switch (tool) {
