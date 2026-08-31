@@ -33,8 +33,25 @@ export const ORE_RANGES = {
 
 export const OVRL_VEINS = 0x7e
 export const OVRL_VEINHOLE = 0xa7
+export const OVRL_VEINHOLEBORDER = 0xb2
 export const OVRL_TRACK_BEGIN = 0x27
 export const OVRL_TRACK_END = 0x36
+
+/** FA2 `Defines.h` 矿石 Overlay 区间。 */
+export const RIPARIUS_BEGIN = 102
+export const RIPARIUS_END = 121
+export const CRUENTUS_BEGIN = 27
+export const CRUENTUS_END = 38
+export const VINIFERA_BEGIN = 127
+export const VINIFERA_END = 146
+export const ABOREUS_BEGIN = 147
+export const ABOREUS_END = 166
+
+/** FA2 IsoView DrawTib / DrawTib2 固定件。 */
+export const FA2_ORE_RIPARIUS_FIXED = 0x70
+export const FA2_ORE_RIPARIUS_RANDOM_BASE = 0x68
+export const FA2_ORE_GEMS = 0x1e
+export const FA2_VEINS_DATA = 0x30
 
 export const DEFAULT_HOUSE_NAMES = [
   'Neutral',

@@ -1,4 +1,3 @@
-import { EMPTY_OVERLAY, ORE_RANGES } from './constants'
 import { MapDocument, createMapObjectId } from './MapDocument'
 
 export type MapEditorTool =
@@ -10,6 +9,9 @@ export type MapEditorTool =
   | 'tile'
   | 'overlay'
   | 'ore'
+  | 'gems'
+  | 'veinhole'
+  | 'veins'
   | 'eraseOverlay'
   | 'infantry'
   | 'unit'
@@ -33,10 +35,12 @@ export type MapEditorTool =
   | 'randomTerrain'
 
 export const TERRAIN_TOOLS: MapEditorTool[] = ['raise', 'lower', 'flatten', 'tile', 'cliff', 'cliffFront', 'cliffBack', 'shore']
-export const OVERLAY_TOOLS: MapEditorTool[] = ['overlay', 'ore', 'eraseOverlay', 'wall', 'bridge']
+export const OVERLAY_TOOLS: MapEditorTool[] = ['overlay', 'ore', 'gems', 'veinhole', 'veins', 'eraseOverlay', 'wall', 'bridge']
 export const OBJECT_TOOLS: MapEditorTool[] = [
   'infantry', 'unit', 'aircraft', 'structure', 'terrain', 'smudge', 'waypoint', 'celltag', 'eraseObject', 'randomTerrain',
 ]
+
+export { applyOreBrush, clearOverlay, placeVeinhole, placeVeins } from './fa2Ore'
 
 const FALLBACK_RANDOM_TERRAIN = ['TREE01', 'TREE02', 'TREE03', 'TREE04', 'TREE05', 'TREE06', 'TREE07']
 
@@ -56,16 +60,6 @@ export function placeRandomTerrain(
   if (!name) return false
   doc.terrains.push({ id: createMapObjectId(), name, rx, ry })
   return true
-}
-
-export function applyOreBrush(doc: MapDocument, rx: number, ry: number, density = 11): void {
-  const [from, to] = ORE_RANGES.riparius
-  const id = Math.min(to, from + Math.max(0, Math.min(density, to - from)))
-  doc.setOverlay(rx, ry, id, density)
-}
-
-export function clearOverlay(doc: MapDocument, rx: number, ry: number): void {
-  doc.setOverlay(rx, ry, EMPTY_OVERLAY, 0)
 }
 
 export function isTouchLikeEvent(event: { pointerType?: string }): boolean {

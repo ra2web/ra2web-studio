@@ -3,7 +3,14 @@ import { base64StringToUint8Array, uint8ArrayToBase64String } from '../../util/s
 import {
   EMPTY_OVERLAY,
   OVERLAY_PLANE_SIZE,
+  OVRL_VEINHOLE,
+  OVRL_VEINHOLEBORDER,
+  OVRL_VEINS,
   PLAYABLE_HOUSES,
+  CRUENTUS_BEGIN,
+  CRUENTUS_END,
+  RIPARIUS_BEGIN,
+  RIPARIUS_END,
   houseNamesForMode,
   overlayIndex,
   type MapTheater,
@@ -486,8 +493,12 @@ export class MapDocument {
         let g = shade + 20
         let b = shade - 10
         if (overlay.id !== EMPTY_OVERLAY) {
-          if (overlay.id >= 102 && overlay.id <= 121) {
+          if (overlay.id >= RIPARIUS_BEGIN && overlay.id <= RIPARIUS_END) {
             r = 220; g = 180; b = 40
+          } else if (overlay.id >= CRUENTUS_BEGIN && overlay.id <= CRUENTUS_END) {
+            r = 80; g = 160; b = 220
+          } else if (overlay.id === OVRL_VEINS || overlay.id === OVRL_VEINHOLE || overlay.id === OVRL_VEINHOLEBORDER) {
+            r = 165; g = 160; b = 120
           } else {
             r = 90; g = 90; b = 90
           }

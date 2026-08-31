@@ -19,6 +19,8 @@ export type TheaterTileSetInfo = {
   startTileNum: number
   /** theater.ini MarbleMadness 指向的 TileSet 序号；-1 表示无。 */
   marbleMadnessSet: number
+  /** theater.ini `AllowTiberium=true`；FA2 矿石笔刷只刷这类集。 */
+  allowTiberium: boolean
 }
 
 export type TheaterIndex = {
@@ -44,6 +46,7 @@ export function parseTheaterIni(text: string): TheaterIndex {
     const tilesInSet = Number(section.entries.find((item) => item.key.toLowerCase() === 'tilesinset')?.value ?? '0') || 0
     const marbleRaw = section.entries.find((item) => item.key.toLowerCase() === 'marblemadness')?.value
     const marbleMadnessSet = marbleRaw !== undefined && marbleRaw !== '' ? Number(marbleRaw) : -1
+    const allowRaw = section.entries.find((item) => item.key.toLowerCase() === 'allowtiberium')?.value
     sets.push({
       setIndex,
       fileName,
@@ -51,6 +54,7 @@ export function parseTheaterIni(text: string): TheaterIndex {
       tilesInSet,
       startTileNum: tileNum,
       marbleMadnessSet: Number.isFinite(marbleMadnessSet) ? marbleMadnessSet : -1,
+      allowTiberium: allowRaw?.trim().toLowerCase() === 'true',
     })
     tileNum += tilesInSet
   }
@@ -99,6 +103,10 @@ export class TheaterRules {
 
   getSetNum(tileNum: number): number {
     return tileNumToSet(this.index, tileNum)?.setIndex ?? 0
+  }
+
+  allowsTiberium(tileNum: number): boolean {
+    return tileNumToSet(this.index, tileNum)?.allowTiberium === true
   }
 
   getTileNumFromSet(setNum: number, tileIndex = 0): number {

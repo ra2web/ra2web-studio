@@ -7,7 +7,7 @@ import NewMapDialog from './NewMapDialog'
 
 vi.mock('./MapViewport', () => ({
   default: ({ onPaint }: { onPaint: (rx: number, ry: number) => void }) => (
-    <button type="button" data-testid="map-viewport" onClick={() => onPaint(8, 8)}>viewport</button>
+    <button type="button" data-testid="map-viewport" onClick={() => onPaint(12, 12)}>viewport</button>
   ),
 }))
 
@@ -40,6 +40,8 @@ describe('MapEditor', () => {
     expect(screen.getByText(/^桥$|^Bridge$/)).toBeInTheDocument()
     expect(screen.getByText(/^墙$|^Wall$/)).toBeInTheDocument()
     expect(screen.getByText(/随机地形物|Random terrain/)).toBeInTheDocument()
+    expect(screen.getByText(/^宝石$|^Gems$/)).toBeInTheDocument()
+    expect(screen.getByText(/矿脉洞|Veinhole/)).toBeInTheDocument()
   })
 
   it('paints ore through the viewport and keeps overlay', () => {
@@ -51,7 +53,7 @@ describe('MapEditor', () => {
     fireEvent.click(screen.getByText(/矿石|Ore/))
     fireEvent.click(screen.getByTestId('map-viewport'))
     expect(onChange).toHaveBeenCalled()
-    const overlay = session.document.getOverlay(8, 8)
+    const overlay = session.document.getOverlay(12, 12)
     expect(overlay.id).not.toBe(255)
   })
 

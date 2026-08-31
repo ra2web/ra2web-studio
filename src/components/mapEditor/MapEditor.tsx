@@ -10,7 +10,7 @@ import { Fa2Tube, nextTubeId } from '../../data/map/fa2Tube'
 import { applyLatAt } from '../../data/map/lat'
 import { MapCommandStack, flattenHeight, paintHeight, paintTile } from '../../data/map/MapCommandStack'
 import { MapDocument, createMapObjectId } from '../../data/map/MapDocument'
-import { applyOreBrush, clearOverlay, OBJECT_TOOLS, placeRandomTerrain, type MapEditorTool } from '../../data/map/mapTools'
+import { applyOreBrush, clearOverlay, OBJECT_TOOLS, placeRandomTerrain, placeVeinhole, placeVeins, type MapEditorTool } from '../../data/map/mapTools'
 import { FA2_WALL_OVERLAYS, handleTrail, placeBridgeLine, refreshTrailsAround, type BridgeKind } from '../../data/map/overlayTools'
 import { validateMap } from '../../data/map/mapValidate'
 import { resizeMap } from '../../data/map/resizeMap'
@@ -41,6 +41,9 @@ const TOOLS: { id: MapEditorTool; labelKey: string }[] = [
   { id: 'flatten', labelKey: 'mapEditor.toolFlatten' },
   { id: 'tile', labelKey: 'mapEditor.toolTile' },
   { id: 'ore', labelKey: 'mapEditor.toolOre' },
+  { id: 'gems', labelKey: 'mapEditor.toolGems' },
+  { id: 'veinhole', labelKey: 'mapEditor.toolVeinhole' },
+  { id: 'veins', labelKey: 'mapEditor.toolVeins' },
   { id: 'overlay', labelKey: 'mapEditor.toolOverlay' },
   { id: 'eraseOverlay', labelKey: 'mapEditor.toolEraseOverlay' },
   { id: 'infantry', labelKey: 'mapEditor.toolInfantry' },
@@ -99,6 +102,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [marbleMadness, setMarbleMadness] = useState(false)
   const [bridgeKind, setBridgeKind] = useState<BridgeKind>('small')
   const [tubeBidirectional, setTubeBidirectional] = useState(true)
+  const [oreRandom, setOreRandom] = useState(false)
   const [selectionRect, setSelectionRect] = useState<MapCopyRect | null>(null)
   const [viewSize, setViewSize] = useState({ w: 800, h: 600 })
   const viewRef = useRef<HTMLDivElement | null>(null)
@@ -178,7 +182,26 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         }
         break
       case 'ore':
-        applyOreBrush(working, rx, ry)
+        applyOreBrush(working, rx, ry, {
+          kind: 'riparius',
+          style: oreRandom ? 'random' : 'fixed',
+          brush,
+          theater: theaterArt?.index,
+        })
+        break
+      case 'gems':
+        applyOreBrush(working, rx, ry, {
+          kind: 'gems',
+          style: oreRandom ? 'random' : 'fixed',
+          brush,
+          theater: theaterArt?.index,
+        })
+        break
+      case 'veinhole':
+        placeVeinhole(working, rx, ry)
+        break
+      case 'veins':
+        placeVeins(working, rx, ry, brush)
         break
       case 'overlay':
       case 'wall':
@@ -186,7 +209,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         handleTrail(working, rx, ry)
         break
       case 'eraseOverlay':
-        clearOverlay(working, rx, ry)
+        clearOverlay(working, rx, ry, brush)
         refreshTrailsAround(working, rx, ry)
         break
       case 'infantry':
@@ -313,7 +336,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     }
     setSelected({ rx, ry })
     bump(working)
-  }, [autoLat, bridgeKind, brush, bump, doc, objectName, overlayId, owner, rulesLists.terrain, theaterArt, tileNum, tool, tubeBidirectional])
+  }, [autoLat, bridgeKind, brush, bump, doc, objectName, oreRandom, overlayId, owner, rulesLists.terrain, theaterArt, tileNum, tool, tubeBidirectional])
 
   const strokeRef = useRef<{ commit: () => void } | null>(null)
   const handleStrokeStart = useCallback(() => {
@@ -481,6 +504,12 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
               <input type="checkbox" checked={tubeBidirectional} onChange={(event) => setTubeBidirectional(event.target.checked)} data-testid="map-tube-bidirectional" />
               {t('mapEditor.tubeBidirectional')}
+            </label>
+          )}
+          {(tool === 'ore' || tool === 'gems') && (
+            <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
+              <input type="checkbox" checked={oreRandom} onChange={(event) => setOreRandom(event.target.checked)} data-testid="map-ore-random" />
+              {t('mapEditor.oreRandom')}
             </label>
           )}
           <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
@@ -803,6 +832,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
               <p className="text-xs text-gray-400">{t('mapEditor.bridgeHint')}</p>
               <p className="text-xs text-gray-400">{t('mapEditor.cliffHint')}</p>
               <p className="text-xs text-gray-400">{t('mapEditor.shoreHint')}</p>
+              <p className="text-xs text-gray-400">{t('mapEditor.oreHint')}</p>
               <p className="text-xs text-gray-400">{t('mapEditor.copyHint')}</p>
             </div>
           )}
