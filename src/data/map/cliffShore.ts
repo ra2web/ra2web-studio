@@ -1,6 +1,8 @@
 import { isValidIsoCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
 import { TheaterRules, type TheaterIndex } from './theaterIndex'
+import { placeFa2Cliff } from './fa2Cliff'
+import type { MapTheater } from './constants'
 
 function bresenham(x0: number, y0: number, x1: number, y1: number): Array<{ rx: number; ry: number }> {
   const points: Array<{ rx: number; ry: number }> = []
@@ -27,14 +29,19 @@ function bresenham(x0: number, y0: number, x1: number, y1: number): Array<{ rx: 
   return points
 }
 
-/** 沿两点放置 CliffSet 瓦片并抬高，对应 FA2 Front/Back cliff 的简化线刷。 */
+/** 沿两点放置 CliffSet。优先 FA2 Front/Back modifier，失败则回退为线刷。 */
 export function placeCliffLine(
   doc: MapDocument,
   from: { rx: number; ry: number },
   to: { rx: number; ry: number },
   theater: TheaterIndex,
   heightDelta = 4,
+  face: 'front' | 'back' = 'front',
+  theaterName: MapTheater = 'TEMPERATE',
 ): void {
+  if (placeFa2Cliff(doc, from, to, theater, theaterName, { face, pick: (tiles) => tiles[0] ?? -1 })) {
+    return
+  }
   const rules = new TheaterRules(theater)
   const cliffSet = rules.getGeneralValue('CliffSet')
   if (cliffSet < 0) return

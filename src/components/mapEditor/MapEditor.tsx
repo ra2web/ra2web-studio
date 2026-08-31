@@ -52,6 +52,8 @@ const TOOLS: { id: MapEditorTool; labelKey: string }[] = [
   { id: 'eraseObject', labelKey: 'mapEditor.toolEraseObject' },
   { id: 'tube', labelKey: 'mapEditor.toolTube' },
   { id: 'cliff', labelKey: 'mapEditor.toolCliff' },
+  { id: 'cliffFront', labelKey: 'mapEditor.toolCliffFront' },
+  { id: 'cliffBack', labelKey: 'mapEditor.toolCliffBack' },
   { id: 'shore', labelKey: 'mapEditor.toolShore' },
   { id: 'basenode', labelKey: 'mapEditor.toolBaseNode' },
   { id: 'copy', labelKey: 'mapEditor.toolCopy' },
@@ -244,10 +246,13 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         }
         break
       case 'cliff':
+      case 'cliffFront':
+      case 'cliffBack':
         if (!cliffStartRef.current) {
           cliffStartRef.current = { rx, ry }
         } else if (theaterArt?.index) {
-          placeCliffLine(working, cliffStartRef.current, { rx, ry }, theaterArt.index)
+          const face = tool === 'cliffBack' ? 'back' : 'front'
+          placeCliffLine(working, cliffStartRef.current, { rx, ry }, theaterArt.index, 4, face, doc.theater)
           cliffStartRef.current = null
         }
         break
@@ -293,7 +298,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
       }
       return
     }
-    if (OBJECT_TOOLS.includes(tool) || tool === 'tube' || tool === 'cliff' || tool === 'basenode' || tool === 'paste') {
+    if (OBJECT_TOOLS.includes(tool) || tool === 'tube' || tool === 'cliff' || tool === 'cliffFront' || tool === 'cliffBack' || tool === 'basenode' || tool === 'paste') {
       const before = doc.toIniString()
       strokeRef.current = {
         commit: () => {

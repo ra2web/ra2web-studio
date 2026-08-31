@@ -1,6 +1,7 @@
 import { isValidIsoCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
 import { TheaterRules, type TheaterIndex } from './theaterIndex'
+import { smoothAllAround } from './fa2Smooth'
 
 /** 与 werhd TileDirection 一致的四向（等距菱形邻格）。 */
 export const IsoDir = {
@@ -125,4 +126,6 @@ export function applyLatAt(doc: MapDocument, rx: number, ry: number, theater: Th
     cell.tileNum = tile.tileNum
     doc.setCell(cell)
   }
+  /** FA2 PlaceTile 在笔刷周围调用 SmoothAllAt，覆盖 werhd LAT 编号以对齐编辑器。 */
+  smoothAllAround(doc, rx, ry, theater, radius + 1)
 }
