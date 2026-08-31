@@ -33,8 +33,8 @@ describe('MapEditor', () => {
     )
     expect(screen.getByTestId('map-editor')).toBeInTheDocument()
     expect(screen.getByText(/抬高地形|Raise ground/)).toBeInTheDocument()
-    expect(screen.getByText(/触发器|Triggers/)).toBeInTheDocument()
-    expect(screen.getByText(/阵营|Houses/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /触发器|Triggers/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /阵营|Houses/ })).toBeInTheDocument()
     expect(screen.getByTestId('map-minimap')).toBeInTheDocument()
     expect(screen.getByText(/复制区域|Copy region/)).toBeInTheDocument()
   })
@@ -52,11 +52,20 @@ describe('MapEditor', () => {
     expect(overlay.id).not.toBe(255)
   })
 
+  it('exposes house color and playerControl', () => {
+    renderWithProviders(
+      <MapEditor session={makeSession()} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /阵营|Houses/ }))
+    expect(screen.getByTestId('map-houses-panel').textContent).toMatch(/PlayerControl/)
+    expect(screen.getByTestId('map-houses-panel').textContent).toMatch(/color/i)
+  })
+
   it('exposes SpecialFlags under lighting', () => {
     renderWithProviders(
       <MapEditor session={makeSession()} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
     )
-    fireEvent.click(screen.getByText(/光照|Lighting/))
+    fireEvent.click(screen.getByRole('button', { name: /光照|Lighting/ }))
     expect(screen.getByTestId('map-special-flags')).toBeInTheDocument()
   })
 
@@ -64,7 +73,7 @@ describe('MapEditor', () => {
     renderWithProviders(
       <MapEditor session={makeSession()} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
     )
-    fireEvent.click(screen.getByText(/触发器|Triggers/))
+    fireEvent.click(screen.getByRole('button', { name: /触发器|Triggers/ }))
     fireEvent.click(screen.getByText(/添加触发器|Add trigger/))
     expect(await screen.findByTestId('map-event-type')).toBeInTheDocument()
     expect(screen.getByTestId('map-tileset-browser')).toBeInTheDocument()

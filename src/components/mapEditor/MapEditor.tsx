@@ -515,16 +515,45 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
               </ul>
               <div className="text-xs font-medium text-gray-300">{t('mapEditor.objectProps')}</div>
               <ObjectInspector doc={doc} selected={selected} bump={bump} />
+              <div className="pt-2 text-xs font-medium text-gray-300">Basic flags</div>
+              {([
+                'multiplayerOnly', 'official', 'skipScore', 'oneTimeOnly', 'skipMapSelect', 'endOfGame',
+                'truckCrate', 'trainCrate', 'tiberiumGrowthEnabled', 'veinGrowthEnabled', 'iceGrowthEnabled',
+                'tiberiumDeathToVisceroid', 'freeRadar', 'ignoreGlobalAITriggers',
+              ] as const).map((key) => (
+                <label key={key} className="flex items-center gap-2 text-[11px] text-gray-400">
+                  <input type="checkbox" checked={doc.basic[key]} onChange={(event) => { doc.basic[key] = event.target.checked; bump(doc) }} />
+                  {key}
+                </label>
+              ))}
             </div>
           )}
           {logicTab === 'lighting' && (
             <div className="space-y-2 text-sm">
-              {(['ambient', 'level', 'red', 'green', 'blue'] as const).map((key) => (
+              <div className="text-xs font-medium text-gray-300">Lighting</div>
+              {(['ambient', 'level', 'red', 'green', 'blue', 'ground'] as const).map((key) => (
                 <label key={key} className="block capitalize">
                   {key}
                   <input type="number" step="0.01" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={doc.lighting[key]} onChange={(event) => { doc.lighting[key] = Number(event.target.value); bump(doc) }} />
                 </label>
               ))}
+              <div className="pt-2 text-xs font-medium text-gray-300">IonLighting</div>
+              {(['ambient', 'level', 'red', 'green', 'blue', 'ground'] as const).map((key) => (
+                <label key={`ion-${key}`} className="block capitalize">
+                  Ion {key}
+                  <input type="number" step="0.01" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={doc.ionLighting[key]} onChange={(event) => { doc.ionLighting[key] = Number(event.target.value); bump(doc) }} />
+                </label>
+              ))}
+              <div className="pt-2 text-xs font-medium text-gray-300">DominatorLighting</div>
+              {(['ambient', 'level', 'red', 'green', 'blue', 'ground'] as const).map((key) => (
+                <label key={`dom-${key}`} className="block capitalize">
+                  Dominator {key}
+                  <input type="number" step="0.01" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={doc.dominatorLighting[key]} onChange={(event) => { doc.dominatorLighting[key] = Number(event.target.value); bump(doc) }} />
+                </label>
+              ))}
+              <label className="block text-xs">DominatorAmbientChangeRate
+                <input type="number" step="0.001" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={doc.dominatorAmbientChangeRate} onChange={(event) => { doc.dominatorAmbientChangeRate = Number(event.target.value); bump(doc) }} />
+              </label>
               <div className="pt-2 text-xs font-medium text-gray-300">{t('mapEditor.specialFlags')}</div>
               <div className="space-y-1" data-testid="map-special-flags">
                 {(Object.keys(doc.specialFlags) as Array<keyof typeof doc.specialFlags>).map((key) => (
@@ -541,18 +570,27 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             </div>
           )}
           {logicTab === 'houses' && (
-            <div className="space-y-2 text-sm">
+            <div className="space-y-2 text-sm" data-testid="map-houses-panel">
               {doc.houses.map((house, index) => (
                 <div key={house.name} className="rounded border border-gray-800 p-2">
                   <div className="font-medium">{house.name}</div>
-                  <label className="mt-1 block text-xs">Credits
-                    <input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={house.credits} onChange={(event) => { doc.houses[index].credits = Number(event.target.value); bump(doc) }} />
+                  {(['credits', 'iq', 'techLevel', 'actsLike', 'percentBuilt'] as const).map((key) => (
+                    <label key={key} className="mt-1 block text-xs capitalize">{key}
+                      <input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={house[key]} onChange={(event) => { doc.houses[index][key] = Number(event.target.value); bump(doc) }} />
+                    </label>
+                  ))}
+                  {(['color', 'allies', 'edge', 'country', 'parentCountry'] as const).map((key) => (
+                    <label key={key} className="mt-1 block text-xs capitalize">{key}
+                      <input className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={house[key]} onChange={(event) => { doc.houses[index][key] = event.target.value; bump(doc) }} />
+                    </label>
+                  ))}
+                  <label className="mt-1 flex items-center gap-2 text-xs">
+                    <input type="checkbox" checked={house.playerControl} onChange={(event) => { house.playerControl = event.target.checked; bump(doc) }} />
+                    PlayerControl
                   </label>
-                  <label className="mt-1 block text-xs">IQ
-                    <input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={house.iq} onChange={(event) => { doc.houses[index].iq = Number(event.target.value); bump(doc) }} />
-                  </label>
-                  <label className="mt-1 block text-xs">TechLevel
-                    <input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={house.techLevel} onChange={(event) => { doc.houses[index].techLevel = Number(event.target.value); bump(doc) }} />
+                  <label className="mt-1 flex items-center gap-2 text-xs">
+                    <input type="checkbox" checked={house.smartAI} onChange={(event) => { house.smartAI = event.target.checked; bump(doc) }} />
+                    SmartAI
                   </label>
                   <div className="mt-1 text-[11px] text-gray-400">Nodes: {house.nodes.length}</div>
                   {house.nodes.map((node, nodeIndex) => (
