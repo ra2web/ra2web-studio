@@ -107,6 +107,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [selected, setSelected] = useState<{ rx: number; ry: number } | null>(null)
   const [logicTab, setLogicTab] = useState<LogicTab>('basic')
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false)
+  const [mobileLogicOpen, setMobileLogicOpen] = useState(false)
   const [revision, setRevision] = useState(0)
   const [autoLat, setAutoLat] = useState(true)
   const [theaterArt, setTheaterArt] = useState<TheaterArt | null>(null)
@@ -470,7 +471,10 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
 
   const handlePick = useCallback((pick: MapViewportPick) => {
     setSelected({ rx: pick.rx, ry: pick.ry })
-    if (pick.longPress) setLogicTab('basic')
+    if (pick.longPress) {
+      setLogicTab('basic')
+      setMobileLogicOpen(true)
+    }
   }, [])
 
   const iniSections = useMemo(
@@ -771,9 +775,29 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
           >
             {t('mapEditor.tools')}
           </button>
+          <button
+            type="button"
+            className="absolute bottom-3 right-3 rounded bg-gray-900/90 px-3 py-2 text-sm lg:hidden"
+            onClick={() => setMobileLogicOpen((open) => !open)}
+            data-testid="map-mobile-logic-toggle"
+          >
+            {t('mapEditor.logicPanel')}
+          </button>
         </div>
 
-        <aside className="hidden w-72 flex-shrink-0 overflow-y-auto border-l border-gray-800 bg-gray-900 p-2 lg:block" data-testid="map-logic-panel">
+        <aside
+          className={`${mobileLogicOpen ? 'fixed inset-y-12 right-0 z-[80] flex w-[min(100%,18rem)]' : 'hidden'} flex-shrink-0 flex-col overflow-y-auto border-l border-gray-800 bg-gray-900 p-2 lg:static lg:z-auto lg:flex lg:w-72`}
+          data-testid="map-logic-panel"
+          data-open={mobileLogicOpen ? '1' : '0'}
+        >
+          <button
+            type="button"
+            className="mb-2 self-end rounded bg-gray-800 px-2 py-1 text-xs lg:hidden"
+            data-testid="map-mobile-logic-close"
+            onClick={() => setMobileLogicOpen(false)}
+          >
+            {t('mapEditor.exit')}
+          </button>
           <div className="mb-2 flex flex-wrap gap-1">
             {(['basic', 'houses', 'triggers', 'teams', 'ai', 'lighting', 'tubes', 'maptools'] as LogicTab[]).map((tab) => (
               <button key={tab} type="button" className={`rounded px-2 py-1 text-xs ${logicTab === tab ? 'bg-blue-600' : 'bg-gray-800'}`} onClick={() => setLogicTab(tab)}>

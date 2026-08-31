@@ -1,9 +1,8 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { seedStudioWorkspace } from './utils/studioFixtures'
 
-test('can create a new FA2 map and open the editor', async ({ page }) => {
+async function openNewMapEditor(page: Page) {
   await seedStudioWorkspace(page)
-
   await page.getByRole('button', { name: /项目管理|Projects/ }).click()
   await expect(page.getByText(/当前还没有项目|No projects yet/)).toBeVisible()
   await page.getByRole('button', { name: /创建项目|Create Project/ }).first().click()
@@ -11,13 +10,15 @@ test('can create a new FA2 map and open the editor', async ({ page }) => {
   await page.locator('.fixed.inset-0 input[type="text"]').fill('Map Project')
   await page.locator('.fixed.inset-0').getByRole('button', { name: /^确定$|^OK$/ }).click()
   await expect(page.getByRole('button', { name: /新建地图|New map/ })).toBeEnabled()
-
   await page.getByRole('button', { name: /新建地图|New map/ }).click()
   const newMap = page.getByTestId('new-map-dialog')
   await expect(newMap).toBeVisible()
   await newMap.getByRole('button', { name: /^确定$|^OK$/ }).click()
-
   await expect(page.getByTestId('map-editor')).toBeVisible()
+}
+
+test('can create a new FA2 map and open the editor', async ({ page }) => {
+  await openNewMapEditor(page)
   await expect(page.getByTestId('map-viewport')).toBeVisible()
   await expect(page.getByTestId('map-minimap')).toBeVisible()
   await expect(page.getByTestId('map-resize-left')).toBeVisible()
@@ -58,4 +59,20 @@ test('can create a new FA2 map and open the editor', async ({ page }) => {
   await page.getByRole('button', { name: /基本|Basic/ }).click()
   await expect(page.getByTestId('map-basic-fillSilos')).toBeVisible()
   await expect(page.getByTestId('map-localWidth')).toBeVisible()
+})
+
+test('narrow screen can open tools and logic without covering the canvas permanently', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await openNewMapEditor(page)
+  await expect(page.getByTestId('map-viewport')).toBeVisible()
+  await expect(page.getByTestId('map-mobile-tools-toggle')).toBeVisible()
+  await expect(page.getByTestId('map-mobile-logic-toggle')).toBeVisible()
+  await page.getByTestId('map-mobile-logic-toggle').click()
+  await expect(page.getByTestId('map-logic-panel')).toHaveAttribute('data-open', '1')
+  await expect(page.getByTestId('map-basic-nextScenario')).toBeVisible()
+  await page.getByTestId('map-mobile-logic-close').click()
+  await expect(page.getByTestId('map-logic-panel')).toHaveAttribute('data-open', '0')
+  await page.getByTestId('map-mobile-tools-toggle').click()
+  await expect(page.getByTestId('map-mobile-tools')).toBeVisible()
+  await expect(page.getByTestId('map-viewport')).toBeVisible()
 })

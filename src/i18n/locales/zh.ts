@@ -956,6 +956,7 @@ export const zh = {
     carryOverMoney: 'CarryOverMoney',
     carryOverCap: 'CarryOverCap',
     initTime: 'InitTime',
+    logicPanel: '逻辑',
   },
 
   // MapViewer

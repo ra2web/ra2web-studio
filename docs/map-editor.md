@@ -29,7 +29,7 @@
 | P13 脚本交互与隐藏 | `map-editor-p13-scripts-ui` | UserScripts 交互命令（Message/Ask/UInput*/AddTrigger）、Cloak 隐藏瓦片集/格子（仅显示） |
 | P14 单格高程与队伍 | `map-editor-p14-teams-tile` | FA2 Raise/Lower Tile（SetHeightAt）、TeamTypes 全字段、ScriptTypes TMissions、单人过场字段 |
 | P15 逻辑全字段与轮廓 | `map-editor-p15-logic-fields` | FA2 AITriggerTypes 18 字段、阵营增删/PrepareHouses、单人剩余 Basic、LocalSize、CheckMap、建筑轮廓 |
-| P16 测试与交付 | `map-editor-p16-tests` | 单元 + 组件 + e2e；阶段 tag 齐全；对照 FA2 剩余选项面 |
+| P16 窄屏逻辑与测试 | `map-editor-p16-mobile-tests` | 窄屏逻辑面板、单元 + 组件 + e2e；阶段 tag 齐全 |
 
 ## 验收标准
 
@@ -47,7 +47,7 @@
 - 游戏内 Play 启动
 - 完整 Marble Madness 美术替换（可保留开关位）
 
-## 对照 FA2 仍待移植（P16+）
+## 对照 FA2 仍待移植（非目标 / 选项）
 
 - 真 `marble.mix` Marble Madness 美术（见非目标）
 - FA2 选项类/插件面（MapTool DLL、Simple view、游戏内 Play）

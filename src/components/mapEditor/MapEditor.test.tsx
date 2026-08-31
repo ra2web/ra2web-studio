@@ -229,6 +229,10 @@ describe('MapEditor', () => {
     fireEvent.click(screen.getByTestId('map-add-house'))
     expect(session.document.houses.some((house) => house.name === 'CustomAI')).toBe(true)
     expect(screen.getByTestId('map-building-outline')).toBeInTheDocument()
+    expect(screen.getByTestId('map-mobile-logic-toggle')).toBeInTheDocument()
+    expect(screen.getByTestId('map-logic-panel')).toHaveAttribute('data-open', '0')
+    fireEvent.click(screen.getByTestId('map-mobile-logic-toggle'))
+    expect(screen.getByTestId('map-logic-panel')).toHaveAttribute('data-open', '1')
   })
 })
 

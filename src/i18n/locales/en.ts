@@ -944,6 +944,7 @@ export const en = {
     carryOverMoney: 'CarryOverMoney',
     carryOverCap: 'CarryOverCap',
     initTime: 'InitTime',
+    logicPanel: 'Logic',
   },
 
   map: {
