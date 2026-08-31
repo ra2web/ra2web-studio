@@ -57,4 +57,34 @@ describe('FA2 CliffModifier', () => {
     })
     expect(cliffNums.length).toBeGreaterThan(0)
   })
+
+  it('writes TMP bZHeight onto cliff cells instead of a flat +4', () => {
+    const theater = cliffTheater()
+    const doc = MapDocument.create({ width: 24, height: 24, theater: 'TEMPERATE' })
+    const cells: Array<{ rx: number; ry: number }> = []
+    forEachIsoCell(24, 24, (cell) => {
+      if (cells.length < 20) cells.push({ rx: cell.rx, ry: cell.ry })
+    })
+    const from = cells[2]
+    const startHeight = doc.getCell(from.rx, from.ry).height
+    const to = { rx: from.rx, ry: from.ry + 8 }
+    const zHeight = [1, 2, 3, 4]
+    placeFa2Cliff(doc, from, to, theater, 'TEMPERATE', {
+      face: 'front',
+      pick: (tiles) => tiles[0] ?? -1,
+      shapeOf: () => ({
+        cx: 2,
+        cy: 2,
+        subtiles: zHeight.map((height) => ({ terrainType: 0, zHeight: height, hasPic: true })),
+      }),
+    })
+    const heights: number[] = []
+    forEachIsoCell(24, 24, (cell) => {
+      const mapCell = doc.getCell(cell.rx, cell.ry)
+      if (mapCell.tileNum >= 1 && mapCell.tileNum < 41) heights.push(mapCell.height)
+    })
+    expect(heights.length).toBeGreaterThan(0)
+    expect(heights.some((height) => height === startHeight + 1 || height === startHeight + 2)).toBe(true)
+    expect(heights.every((height) => height !== startHeight + 4 || zHeight.includes(4))).toBe(true)
+  })
 })

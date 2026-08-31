@@ -21,7 +21,8 @@
 | P5 拷贝与小地图 | `map-editor-p5-copy-minimap` | `[Countries]`/`[Houses]`、RA2/YR 新建、区域拷贝粘贴、编辑器内小地图、SpecialFlags、Marble 预览开关、载具 VXL 地格预览 |
 | P6 悬崖与 SmoothAt | `map-editor-p6-smooth-cliff` | FA2 SmoothAt 3×3 LAT、Front/Back CliffModifier（FAData 崖块表） |
 | P7 隧道/岸线/桥 | `map-editor-p7-tubes-shore` | FA2 Tube 8 向 autocreate、CreateShore、Overlay 桥/墙接缝、随机地形物 |
-| P8 测试与交付 | `map-editor-p8-tests` | 单元 + 组件 + e2e；阶段 tag 齐全 |
+| P8 TMP 与朝向 | `map-editor-p8-tmp-facing` | 从剧院 TMP 读 Shore/Cliff 目录与 bZHeight；SmoothAt `its!=iss`；VXL/SHP 地格预览按朝向（HVA frame 0） |
+| P9 测试与交付 | `map-editor-p9-tests` | 单元 + 组件 + e2e；阶段 tag 齐全；对照 FA2 剩余编辑面 |
 
 ## 验收标准
 
@@ -38,3 +39,10 @@
 - 在 macOS 上编译 FA2 原生 exe
 - 游戏内 Play 启动
 - 完整 Marble Madness 美术替换（可保留开关位）
+
+## 对照 FA2 仍待移植（P9+）
+
+- User scripts（FA2 `UserScriptsDlg`，不是 ScriptTypes）
+- Overlay 矿脉 / VeinHole 等其余 IsoView overlay 模式
+- 真 `marble.mix` Marble Madness 美术
+- FA2 其余编辑面未覆盖项（以 IsoView / 菜单对照）

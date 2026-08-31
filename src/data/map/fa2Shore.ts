@@ -7,6 +7,7 @@ import { TheaterRules, type TheaterIndex } from './theaterIndex'
 /** FA2 `Defines.h`。 */
 export const TERRAIN_GROUND = 0x0d
 export const TERRAIN_WATER = 0x09
+export const TERRAIN_ROUGH = 0x0e
 
 /**
  * FA2 CreateShore 第一轮优先放置的 ShorePieces 件编号（相对集起点）。
@@ -25,6 +26,8 @@ export type ShorePiece = {
   /** 子格地形，FA2 顺序：`for x; for y; p++`。 */
   terrain: number[]
   hasPic: boolean[]
+  /** FA2 `bZHeight`；缺省时贴合不改高程。 */
+  zHeight?: number[]
 }
 
 const SOFT_INI = MapIni.parse(faDataText)
@@ -42,8 +45,22 @@ function keyOf(rx: number, ry: number): string {
   return `${rx},${ry}`
 }
 
-function cellTerrain(setNum: number, waterSet: number): number {
-  return setNum === waterSet ? TERRAIN_WATER : TERRAIN_GROUND
+function cellTerrain(
+  setNum: number,
+  waterSet: number,
+  shoreSet: number,
+  tileNum: number,
+  subTile: number,
+  shoreStart: number,
+  pieces: ShorePiece[],
+): number {
+  if (setNum === waterSet) return TERRAIN_WATER
+  if (setNum === shoreSet && pieces.length > 0) {
+    const offset = tileNum - shoreStart
+    const piece = pieces.find((item) => item.setOffset === offset)
+    if (piece) return piece.terrain[subTile] ?? TERRAIN_GROUND
+  }
+  return TERRAIN_GROUND
 }
 
 function neighbors4(rx: number, ry: number): Array<[number, number]> {
@@ -120,7 +137,7 @@ function placePiece(
         const cell = doc.getCell(rx, ry)
         cell.tileNum = shoreStart + piece.setOffset
         cell.subTile = p
-        cell.height = startHeight
+        cell.height = Math.max(0, Math.min(14, startHeight + (piece.zHeight?.[p] ?? 0)))
         doc.setCell(cell)
         const pos = keyOf(rx, ry)
         terrain.set(pos, piece.terrain[p] ?? TERRAIN_GROUND)
@@ -242,9 +259,10 @@ export function createShore(
     for (let rx = x0; rx < x1; rx++) {
       for (let ry = y0; ry < y1; ry++) {
         if (!isValidIsoCell(rx, ry, doc.width, doc.height)) continue
-        const setNum = rules.getSetNum(doc.getCell(rx, ry).tileNum)
+        const cell = doc.getCell(rx, ry)
+        const setNum = rules.getSetNum(cell.tileNum)
         tsets.set(keyOf(rx, ry), setNum)
-        terrain.set(keyOf(rx, ry), cellTerrain(setNum, waterSet))
+        terrain.set(keyOf(rx, ry), cellTerrain(setNum, waterSet, shoreSet, cell.tileNum, cell.subTile, shoreStart, pieces))
       }
     }
   }

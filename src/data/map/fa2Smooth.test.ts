@@ -94,4 +94,37 @@ describe('FA2 SmoothAt', () => {
     expect(tileNum).toBeGreaterThanOrEqual(2)
     expect(tileNum).toBeLessThan(18)
   })
+
+  it('its!=iss uses TMP cell terrain types instead of remapping Smooth to LAT', () => {
+    const theater = parseTheaterIni(LAT_INI)
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const origin = firstCell()
+    const lat = doc.getCell(origin.rx, origin.ry)
+    lat.tileNum = 2
+    doc.setCell(lat)
+    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+      if (!isValidIsoCell(origin.rx + dx, origin.ry + dy, 16, 16)) continue
+      const neighbor = doc.getCell(origin.rx + dx, origin.ry + dy)
+      neighbor.tileNum = 1
+      doc.setCell(neighbor)
+    }
+    const lookup = {
+      setType: (setNum: number) => {
+        if (setNum === 1) return 0x0e
+        if (setNum === 2) return 0x0d
+        return 0x09
+      },
+      cellType: (rx: number, ry: number) => {
+        const tileNum = doc.getCell(rx, ry).tileNum
+        if (tileNum === 1) return 0x0e
+        if (tileNum >= 2 && tileNum < 18) return 0x0d
+        return 0
+      },
+    }
+    smoothAt(doc, origin.rx, origin.ry, theater, 1, 2, 0, lookup)
+    const tileNum = doc.getCell(origin.rx, origin.ry).tileNum
+    expect(tileNum).toBeGreaterThanOrEqual(2)
+    expect(tileNum).toBeLessThan(18)
+    expect(tileNum).not.toBe(1)
+  })
 })

@@ -4,6 +4,7 @@ import { isValidIsoCell } from './isoCoords'
 import { MapIni } from './MapIni'
 import { MapDocument } from './MapDocument'
 import { TheaterRules, type TheaterIndex } from './theaterIndex'
+import { cliffFootprint, type TmpTileShape } from './tmpCatalog'
 
 type CliffDir =
   | 'horiz_left'
@@ -94,11 +95,6 @@ function startOffset(face: 'front' | 'back', dir: CliffDir): { dx: number; dy: n
   return { dx: 0, dy: 0 }
 }
 
-function footprint(tileInSet: number): { cx: number; cy: number } {
-  if (tileInSet === 7 || tileInSet === 17 || tileInSet === 25 || tileInSet === 37) return { cx: 2, cy: 1 }
-  return { cx: 2, cy: 2 }
-}
-
 const CORNERS = [
   [0, -1, 'cornerleft_'],
   [0, 1, 'cornerright_'],
@@ -110,6 +106,8 @@ export type PlaceCliffOptions = {
   face: 'front' | 'back'
   alternative?: boolean
   pick?: (tiles: number[]) => number
+  /** TMP 件尺寸与 bZHeight；缺省则用 FAData 件号近似 2×2 / z=+4。 */
+  shapeOf?: (tileInSet: number) => TmpTileShape | undefined
 }
 
 /**
@@ -158,7 +156,7 @@ export function placeFa2Cliff(
     const candidates = listTiles(values, prefix)
     if (candidates.length === 0) break
     const fitting = candidates.filter((tile) => {
-      const size = footprint(tile)
+      const size = cliffFootprint(options.shapeOf?.(tile), tile)
       if (walk.addx > 0 && remainingX < size.cx) return false
       if (walk.addy > 0 && remainingY < size.cy) return false
       if (walk.addx < 0 && remainingX > -size.cx) return false
@@ -168,20 +166,24 @@ export function placeFa2Cliff(
     if (fitting.length === 0) break
     const tileInSet = pick(fitting)
     if (tileInSet < 0) break
-    const { cx, cy } = footprint(tileInSet)
+    const shape = cliffFootprint(options.shapeOf?.(tileInSet), tileInSet)
+    const { cx, cy, zHeight } = shape
     if (walk.addx < 0) rx += cx * walk.addx
     if (walk.addy < 0) ry += cy * walk.addy
     const tileNum = setInfo.startTileNum + Math.min(tileInSet, Math.max(0, setInfo.tilesInSet - 1))
+    let p = 0
     for (let i = 0; i < cx; i++) {
       for (let e = 0; e < cy; e++) {
         const px = rx + i
         const py = ry + e
-        if (!isValidIsoCell(px, py, doc.width, doc.height)) continue
-        const cell = doc.getCell(px, py)
-        cell.tileNum = tileNum
-        cell.subTile = Math.min(e * cx + i, 3)
-        cell.height = Math.max(0, Math.min(14, startHeight + 4))
-        doc.setCell(cell)
+        if (isValidIsoCell(px, py, doc.width, doc.height)) {
+          const cell = doc.getCell(px, py)
+          cell.tileNum = tileNum
+          cell.subTile = p
+          cell.height = Math.max(0, Math.min(14, startHeight + (zHeight[p] ?? 4)))
+          doc.setCell(cell)
+        }
+        p++
       }
     }
     if (walk.addx > 0) rx += cx * walk.addx

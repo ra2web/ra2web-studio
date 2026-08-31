@@ -173,7 +173,9 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         break
       case 'tile':
         paintTile(working, rx, ry, tileNum, brush)
-        if (autoLat && theaterArt?.index) applyLatAt(working, rx, ry, theaterArt.index, brush + 1)
+        if (autoLat && theaterArt?.index) {
+          applyLatAt(working, rx, ry, theaterArt.index, brush + 1, theaterArt.smoothLookup((cx, cy) => working.getCell(cx, cy)))
+        }
         break
       case 'ore':
         applyOreBrush(working, rx, ry)
@@ -272,12 +274,21 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
           cliffStartRef.current = { rx, ry }
         } else if (theaterArt?.index) {
           const face = tool === 'cliffBack' ? 'back' : 'front'
-          placeCliffLine(working, cliffStartRef.current, { rx, ry }, theaterArt.index, 4, face, doc.theater)
+          placeCliffLine(
+            working,
+            cliffStartRef.current,
+            { rx, ry },
+            theaterArt.index,
+            4,
+            face,
+            doc.theater,
+            (tileInSet) => theaterArt.cliffShape(tileInSet),
+          )
           cliffStartRef.current = null
         }
         break
       case 'shore':
-        if (theaterArt?.index) applyShoreAt(working, rx, ry, theaterArt.index)
+        if (theaterArt?.index) applyShoreAt(working, rx, ry, theaterArt.index, theaterArt.shoreCatalog)
         break
       case 'basenode': {
         const house = working.houses.find((item) => item.name === owner)
@@ -791,6 +802,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
               <p className="text-xs text-gray-400">{t('mapEditor.tubeHint')}</p>
               <p className="text-xs text-gray-400">{t('mapEditor.bridgeHint')}</p>
               <p className="text-xs text-gray-400">{t('mapEditor.cliffHint')}</p>
+              <p className="text-xs text-gray-400">{t('mapEditor.shoreHint')}</p>
               <p className="text-xs text-gray-400">{t('mapEditor.copyHint')}</p>
             </div>
           )}

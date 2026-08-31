@@ -1,6 +1,7 @@
 import { VxlFile } from '../VxlFile'
 import { TmpFile } from '../TmpFile'
 import { ShpFile } from '../ShpFile'
+import { HvaFile } from '../HvaFile'
 import type { VirtualFile } from '../vfs/VirtualFile'
 import { PaletteParser } from '../../services/palette/PaletteParser'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
@@ -9,9 +10,13 @@ import { artShpCandidates, readArtImage } from './imageFinder'
 import { MapIni } from './MapIni'
 import { blitIndexedToRgba } from './shpBlit'
 import { blitTmpToRgba, type TmpRgba } from './tmpBlit'
-import { blitVoxelsToRgba } from './vxlBlit'
+import { blitVoxelsToRgba, applyHvaToVoxels, facingStep, quantizedFacing } from './vxlBlit'
+import { TILE_TO_LAT, type SmoothTerrainLookup } from './fa2Smooth'
+import { shorePieceFromShape, shapeFromTmp, type TmpTileShape } from './tmpCatalog'
+import type { ShorePiece } from './fa2Shore'
 import {
   THEATER_ASSETS,
+  TheaterRules,
   marbleTileNum,
   parseTheaterIni,
   tmpFileName,
@@ -40,11 +45,16 @@ export class TheaterArt {
   palette = new Uint8Array(768)
   unitPalette = new Uint8Array(768)
   overlayPalette = new Uint8Array(768)
+  shoreCatalog: ShorePiece[] = []
+  cliffShapes = new Map<number, TmpTileShape>()
   onUpdate: (() => void) | null = null
   private artIni: MapIni | null = null
   private readonly pixels = new Map<string, TilePixels | null>()
   private readonly tmpCache = new Map<string, TmpFile | null>()
   private readonly shpCache = new Map<string, ShpFile | null>()
+  private readonly hvaCache = new Map<string, HvaFile | null>()
+  private readonly setTerrain = new Map<number, number>()
+  private readonly tileShapes = new Map<number, TmpTileShape>()
   private readonly inflight = new Set<string>()
 
   constructor(
@@ -67,6 +77,7 @@ export class TheaterArt {
     fillPalette(art.overlayPalette, await openFile('overlay.pal'))
     const artFile = await openFile('artmd.ini') ?? await openFile('art.ini')
     if (artFile) art.artIni = MapIni.parse(artFile.readAsString())
+    void art.loadEditorCatalogs()
     return art
   }
 
@@ -97,13 +108,88 @@ export class TheaterArt {
     this.queue(`ovl:${id}:${frame}`, () => this.loadArtShp(name, frame, this.overlayPalette))
   }
 
-  peekObject(name: string, frame = 0): TilePixels | null | undefined {
-    return this.pixels.get(`obj:${name}:${frame}`)
+  peekObject(name: string, frame = 0, facing = 0): TilePixels | null | undefined {
+    return this.pixels.get(this.objectKey(name, frame, facing))
   }
 
-  requestObject(name: string, frame = 0): void {
+  requestObject(name: string, frame = 0, facing = 0): void {
     if (!name) return
-    this.queue(`obj:${name}:${frame}`, () => this.loadArtShp(name, frame, this.unitPalette))
+    const key = this.objectKey(name, frame, facing)
+    this.queue(key, () => this.loadArtShp(name, frame, this.unitPalette, facing))
+  }
+
+  cliffShape(tileInSet: number): TmpTileShape | undefined {
+    return this.cliffShapes.get(tileInSet)
+  }
+
+  setTerrainType(setNum: number): number | undefined {
+    return this.setTerrain.get(setNum)
+  }
+
+  cellTerrain(tileNum: number, subTile: number): number {
+    const shape = this.tileShapes.get(tileNum)
+    if (!shape) return 0
+    return shape.subtiles[subTile]?.terrainType ?? shape.subtiles[0]?.terrainType ?? 0
+  }
+
+  /** FA2 SmoothAt `its!=iss` 用的 TMP `bTerrainType`。目录未就绪时全 0，等价主路径。 */
+  smoothLookup(getCell: (rx: number, ry: number) => { tileNum: number; subTile: number }): SmoothTerrainLookup {
+    return {
+      setType: (setNum) => this.setTerrain.get(setNum) ?? 0,
+      cellType: (rx, ry) => {
+        const cell = getCell(rx, ry)
+        return this.cellTerrain(cell.tileNum, cell.subTile)
+      },
+    }
+  }
+
+  private objectKey(name: string, frame: number, facing: number): string {
+    return `obj:${name}:${frame}:${quantizedFacing(facing)}`
+  }
+
+  /** 预载 ShorePieces / CliffSet / LAT 相关集的 TMP，供 CreateShore、崖块 z、SmoothAt its!=iss。 */
+  async loadEditorCatalogs(): Promise<void> {
+    if (!this.index) return
+    const rules = new TheaterRules(this.index)
+    const ext = THEATER_ASSETS[this.theater].ext
+    const loadSet = async (setNum: number) => {
+      const set = this.index?.sets[setNum]
+      if (!set || set.tilesInSet <= 0) return undefined
+      const shapes: Array<TmpTileShape | undefined> = []
+      for (let i = 0; i < set.tilesInSet; i++) {
+        const tmp = await this.loadTmp(tmpFileName(set, i, ext))
+        if (!tmp) continue
+        const shape = shapeFromTmp(tmp)
+        shapes[i] = shape
+        this.tileShapes.set(set.startTileNum + i, shape)
+        if (!this.setTerrain.has(setNum)) this.setTerrain.set(setNum, shape.subtiles[0]?.terrainType ?? 0)
+      }
+      return { set, shapes }
+    }
+
+    const shoreNum = rules.getGeneralValue('ShorePieces')
+    const cliffNum = rules.getGeneralValue('CliffSet')
+    const waterNum = rules.getGeneralValue('WaterSet')
+    const extra = TILE_TO_LAT.flatMap(([smooth, lat, target]) => (
+      [smooth, lat, target].map((key) => rules.getGeneralValue(key)).filter((setNum) => setNum >= 0)
+    ))
+    const unique = [...new Set([shoreNum, cliffNum, waterNum, ...extra].filter((setNum) => setNum >= 0))]
+    const loaded = await Promise.all(unique.map((setNum) => loadSet(setNum)))
+    const bySet = new Map(unique.map((setNum, index) => [setNum, loaded[index]]))
+    const shore = shoreNum >= 0 ? bySet.get(shoreNum) : undefined
+    if (shore) {
+      this.shoreCatalog = shore.shapes.flatMap((shape, offset) => (
+        shape ? [shorePieceFromShape(offset, shape, false)] : []
+      ))
+    }
+    const cliff = cliffNum >= 0 ? bySet.get(cliffNum) : undefined
+    if (cliff) {
+      this.cliffShapes.clear()
+      cliff.shapes.forEach((shape, offset) => {
+        if (shape) this.cliffShapes.set(offset, shape)
+      })
+    }
+    this.onUpdate?.()
   }
 
   private queue(key: string, loader: () => Promise<TilePixels | null>): void {
@@ -164,27 +250,34 @@ export class TheaterArt {
     return null
   }
 
-  private async loadArtShp(objectName: string, frame: number, palette: Uint8Array): Promise<TilePixels | null> {
+  private async loadArtShp(objectName: string, frame: number, palette: Uint8Array, facing = 0): Promise<TilePixels | null> {
     const info = readArtImage(this.artIni?.getSection(objectName), objectName)
-    if (info.voxel) return this.loadVxl(info.image || objectName, palette)
+    if (info.voxel) return this.loadVxl(info.image || objectName, palette, facing)
     const assets = THEATER_ASSETS[this.theater]
     const settings = { extension: assets.ext, newTheaterChar: assets.newTheaterChar }
     const names = artShpCandidates(objectName, info, settings)
+    const shpFrame = frame || facingStep(facing)
     for (const name of names) {
-      const pixels = await this.loadShp(name, frame, info.terrainPalette ? this.palette : palette)
+      const pixels = await this.loadShp(name, shpFrame, info.terrainPalette ? this.palette : palette)
       if (pixels) return pixels
     }
     return null
   }
 
-  private async loadVxl(objectName: string, palette: Uint8Array): Promise<TilePixels | null> {
+  private async loadVxl(objectName: string, palette: Uint8Array, facing = 0): Promise<TilePixels | null> {
     const names = [`${objectName.toLowerCase()}.vxl`, `${objectName}.vxl`]
     for (const name of names) {
       const file = await this.openFile(name)
       if (!file) continue
       try {
         const vxl = new VxlFile(file)
-        const voxels = vxl.sections.flatMap((section) => section.getAllVoxels().voxels)
+        const hva = await this.loadHva(objectName)
+        const voxels = vxl.sections.flatMap((section, index) => {
+          const raw = section.getAllVoxels().voxels
+          const hvaSection = hva?.sections[index]
+          const matrix = hvaSection?.matrices[0]
+          return applyHvaToVoxels(raw, matrix, section.hvaMultiplier || 1)
+        })
         const first = vxl.sections[0]
         const pal = vxl.embeddedPalette.length >= 768 ? vxl.embeddedPalette : palette
         const pixels = blitVoxelsToRgba(
@@ -193,10 +286,33 @@ export class TheaterArt {
           first?.sizeX ?? 16,
           first?.sizeY ?? 16,
           first?.sizeZ ?? 16,
+          { facing: quantizedFacing(facing) },
         )
         if (pixels) return pixels
       } catch {
         continue
+      }
+    }
+    return null
+  }
+
+  private async loadHva(objectName: string): Promise<HvaFile | null> {
+    const names = [`${objectName.toLowerCase()}.hva`, `${objectName}.hva`]
+    for (const name of names) {
+      const cached = this.hvaCache.get(name)
+      if (cached) return cached
+      if (cached === null) continue
+      const file = await this.openFile(name)
+      if (!file) {
+        this.hvaCache.set(name, null)
+        continue
+      }
+      try {
+        const hva = new HvaFile(file)
+        this.hvaCache.set(name, hva)
+        return hva
+      } catch {
+        this.hvaCache.set(name, null)
       }
     }
     return null

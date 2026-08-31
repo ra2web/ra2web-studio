@@ -201,14 +201,14 @@ const MapViewport: React.FC<MapViewportProps> = ({
       }
     })
 
-    const mark = (rx: number, ry: number, color: string, label?: string, objectName?: string) => {
+    const mark = (rx: number, ry: number, color: string, label?: string, objectName?: string, facing = 0) => {
       const cell = doc.getCell(rx, ry)
       const origin = projectCell(rx, ry, cell.height, doc.isoSize)
       if (objectName) {
-        const sprite = theaterArt?.peekObject(objectName)
-        if (sprite === undefined) theaterArt?.requestObject(objectName)
+        const sprite = theaterArt?.peekObject(objectName, 0, facing)
+        if (sprite === undefined) theaterArt?.requestObject(objectName, 0, facing)
         if (sprite) {
-          const canvasSprite = tileCanvas(tileCacheRef.current, `obj:${objectName}`, sprite)
+          const canvasSprite = tileCanvas(tileCacheRef.current, `obj:${objectName}:${facing}`, sprite)
           ctx.drawImage(canvasSprite, origin.px - sprite.width / 2, origin.py + 16 - sprite.height)
           return
         }
@@ -225,10 +225,10 @@ const MapViewport: React.FC<MapViewportProps> = ({
       }
     }
 
-    for (const unit of doc.units) mark(unit.rx, unit.ry, '#60a5fa', unit.name, unit.name)
-    for (const inf of doc.infantry) mark(inf.rx, inf.ry, '#34d399', inf.name, inf.name)
-    for (const air of doc.aircraft) mark(air.rx, air.ry, '#c084fc', air.name, air.name)
-    for (const building of doc.structures) mark(building.rx, building.ry, '#fb7185', building.name, building.name)
+    for (const unit of doc.units) mark(unit.rx, unit.ry, '#60a5fa', unit.name, unit.name, unit.direction)
+    for (const inf of doc.infantry) mark(inf.rx, inf.ry, '#34d399', inf.name, inf.name, inf.direction)
+    for (const air of doc.aircraft) mark(air.rx, air.ry, '#c084fc', air.name, air.name, air.direction)
+    for (const building of doc.structures) mark(building.rx, building.ry, '#fb7185', building.name, building.name, building.direction)
     for (const terrain of doc.terrains) mark(terrain.rx, terrain.ry, '#4ade80', terrain.name, terrain.name)
     for (const smudge of doc.smudges) mark(smudge.rx, smudge.ry, '#a8a29e')
     for (const waypoint of doc.waypoints) {

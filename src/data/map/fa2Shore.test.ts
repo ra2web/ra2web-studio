@@ -76,11 +76,14 @@ describe('FA2 CreateShore', () => {
       cy: 1,
       terrain: [TERRAIN_GROUND, TERRAIN_WATER],
       hasPic: [true, true],
+      zHeight: [2, 0],
     }
     createShore(doc, land.rx, land.ry, land.rx + 2, land.ry + 1, theater, [piece])
     expect(doc.getCell(land.rx, land.ry).tileNum).toBe(2 + 4)
     expect(doc.getCell(water.rx, water.ry).tileNum).toBe(2 + 4)
     expect(doc.getCell(water.rx, water.ry).subTile).toBe(1)
+    expect(doc.getCell(land.rx, land.ry).height).toBe(2)
+    expect(doc.getCell(water.rx, water.ry).height).toBe(0)
   })
 
   it('with removeUseless, turns isolated water into clear', () => {

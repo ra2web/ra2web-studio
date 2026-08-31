@@ -2,7 +2,8 @@ import { isValidIsoCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
 import { TheaterRules, type TheaterIndex } from './theaterIndex'
 import { placeFa2Cliff } from './fa2Cliff'
-import { createShoreAt } from './fa2Shore'
+import { createShoreAt, type ShorePiece } from './fa2Shore'
+import type { TmpTileShape } from './tmpCatalog'
 import type { MapTheater } from './constants'
 
 function bresenham(x0: number, y0: number, x1: number, y1: number): Array<{ rx: number; ry: number }> {
@@ -39,8 +40,9 @@ export function placeCliffLine(
   heightDelta = 4,
   face: 'front' | 'back' = 'front',
   theaterName: MapTheater = 'TEMPERATE',
+  shapeOf?: (tileInSet: number) => TmpTileShape | undefined,
 ): void {
-  if (placeFa2Cliff(doc, from, to, theater, theaterName, { face, pick: (tiles) => tiles[0] ?? -1 })) {
+  if (placeFa2Cliff(doc, from, to, theater, theaterName, { face, pick: (tiles) => tiles[0] ?? -1, shapeOf })) {
     return
   }
   const rules = new TheaterRules(theater)
@@ -57,6 +59,12 @@ export function placeCliffLine(
 }
 
 /** FA2 CreateShore：以点击格为中心修岸并贴合 ShorePieces。 */
-export function applyShoreAt(doc: MapDocument, rx: number, ry: number, theater: TheaterIndex): void {
-  createShoreAt(doc, rx, ry, theater)
+export function applyShoreAt(
+  doc: MapDocument,
+  rx: number,
+  ry: number,
+  theater: TheaterIndex,
+  pieces: ShorePiece[] = [],
+): void {
+  createShoreAt(doc, rx, ry, theater, 2, pieces)
 }
