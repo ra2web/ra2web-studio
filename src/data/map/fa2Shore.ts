@@ -334,6 +334,15 @@ export function createShore(
   }
 }
 
+/** FA2 菜单 `OnMaptoolsAutocreateshores`：`CreateShore(0,0,iso,iso)` 且 removeUseless=TRUE。 */
+export function autoCreateShores(
+  doc: MapDocument,
+  theater: TheaterIndex,
+  pieces: ShorePiece[] = [],
+): void {
+  createShore(doc, 0, 0, doc.isoSize, doc.isoSize, theater, pieces, true)
+}
+
 /** 以点击格为中心的 CreateShore（FA2 岸线笔刷）。 */
 export function createShoreAt(
   doc: MapDocument,

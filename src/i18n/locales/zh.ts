@@ -896,6 +896,18 @@ export const zh = {
     loadFailed: '地图加载失败：{{error}}',
     saveFailed: '地图保存失败：{{error}}',
     saved: '地图已保存',
+    tab_maptools: '地图工具',
+    autoCreateShores: '自动生成岸线',
+    searchWaypoint: '搜索航点',
+    jumpWaypoint: '跳转',
+    globals: '全局变量',
+    addGlobal: '添加变量',
+    userScript: '用户脚本',
+    runScript: '运行脚本',
+    scriptHint: '对齐 FA2 UserScripts：SetVariable、SetIniKey、SetWaypoint、AddTerrain 等。改 INI 需 SetSafeMode("false")，加地形物需 AllowAdd。',
+    heightRect: '矩形高程刷（FA2 HeightenTile）',
+    extraIni: '附加 INI',
+    setIniKey: '写入 INI',
   },
 
   // MapViewer

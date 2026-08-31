@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createShore, createShoreAt, softTileSetNames, TERRAIN_GROUND, TERRAIN_WATER, type ShorePiece } from './fa2Shore'
+import { autoCreateShores, createShore, createShoreAt, softTileSetNames, TERRAIN_GROUND, TERRAIN_WATER, type ShorePiece } from './fa2Shore'
 import { applyShoreAt } from './cliffShore'
 import { forEachIsoCell, isValidIsoCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
@@ -94,6 +94,17 @@ describe('FA2 CreateShore', () => {
     cell.tileNum = 1
     doc.setCell(cell)
     createShore(doc, water.rx - 1, water.ry - 1, water.rx + 2, water.ry + 2, theater, [], true)
+    expect(doc.getCell(water.rx, water.ry).tileNum).toBe(0)
+  })
+
+  it('autoCreateShores matches FA2 full-map removeUseless', () => {
+    const theater = parseTheaterIni(SHORE_INI)
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const { water } = firstPair()
+    const cell = doc.getCell(water.rx, water.ry)
+    cell.tileNum = 1
+    doc.setCell(cell)
+    autoCreateShores(doc, theater)
     expect(doc.getCell(water.rx, water.ry).tileNum).toBe(0)
   })
 

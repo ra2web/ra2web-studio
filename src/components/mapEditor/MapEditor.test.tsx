@@ -44,6 +44,19 @@ describe('MapEditor', () => {
     expect(screen.getByText(/矿脉洞|Veinhole/)).toBeInTheDocument()
   })
 
+  it('exposes FA2 map tools, globals and user scripts', () => {
+    renderWithProviders(
+      <MapEditor session={makeSession()} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /地图工具|Map tools/ }))
+    expect(screen.getByTestId('map-maptools-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('map-globals-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('map-user-script')).toBeInTheDocument()
+    expect(screen.getByTestId('map-search-waypoint')).toBeInTheDocument()
+    expect(screen.getByTestId('map-height-rect')).toBeInTheDocument()
+    expect(screen.getByTestId('map-auto-shore')).toBeInTheDocument()
+  })
+
   it('paints ore through the viewport and keeps overlay', () => {
     const session = makeSession()
     const onChange = vi.fn()

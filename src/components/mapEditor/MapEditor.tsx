@@ -6,7 +6,9 @@ import {
 import { EMPTY_OVERLAY } from '../../data/map/constants'
 import { applyShoreAt, placeCliffLine } from '../../data/map/cliffShore'
 import { copyRegion, normalizeCopyRect, pasteRegion, type MapClipboard, type MapCopyRect } from '../../data/map/copyPaste'
+import { autoCreateShores } from '../../data/map/fa2Shore'
 import { Fa2Tube, nextTubeId } from '../../data/map/fa2Tube'
+import { runUserScript } from '../../data/map/fa2UserScript'
 import { applyLatAt } from '../../data/map/lat'
 import { MapCommandStack, flattenHeight, paintHeight, paintTile } from '../../data/map/MapCommandStack'
 import { MapDocument, createMapObjectId } from '../../data/map/MapDocument'
@@ -16,6 +18,7 @@ import { validateMap } from '../../data/map/mapValidate'
 import { resizeMap } from '../../data/map/resizeMap'
 import { emptyRulesObjectLists, parseRulesObjectLists, type RulesObjectLists } from '../../data/map/rulesObjects'
 import { TheaterArt } from '../../data/map/TheaterArt'
+import { projectCell } from '../../data/map/isoCoords'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { useLocale } from '../../i18n/LocaleContext'
 import MapMiniMap from './MapMiniMap'
@@ -31,7 +34,7 @@ export type MapEditorSession = {
   error: string | null
 }
 
-type LogicTab = 'houses' | 'triggers' | 'teams' | 'ai' | 'lighting' | 'tubes' | 'basic'
+type LogicTab = 'houses' | 'triggers' | 'teams' | 'ai' | 'lighting' | 'tubes' | 'basic' | 'maptools'
 
 const TOOLS: { id: MapEditorTool; labelKey: string }[] = [
   { id: 'pan', labelKey: 'mapEditor.toolPan' },
@@ -103,6 +106,13 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [bridgeKind, setBridgeKind] = useState<BridgeKind>('small')
   const [tubeBidirectional, setTubeBidirectional] = useState(true)
   const [oreRandom, setOreRandom] = useState(false)
+  const [heightRect, setHeightRect] = useState(false)
+  const [scriptText, setScriptText] = useState('SetSafeMode("false","edit")\nAllowAdd("map")\nPrint("%Width%x%Height%")')
+  const [scriptReport, setScriptReport] = useState('')
+  const [waypointSearch, setWaypointSearch] = useState('')
+  const [extraSection, setExtraSection] = useState('ScriptExtra')
+  const [extraKey, setExtraKey] = useState('')
+  const [extraValue, setExtraValue] = useState('')
   const [selectionRect, setSelectionRect] = useState<MapCopyRect | null>(null)
   const [viewSize, setViewSize] = useState({ w: 800, h: 600 })
   const viewRef = useRef<HTMLDivElement | null>(null)
@@ -118,6 +128,26 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     onChange(next)
     setRevision((value) => value + 1)
   }, [onChange])
+
+  const commitEdit = useCallback((label: string, mutate: () => void) => {
+    const before = doc.toIniString()
+    mutate()
+    const after = doc.toIniString()
+    stackRef.current.push({
+      label,
+      apply: (target) => target.copyFrom(MapDocument.parse(after)),
+      revert: (target) => target.copyFrom(MapDocument.parse(before)),
+    })
+    doc.rebuildPreview()
+    bump(doc)
+  }, [bump, doc])
+
+  const jumpToCell = useCallback((rx: number, ry: number) => {
+    const origin = projectCell(rx, ry, 0, doc.isoSize)
+    setPanX(viewSize.w / 2 - origin.px * scale)
+    setPanY(viewSize.h / 2 - origin.py * scale)
+    setSelected({ rx, ry })
+  }, [doc.isoSize, scale, viewSize.h, viewSize.w])
 
   useEffect(() => {
     let cancelled = false
@@ -167,10 +197,10 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     const working = doc
     switch (tool) {
       case 'raise':
-        paintHeight(working, rx, ry, 1, brush)
+        paintHeight(working, rx, ry, 1, brush, heightRect ? 'rect' : 'diamond')
         break
       case 'lower':
-        paintHeight(working, rx, ry, -1, brush)
+        paintHeight(working, rx, ry, -1, brush, heightRect ? 'rect' : 'diamond')
         break
       case 'flatten':
         flattenHeight(working, rx, ry, brush)
@@ -336,7 +366,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     }
     setSelected({ rx, ry })
     bump(working)
-  }, [autoLat, bridgeKind, brush, bump, doc, objectName, oreRandom, overlayId, owner, rulesLists.terrain, theaterArt, tileNum, tool, tubeBidirectional])
+  }, [autoLat, bridgeKind, brush, bump, doc, heightRect, objectName, oreRandom, overlayId, owner, rulesLists.terrain, theaterArt, tileNum, tool, tubeBidirectional])
 
   const strokeRef = useRef<{ commit: () => void } | null>(null)
   const handleStrokeStart = useCallback(() => {
@@ -517,6 +547,22 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             {t('mapEditor.autoLat')}
           </label>
           <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
+            <input type="checkbox" checked={heightRect} onChange={(event) => setHeightRect(event.target.checked)} data-testid="map-height-rect" />
+            {t('mapEditor.heightRect')}
+          </label>
+          <button
+            type="button"
+            className="mt-2 w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
+            data-testid="map-auto-shore"
+            onClick={() => {
+              const index = theaterArt?.index
+              if (!index) return
+              commitEdit('autoShore', () => autoCreateShores(doc, index, theaterArt.shoreCatalog))
+            }}
+          >
+            {t('mapEditor.autoCreateShores')}
+          </button>
+          <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
             <input type="checkbox" checked={marbleMadness} onChange={(event) => setMarbleMadness(event.target.checked)} data-testid="map-marble-toggle" />
             {t('mapEditor.marbleMadness')}
           </label>
@@ -588,7 +634,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
 
         <aside className="hidden w-72 flex-shrink-0 overflow-y-auto border-l border-gray-800 bg-gray-900 p-2 lg:block" data-testid="map-logic-panel">
           <div className="mb-2 flex flex-wrap gap-1">
-            {(['basic', 'houses', 'triggers', 'teams', 'ai', 'lighting', 'tubes'] as LogicTab[]).map((tab) => (
+            {(['basic', 'houses', 'triggers', 'teams', 'ai', 'lighting', 'tubes', 'maptools'] as LogicTab[]).map((tab) => (
               <button key={tab} type="button" className={`rounded px-2 py-1 text-xs ${logicTab === tab ? 'bg-blue-600' : 'bg-gray-800'}`} onClick={() => setLogicTab(tab)}>
                 {t(`mapEditor.tab_${tab}` as never)}
               </button>
@@ -821,6 +867,112 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
               ))}
             </div>
           )}
+          {logicTab === 'maptools' && (
+            <div className="space-y-3 text-sm" data-testid="map-maptools-panel">
+              <div className="text-xs font-medium text-gray-300">{t('mapEditor.globals')}</div>
+              <div className="space-y-1" data-testid="map-globals-panel">
+                {doc.variables.map((item, index) => (
+                  <div key={`${item.index}-${index}`} className="flex gap-1">
+                    <input className="w-10 rounded bg-gray-800 px-1 py-1 text-[11px]" value={item.index} onChange={(event) => { item.index = Number(event.target.value) || 0; bump(doc) }} />
+                    <input className="min-w-0 flex-1 rounded bg-gray-800 px-1 py-1 text-[11px]" value={item.name} onChange={(event) => { item.name = event.target.value.replace(/,/g, ''); bump(doc) }} />
+                    <input type="number" className="w-14 rounded bg-gray-800 px-1 py-1 text-[11px]" value={item.value} onChange={(event) => { item.value = Number(event.target.value) || 0; bump(doc) }} />
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="rounded bg-gray-800 px-2 py-1 text-xs"
+                  onClick={() => {
+                    const index = doc.variables.reduce((max, item) => Math.max(max, item.index), -1) + 1
+                    doc.variables.push({ index, name: `Global${index}`, value: 0 })
+                    bump(doc)
+                  }}
+                >
+                  {t('mapEditor.addGlobal')}
+                </button>
+              </div>
+              <div className="text-xs font-medium text-gray-300">{t('mapEditor.searchWaypoint')}</div>
+              <div className="flex gap-1">
+                <input
+                  className="min-w-0 flex-1 rounded bg-gray-800 px-2 py-1 text-xs"
+                  data-testid="map-search-waypoint"
+                  value={waypointSearch}
+                  onChange={(event) => setWaypointSearch(event.target.value)}
+                  placeholder="0"
+                />
+                <button
+                  type="button"
+                  className="rounded bg-gray-800 px-2 py-1 text-xs"
+                  onClick={() => {
+                    const needle = waypointSearch.trim()
+                    const found = doc.waypoints.find((item) => String(item.number) === needle)
+                    if (found) jumpToCell(found.rx, found.ry)
+                  }}
+                >
+                  {t('mapEditor.jumpWaypoint')}
+                </button>
+              </div>
+              <div className="max-h-24 overflow-y-auto text-[11px] text-gray-400">
+                {doc.waypoints.map((item) => (
+                  <button
+                    key={item.number}
+                    type="button"
+                    className="block w-full truncate px-1 py-0.5 text-left hover:bg-gray-800"
+                    onClick={() => jumpToCell(item.rx, item.ry)}
+                  >
+                    {item.number}: {item.rx},{item.ry}
+                  </button>
+                ))}
+              </div>
+              <div className="text-xs font-medium text-gray-300">{t('mapEditor.extraIni')}</div>
+              <input className="w-full rounded bg-gray-800 px-2 py-1 text-xs" value={extraSection} onChange={(event) => setExtraSection(event.target.value)} placeholder="Section" />
+              <div className="flex gap-1">
+                <input className="min-w-0 flex-1 rounded bg-gray-800 px-2 py-1 text-xs" value={extraKey} onChange={(event) => setExtraKey(event.target.value)} placeholder="Key" />
+                <input className="min-w-0 flex-1 rounded bg-gray-800 px-2 py-1 text-xs" value={extraValue} onChange={(event) => setExtraValue(event.target.value)} placeholder="Value" />
+              </div>
+              <button
+                type="button"
+                className="rounded bg-gray-800 px-2 py-1 text-xs"
+                onClick={() => {
+                  if (!extraSection.trim() || !extraKey.trim()) return
+                  commitEdit('setIni', () => {
+                    const sectionName = extraSection.trim()
+                    const found = doc.extraSections.find((item) => item.name.toLowerCase() === sectionName.toLowerCase())
+                    if (!found) {
+                      doc.extraSections.push({ name: sectionName, entries: [{ key: extraKey.trim(), value: extraValue }] })
+                      return
+                    }
+                    const entry = found.entries.find((item) => item.key.toLowerCase() === extraKey.trim().toLowerCase())
+                    if (entry) entry.value = extraValue
+                    else found.entries.push({ key: extraKey.trim(), value: extraValue })
+                  })
+                }}
+              >
+                {t('mapEditor.setIniKey')}
+              </button>
+              <div className="text-xs font-medium text-gray-300">{t('mapEditor.userScript')}</div>
+              <p className="text-[11px] text-gray-400">{t('mapEditor.scriptHint')}</p>
+              <textarea
+                className="h-28 w-full rounded bg-gray-800 px-2 py-1 font-mono text-[11px]"
+                data-testid="map-user-script"
+                value={scriptText}
+                onChange={(event) => setScriptText(event.target.value)}
+              />
+              <button
+                type="button"
+                className="rounded bg-blue-700 px-2 py-1 text-xs"
+                data-testid="map-run-script"
+                onClick={() => {
+                  commitEdit('userScript', () => {
+                    const result = runUserScript(doc, scriptText)
+                    setScriptReport(result.report || result.error || '')
+                  })
+                }}
+              >
+                {t('mapEditor.runScript')}
+              </button>
+              <pre className="max-h-24 overflow-auto whitespace-pre-wrap text-[11px] text-amber-200" data-testid="map-script-report">{scriptReport}</pre>
+            </div>
+          )}
           {logicTab === 'tubes' && (
             <div className="space-y-2 text-sm">
               {doc.tubes.map((tube) => (
@@ -852,6 +1004,18 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                 {t(item.labelKey as never)}
               </button>
             ))}
+            <button
+              type="button"
+              className="rounded bg-gray-800 px-2 py-2 text-xs"
+              onClick={() => {
+                const index = theaterArt?.index
+                if (!index) return
+                commitEdit('autoShore', () => autoCreateShores(doc, index, theaterArt.shoreCatalog))
+                setMobileToolsOpen(false)
+              }}
+            >
+              {t('mapEditor.autoCreateShores')}
+            </button>
           </div>
         </div>
       )}

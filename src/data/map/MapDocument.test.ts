@@ -221,4 +221,13 @@ describe('MapCommandStack', () => {
     expect(stack.redo(doc)).toBe(true)
     expect(doc.getCell(8, 8).tileNum).toBe(3)
   })
+
+  it('FA2 HeightenTile uses a rectangular brush', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'URBAN' })
+    const origin = doc.getCell(12, 12).height
+    paintHeight(doc, 12, 12, 1, 3, 'rect')
+    expect(doc.getCell(12, 12).height).toBe(origin + 1)
+    expect(doc.getCell(13, 13).height).toBe(origin + 1)
+    expect(doc.getCell(14, 12).height).toBe(origin)
+  })
 })

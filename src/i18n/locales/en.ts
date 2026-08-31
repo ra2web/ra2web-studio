@@ -884,6 +884,18 @@ export const en = {
     loadFailed: 'Failed to load map: {{error}}',
     saveFailed: 'Failed to save map: {{error}}',
     saved: 'Map saved',
+    tab_maptools: 'Map tools',
+    autoCreateShores: 'Auto create shores',
+    searchWaypoint: 'Search waypoint',
+    jumpWaypoint: 'Jump',
+    globals: 'Global variables',
+    addGlobal: 'Add variable',
+    userScript: 'User script',
+    runScript: 'Run script',
+    scriptHint: 'FA2 UserScripts: SetVariable, SetIniKey, SetWaypoint, AddTerrain, and more. SetSafeMode("false") to write INI; AllowAdd before AddTerrain.',
+    heightRect: 'Rectangular height brush (FA2 HeightenTile)',
+    extraIni: 'Extra INI',
+    setIniKey: 'Set INI key',
   },
 
   map: {
