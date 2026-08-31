@@ -47,6 +47,7 @@ import type {
   MapVariable,
   MapWaypoint,
 } from './types'
+import { parseAiTriggerLine, serializeAiTrigger } from './fa2AiTriggers'
 
 function yn(value: boolean): string {
   return value ? 'yes' : 'no'
@@ -122,6 +123,11 @@ function defaultBasic(multiplayer: boolean): MapBasic {
     lose: '',
     action: '',
     postScore: '',
+    requiredAddOn: '',
+    preMapSelect: '',
+    startingDropships: '',
+    timerInherit: '',
+    fillSilos: '',
   }
 }
 
@@ -323,6 +329,11 @@ export class MapDocument {
           case 'lose': doc.basic.lose = entry.value; break
           case 'action': doc.basic.action = entry.value; break
           case 'postscore': doc.basic.postScore = entry.value; break
+          case 'requiredaddon': doc.basic.requiredAddOn = entry.value; break
+          case 'premapselect': doc.basic.preMapSelect = entry.value; break
+          case 'startingdropships': doc.basic.startingDropships = entry.value; break
+          case 'timerinherit': doc.basic.timerInherit = entry.value; break
+          case 'fillsilos': doc.basic.fillSilos = entry.value; break
         }
       }
     }
@@ -605,6 +616,13 @@ export class MapDocument {
       { key: 'Lose', value: this.basic.lose },
       { key: 'Action', value: this.basic.action },
       { key: 'PostScore', value: this.basic.postScore },
+      { key: 'PreMapSelect', value: this.basic.preMapSelect },
+      { key: 'StartingDropships', value: this.basic.startingDropships },
+      { key: 'TimerInherit', value: this.basic.timerInherit },
+      { key: 'FillSilos', value: this.basic.fillSilos },
+      ...(this.basic.requiredAddOn && this.basic.requiredAddOn !== '0'
+        ? [{ key: 'RequiredAddOn', value: this.basic.requiredAddOn }]
+        : []),
     ])
     ini.replaceSection('Map', [
       { key: 'Size', value: `0,0,${this.width},${this.height}` },
@@ -681,7 +699,7 @@ export class MapDocument {
     writeTeams(ini, this.teams)
     ini.replaceSection('AITriggerTypes', this.aiTriggers.map((item) => ({
       key: item.id,
-      value: item.raw || serializeAiTrigger(item),
+      value: serializeAiTrigger(item),
     })))
     ini.replaceSection('AITriggerTypesEnable', Object.entries(this.aiTriggerEnable)
       .filter(([, enabled]) => enabled)
@@ -1139,37 +1157,7 @@ function writeTeams(ini: MapIni, items: MapTeamType[]): void {
 }
 
 function readAiTriggers(ini: MapIni): MapAiTrigger[] {
-  return (ini.getSection('AITriggerTypes')?.entries ?? []).map((entry) => {
-    const fields = csv(entry.value)
-    return {
-      id: entry.key,
-      name: fields[0] || entry.key,
-      team1: fields[1] || '<none>',
-      ownerHouse: fields[2] || '<all>',
-      techLevel: Number(fields[3]) || 0,
-      conditionType: Number(fields[4]) || -1,
-      conditionObject: fields[5] || '<none>',
-      comparator: fields[6] || '0',
-      startingCredits: Number(fields[15]) || 0,
-      sideIndex: Number(fields[16]) || 0,
-      baseDefense: fields[17] === '1',
-      team2: fields[18] || '<none>',
-      enabledEasy: fields[19] !== '0',
-      enabledMedium: fields[20] !== '0',
-      enabledHard: fields[21] !== '0',
-      raw: entry.value,
-    }
-  })
-}
-
-function serializeAiTrigger(item: MapAiTrigger): string {
-  return [
-    item.name, item.team1, item.ownerHouse, String(item.techLevel),
-    String(item.conditionType), item.conditionObject, item.comparator,
-    '0', '0', '0', '0', '0', '0', '0', '0',
-    String(item.startingCredits), String(item.sideIndex), item.baseDefense ? '1' : '0',
-    item.team2, item.enabledEasy ? '1' : '0', item.enabledMedium ? '1' : '0', item.enabledHard ? '1' : '0',
-  ].join(',')
+  return (ini.getSection('AITriggerTypes')?.entries ?? []).map((entry) => parseAiTriggerLine(entry.key, entry.value))
 }
 
 function readAiTriggerEnable(ini: MapIni): Record<string, boolean> {

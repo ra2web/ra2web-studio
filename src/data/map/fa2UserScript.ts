@@ -1,8 +1,8 @@
 import { MapDocument, createMapObjectId } from './MapDocument'
 import { MapIni } from './MapIni'
 import { resizeMap } from './resizeMap'
+import { parseAiTriggerLine } from './fa2AiTriggers'
 import type {
-  MapAiTrigger,
   MapSmudge,
   MapTag,
   MapTechno,
@@ -427,28 +427,6 @@ function parseTagCsv(id: string, line: string): MapTag {
     repeatType: Number(fields[0]) || 0,
     name: fields[1] || id,
     triggerId: fields[2] || '',
-  }
-}
-
-function parseAiTriggerCsv(id: string, line: string): MapAiTrigger {
-  const fields = line.split(',')
-  return {
-    id,
-    name: fields[0] || id,
-    team1: fields[1] || '<none>',
-    ownerHouse: fields[2] || '<all>',
-    techLevel: Number(fields[3]) || 0,
-    conditionType: Number(fields[4]) || -1,
-    conditionObject: fields[5] || '<none>',
-    comparator: fields[6] || '0',
-    startingCredits: Number(fields[15]) || 0,
-    sideIndex: Number(fields[16]) || 0,
-    baseDefense: fields[17] === '1',
-    team2: fields[18] || '<none>',
-    enabledEasy: fields[19] !== '0',
-    enabledMedium: fields[20] !== '0',
-    enabledHard: fields[21] !== '0',
-    raw: line,
   }
 }
 
@@ -1046,7 +1024,7 @@ export function runUserScript(
         if (!addAllowed) break
         const id = getFreeFa2Id(doc)
         if (params[0].length > 0) vars.set(params[0], id)
-        doc.aiTriggers.push(parseAiTriggerCsv(id, params[1]))
+        doc.aiTriggers.push(parseAiTriggerLine(id, params[1]))
         lines.push(`AI Trigger ${getParam(params[1], 0)} added`)
         break
       }

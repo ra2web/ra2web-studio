@@ -297,3 +297,8 @@ export function nextTubeId(tubes: MapTube[]): string {
   }
   return String(max + 1)
 }
+
+/** FA2 `CTube::isCounterpart`。 */
+export function isTubeCounterpart(a: MapTube, b: MapTube): boolean {
+  return a.startX === b.endX && a.startY === b.endY && a.endX === b.startX && a.endY === b.startY
+}

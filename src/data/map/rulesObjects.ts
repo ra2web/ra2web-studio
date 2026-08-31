@@ -29,6 +29,22 @@ export function parseRulesObjectLists(text: string): RulesObjectLists {
   }
 }
 
+export type BuildingFoundation = { w: number; h: number }
+
+export function parseBuildingFoundations(text: string): Record<string, BuildingFoundation> {
+  const ini = MapIni.parse(text)
+  const names = new Set(sectionValues(ini, 'BuildingTypes'))
+  const result: Record<string, BuildingFoundation> = {}
+  for (const name of names) {
+    const raw = ini.getValue(name, 'Foundation', '1x1')
+    const match = raw.trim().match(/^(\d+)\s*[xX]\s*(\d+)$/)
+    result[name] = match
+      ? { w: Math.max(1, Number(match[1]) || 1), h: Math.max(1, Number(match[2]) || 1) }
+      : { w: 1, h: 1 }
+  }
+  return result
+}
+
 export function emptyRulesObjectLists(): RulesObjectLists {
   return {
     infantry: [],

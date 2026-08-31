@@ -5,6 +5,7 @@ import { MapDocument } from '../../data/map/MapDocument'
 import { walkTubeCells } from '../../data/map/fa2Tube'
 import type { MapEditorTool } from '../../data/map/mapTools'
 import type { TheaterArt, TilePixels } from '../../data/map/TheaterArt'
+import type { BuildingFoundation } from '../../data/map/rulesObjects'
 import { emptyHideView, isCellHidden, type MapHideView } from '../../data/map/fa2Hide'
 
 export type MapViewportPick = {
@@ -31,6 +32,8 @@ type MapViewportProps = {
   selected?: { rx: number; ry: number } | null
   selectionRect?: { minRx: number; minRy: number; maxRx: number; maxRy: number } | null
   marbleMadness?: boolean
+  showBuildingOutline?: boolean
+  foundations?: Record<string, BuildingFoundation>
   theaterArt?: TheaterArt | null
   artRevision?: number
   hideView?: MapHideView
@@ -88,6 +91,30 @@ function tileCanvas(cache: Map<string, HTMLCanvasElement>, key: string, pixels: 
   return canvas
 }
 
+function drawBuildingOutline(
+  ctx: CanvasRenderingContext2D,
+  rx: number,
+  ry: number,
+  z: number,
+  isoSize: number,
+  w: number,
+  h: number,
+  scale: number,
+) {
+  const origin = projectCell(rx, ry, z, isoSize)
+  const hx = RA2_ISO_TILE_WIDTH / 2
+  const hy = RA2_ISO_TILE_HEIGHT / 2
+  ctx.beginPath()
+  ctx.moveTo(origin.px, origin.py)
+  ctx.lineTo(origin.px + w * hx, origin.py + w * hy)
+  ctx.lineTo(origin.px + (w - h) * hx, origin.py + (w + h) * hy)
+  ctx.lineTo(origin.px - h * hx, origin.py + h * hy)
+  ctx.closePath()
+  ctx.strokeStyle = 'rgba(251,113,133,0.95)'
+  ctx.lineWidth = 2 / scale
+  ctx.stroke()
+}
+
 const MapViewport: React.FC<MapViewportProps> = ({
   document: doc,
   tool,
@@ -97,6 +124,8 @@ const MapViewport: React.FC<MapViewportProps> = ({
   selected,
   selectionRect,
   marbleMadness = false,
+  showBuildingOutline = true,
+  foundations = {},
   theaterArt,
   artRevision = 0,
   hideView = emptyHideView(),
@@ -233,7 +262,13 @@ const MapViewport: React.FC<MapViewportProps> = ({
     for (const unit of doc.units) mark(unit.rx, unit.ry, '#60a5fa', unit.name, unit.name, unit.direction)
     for (const inf of doc.infantry) mark(inf.rx, inf.ry, '#34d399', inf.name, inf.name, inf.direction)
     for (const air of doc.aircraft) mark(air.rx, air.ry, '#c084fc', air.name, air.name, air.direction)
-    for (const building of doc.structures) mark(building.rx, building.ry, '#fb7185', building.name, building.name, building.direction)
+    for (const building of doc.structures) {
+      mark(building.rx, building.ry, '#fb7185', building.name, building.name, building.direction)
+      if (showBuildingOutline) {
+        const size = foundations[building.name] ?? { w: 1, h: 1 }
+        drawBuildingOutline(ctx, building.rx, building.ry, doc.getCell(building.rx, building.ry).height, doc.isoSize, size.w, size.h, scale)
+      }
+    }
     for (const terrain of doc.terrains) mark(terrain.rx, terrain.ry, '#4ade80', terrain.name, terrain.name)
     for (const smudge of doc.smudges) mark(smudge.rx, smudge.ry, '#a8a29e')
     for (const waypoint of doc.waypoints) {
@@ -257,7 +292,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
     }
 
     ctx.restore()
-  }, [artRevision, doc, hideView, marbleMadness, panX, panY, scale, selected, selectionRect, theaterArt])
+  }, [artRevision, doc, foundations, hideView, marbleMadness, panX, panY, scale, selected, selectionRect, showBuildingOutline, theaterArt])
 
   React.useEffect(() => {
     draw()

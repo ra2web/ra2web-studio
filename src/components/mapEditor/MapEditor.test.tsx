@@ -129,9 +129,12 @@ describe('MapEditor', () => {
       <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
     )
     fireEvent.click(screen.getByRole('button', { name: /AI 触发|AI triggers/ }))
-    fireEvent.click(screen.getByText(/Add AITrigger/))
+    fireEvent.click(screen.getByTestId('map-add-ai-trigger'))
     expect(screen.getByTestId('map-ai-enable')).toBeInTheDocument()
+    expect(screen.getByTestId('map-ai-type')).toBeInTheDocument()
     expect(Object.values(session.document.aiTriggerEnable).some(Boolean)).toBe(true)
+    const line = session.document.toIniString().split('\n').find((item) => item.includes('New AI Trigger'))
+    expect(line?.split(',').length).toBe(18)
   })
 
   it('exposes FAData event types after adding a trigger', async () => {
@@ -210,6 +213,22 @@ describe('MapEditor', () => {
     )
     fireEvent.change(screen.getByTestId('map-basic-nextScenario'), { target: { value: 'map02.md' } })
     expect(session.document.basic.nextScenario).toBe('map02.md')
+  })
+
+  it('writes remaining Basic/LocalSize fields and adds a house', () => {
+    const session = makeSession()
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.change(screen.getByTestId('map-basic-fillSilos'), { target: { value: 'yes' } })
+    fireEvent.change(screen.getByTestId('map-localWidth'), { target: { value: '10' } })
+    expect(session.document.basic.fillSilos).toBe('yes')
+    expect(session.document.localWidth).toBe(10)
+    fireEvent.click(screen.getByRole('button', { name: /阵营|Houses/ }))
+    fireEvent.change(screen.getByTestId('map-house-name'), { target: { value: 'CustomAI' } })
+    fireEvent.click(screen.getByTestId('map-add-house'))
+    expect(session.document.houses.some((house) => house.name === 'CustomAI')).toBe(true)
+    expect(screen.getByTestId('map-building-outline')).toBeInTheDocument()
   })
 })
 

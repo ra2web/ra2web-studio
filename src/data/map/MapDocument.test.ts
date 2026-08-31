@@ -200,23 +200,46 @@ SmartAI=no
       name: 'Attack',
       team1: '<none>',
       ownerHouse: '<all>',
-      techLevel: 0,
-      conditionType: -1,
+      techLevel: 1,
+      conditionType: 0,
       conditionObject: '<none>',
-      comparator: '0',
-      startingCredits: 0,
-      sideIndex: 0,
-      baseDefense: false,
+      comparator: '0'.repeat(64),
+      conditionNumber: 0,
+      conditionCmp: 0,
+      weight: 50,
+      minWeight: 30,
+      maxWeight: 50,
+      skirmish: true,
+      flag4: '0',
+      multiSide: '1',
+      baseDefense: true,
       team2: '<none>',
       enabledEasy: true,
       enabledMedium: true,
       enabledHard: true,
-      raw: '',
     })
     doc.aiTriggerEnable['010000AA'] = true
     const back = MapDocument.parse(doc.toIniString())
     expect(back.aiTriggerEnable['010000AA']).toBe(true)
+    expect(back.aiTriggers[0]?.weight).toBe(50)
+    expect(back.aiTriggers[0]?.skirmish).toBe(true)
+    expect(back.aiTriggers[0]?.team2).toBe('<none>')
+    const csv = back.toIniString().split('\n').find((line) => line.startsWith('010000AA='))
+    expect(csv?.split(',').length).toBe(18)
     expect(back.toIniString()).toMatch(/\[AITriggerTypesEnable\]/)
+  })
+
+  it('round-trips RequiredAddOn and omits the key when it is 0', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    doc.basic.requiredAddOn = '1'
+    doc.basic.fillSilos = 'yes'
+    expect(doc.toIniString()).toMatch(/RequiredAddOn=1/)
+    expect(doc.toIniString()).toMatch(/FillSilos=yes/)
+    const back = MapDocument.parse(doc.toIniString())
+    expect(back.basic.requiredAddOn).toBe('1')
+    expect(back.basic.fillSilos).toBe('yes')
+    back.basic.requiredAddOn = '0'
+    expect(back.toIniString()).not.toMatch(/RequiredAddOn/)
   })
 })
 

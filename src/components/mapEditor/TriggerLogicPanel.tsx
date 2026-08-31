@@ -102,6 +102,14 @@ const TriggerLogicPanel: React.FC<TriggerLogicPanelProps> = ({ doc, owner, bump 
               {doc.houses.map((house) => <option key={house.name} value={house.name}>{house.name}</option>)}
             </select>
           </label>
+          <label className="mt-1 block text-[11px] text-gray-400">Attached
+            <select className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={trigger.attachedTriggerId} onChange={(event) => { trigger.attachedTriggerId = event.target.value; bump(doc) }}>
+              <option value="<none>">&lt;none&gt;</option>
+              {doc.triggers.filter((item) => item.id !== trigger.id).map((item) => (
+                <option key={item.id} value={item.id}>{item.name}</option>
+              ))}
+            </select>
+          </label>
           <div className="mt-1 flex gap-2 text-[11px] text-gray-400">
             {(['easy', 'medium', 'hard', 'disabled'] as const).map((key) => (
               <label key={key} className="flex items-center gap-1">

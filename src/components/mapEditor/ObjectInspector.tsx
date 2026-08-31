@@ -49,6 +49,27 @@ function TechnoFields({
       <label className="block text-gray-400">Veterancy
         <input type="number" className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={item.veterancy} onChange={(event) => { item.veterancy = Number(event.target.value); bump() }} />
       </label>
+      <label className="block text-gray-400">Group
+        <input type="number" className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={item.group} onChange={(event) => { item.group = Number(event.target.value); bump() }} />
+      </label>
+      <label className="flex items-center gap-2 text-gray-400">
+        <input type="checkbox" checked={item.onBridge} onChange={(event) => { item.onBridge = event.target.checked; bump() }} />
+        OnBridge
+      </label>
+      <label className="flex items-center gap-2 text-gray-400">
+        <input type="checkbox" checked={item.recruitable} onChange={(event) => { item.recruitable = event.target.checked; bump() }} />
+        Recruitable
+      </label>
+      <label className="flex items-center gap-2 text-gray-400">
+        <input type="checkbox" checked={item.aiRecruitable} onChange={(event) => { item.aiRecruitable = event.target.checked; bump() }} />
+        AIRecruitable
+      </label>
+      {item.poweredOn !== undefined && (
+        <label className="flex items-center gap-2 text-gray-400">
+          <input type="checkbox" checked={item.poweredOn} onChange={(event) => { item.poweredOn = event.target.checked; bump() }} />
+          Powered
+        </label>
+      )}
       {item.subCell !== undefined && (
         <label className="block text-gray-400">SubCell
           <input type="number" className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={item.subCell} onChange={(event) => { item.subCell = Number(event.target.value); bump() }} />

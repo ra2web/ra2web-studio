@@ -178,6 +178,11 @@ export type MapBasic = {
   lose: string
   action: string
   postScore: string
+  requiredAddOn: string
+  preMapSelect: string
+  startingDropships: string
+  timerInherit: string
+  fillSilos: string
 }
 
 export type MapScriptAction = {
@@ -298,17 +303,24 @@ export type MapAiTrigger = {
   team1: string
   ownerHouse: string
   techLevel: number
+  /** FA2 CSV param 4（AIT_*，含 -1 None）。 */
   conditionType: number
   conditionObject: string
+  /** 64 位 hex，对应 FA2 `AITrigInfo`。 */
   comparator: string
-  startingCredits: number
-  sideIndex: number
+  conditionNumber: number
+  conditionCmp: number
+  weight: number
+  minWeight: number
+  maxWeight: number
+  skirmish: boolean
+  flag4: string
+  multiSide: string
   baseDefense: boolean
   team2: string
   enabledEasy: boolean
   enabledMedium: boolean
   enabledHard: boolean
-  raw: string
 }
 
 export type MapTube = {
