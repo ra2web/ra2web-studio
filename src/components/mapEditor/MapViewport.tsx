@@ -27,6 +27,8 @@ type MapViewportProps = {
   panY: number
   scale: number
   selected?: { rx: number; ry: number } | null
+  selectionRect?: { minRx: number; minRy: number; maxRx: number; maxRy: number } | null
+  marbleMadness?: boolean
   theaterArt?: TheaterArt | null
   artRevision?: number
   onPanChange: (panX: number, panY: number) => void
@@ -90,6 +92,8 @@ const MapViewport: React.FC<MapViewportProps> = ({
   panY,
   scale,
   selected,
+  selectionRect,
+  marbleMadness = false,
   theaterArt,
   artRevision = 0,
   onPanChange,
@@ -127,11 +131,12 @@ const MapViewport: React.FC<MapViewportProps> = ({
 
     forEachIsoCell(doc.width, doc.height, ({ rx, ry }) => {
       const cell = doc.getCell(rx, ry)
+      const tileNum = marbleMadness && theaterArt ? theaterArt.marbleTile(cell.tileNum) : cell.tileNum
       const origin = projectCell(rx, ry, cell.height, doc.isoSize)
       const overlay = doc.getOverlay(rx, ry)
-      const key = `${cell.tileNum}:${cell.subTile}`
-      const pixels = theaterArt?.peek(cell.tileNum, cell.subTile)
-      if (pixels === undefined) theaterArt?.request(cell.tileNum, cell.subTile)
+      const key = `${tileNum}:${cell.subTile}`
+      const pixels = theaterArt?.peek(tileNum, cell.subTile)
+      if (pixels === undefined) theaterArt?.request(tileNum, cell.subTile)
       if (pixels) {
         const sprite = tileCanvas(tileCacheRef.current, key, pixels)
         ctx.drawImage(sprite, origin.px - pixels.width / 2, origin.py)
@@ -176,6 +181,21 @@ const MapViewport: React.FC<MapViewportProps> = ({
         ctx.closePath()
         ctx.strokeStyle = '#38bdf8'
         ctx.lineWidth = 2 / scale
+        ctx.stroke()
+      }
+      if (
+        selectionRect
+        && rx >= selectionRect.minRx && rx <= selectionRect.maxRx
+        && ry >= selectionRect.minRy && ry <= selectionRect.maxRy
+      ) {
+        ctx.beginPath()
+        ctx.moveTo(origin.px, origin.py)
+        ctx.lineTo(origin.px + RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
+        ctx.lineTo(origin.px, origin.py + RA2_ISO_TILE_HEIGHT)
+        ctx.lineTo(origin.px - RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
+        ctx.closePath()
+        ctx.strokeStyle = 'rgba(250,204,21,0.85)'
+        ctx.lineWidth = 1.5 / scale
         ctx.stroke()
       }
     })
@@ -228,7 +248,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
     }
 
     ctx.restore()
-  }, [artRevision, doc, panX, panY, scale, selected, theaterArt])
+  }, [artRevision, doc, marbleMadness, panX, panY, scale, selected, selectionRect, theaterArt])
 
   React.useEffect(() => {
     draw()

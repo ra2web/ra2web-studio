@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { EMPTY_OVERLAY } from '../../data/map/constants'
 import { applyShoreAt, placeCliffLine } from '../../data/map/cliffShore'
+import { copyRegion, normalizeCopyRect, pasteRegion, type MapClipboard, type MapCopyRect } from '../../data/map/copyPaste'
 import { applyLatAt } from '../../data/map/lat'
 import { MapCommandStack, flattenHeight, paintHeight, paintTile } from '../../data/map/MapCommandStack'
 import { MapDocument, createMapObjectId } from '../../data/map/MapDocument'
@@ -15,6 +16,7 @@ import { emptyRulesObjectLists, parseRulesObjectLists, type RulesObjectLists } f
 import { TheaterArt } from '../../data/map/TheaterArt'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { useLocale } from '../../i18n/LocaleContext'
+import MapMiniMap from './MapMiniMap'
 import MapViewport, { type MapViewportPick } from './MapViewport'
 import ObjectInspector from './ObjectInspector'
 import TriggerLogicPanel from './TriggerLogicPanel'
@@ -52,6 +54,8 @@ const TOOLS: { id: MapEditorTool; labelKey: string }[] = [
   { id: 'cliff', labelKey: 'mapEditor.toolCliff' },
   { id: 'shore', labelKey: 'mapEditor.toolShore' },
   { id: 'basenode', labelKey: 'mapEditor.toolBaseNode' },
+  { id: 'copy', labelKey: 'mapEditor.toolCopy' },
+  { id: 'paste', labelKey: 'mapEditor.toolPaste' },
 ]
 
 type MapEditorProps = {
@@ -85,8 +89,15 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [rulesLists, setRulesLists] = useState<RulesObjectLists>(emptyRulesObjectLists)
   const [mapWidth, setMapWidth] = useState(session.document.width)
   const [mapHeight, setMapHeight] = useState(session.document.height)
+  const [marbleMadness, setMarbleMadness] = useState(false)
+  const [selectionRect, setSelectionRect] = useState<MapCopyRect | null>(null)
+  const [viewSize, setViewSize] = useState({ w: 800, h: 600 })
+  const viewRef = useRef<HTMLDivElement | null>(null)
   const tubeStartRef = useRef<{ rx: number; ry: number } | null>(null)
   const cliffStartRef = useRef<{ rx: number; ry: number } | null>(null)
+  const copyRangeRef = useRef<{ start: { rx: number; ry: number }; end: { rx: number; ry: number } } | null>(null)
+  const clipboardRef = useRef<MapClipboard | null>(null)
+  const pasteOnceRef = useRef(false)
   const doc = session.document
 
   const bump = useCallback((next: MapDocument) => {
@@ -126,6 +137,17 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   useEffect(() => {
     if (theaterArt) theaterArt.overlayNames = rulesLists.overlays
   }, [rulesLists.overlays, theaterArt])
+
+  useEffect(() => {
+    const el = viewRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      setViewSize({ w: el.clientWidth, h: el.clientHeight })
+    })
+    observer.observe(el)
+    setViewSize({ w: el.clientWidth || 800, h: el.clientHeight || 600 })
+    return () => observer.disconnect()
+  }, [])
 
   const handlePaint = useCallback((rx: number, ry: number) => {
     const working = doc
@@ -237,6 +259,19 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         house?.nodes.push({ type: objectName, rx, ry })
         break
       }
+      case 'copy': {
+        if (!copyRangeRef.current) copyRangeRef.current = { start: { rx, ry }, end: { rx, ry } }
+        else copyRangeRef.current.end = { rx, ry }
+        setSelectionRect(normalizeCopyRect(copyRangeRef.current.start, copyRangeRef.current.end))
+        setSelected({ rx, ry })
+        return
+      }
+      case 'paste': {
+        if (pasteOnceRef.current) return
+        pasteOnceRef.current = true
+        if (clipboardRef.current) pasteRegion(working, clipboardRef.current, rx, ry)
+        break
+      }
       default:
         break
     }
@@ -246,7 +281,19 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
 
   const strokeRef = useRef<{ commit: () => void } | null>(null)
   const handleStrokeStart = useCallback(() => {
-    if (OBJECT_TOOLS.includes(tool) || tool === 'tube' || tool === 'cliff' || tool === 'basenode') {
+    pasteOnceRef.current = false
+    if (tool === 'copy') {
+      copyRangeRef.current = null
+      strokeRef.current = {
+        commit: () => {
+          const range = copyRangeRef.current
+          if (!range) return
+          clipboardRef.current = copyRegion(doc, normalizeCopyRect(range.start, range.end))
+        },
+      }
+      return
+    }
+    if (OBJECT_TOOLS.includes(tool) || tool === 'tube' || tool === 'cliff' || tool === 'basenode' || tool === 'paste') {
       const before = doc.toIniString()
       strokeRef.current = {
         commit: () => {
@@ -265,6 +312,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const handleStrokeEnd = useCallback(() => {
     strokeRef.current?.commit()
     strokeRef.current = null
+    doc.rebuildPreview()
     bump(doc)
   }, [bump, doc])
 
@@ -371,6 +419,10 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             <input type="checkbox" checked={autoLat} onChange={(event) => setAutoLat(event.target.checked)} />
             {t('mapEditor.autoLat')}
           </label>
+          <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
+            <input type="checkbox" checked={marbleMadness} onChange={(event) => setMarbleMadness(event.target.checked)} data-testid="map-marble-toggle" />
+            {t('mapEditor.marbleMadness')}
+          </label>
           <div className="mt-3 text-xs text-gray-400">{t('mapEditor.tileSets')}</div>
           <div className="mt-1 max-h-48 overflow-y-auto rounded border border-gray-800" data-testid="map-tileset-browser">
             {theaterArt?.index?.sets.map((set) => (
@@ -390,7 +442,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
           </div>
         </aside>
 
-        <div className="relative min-w-0 flex-1">
+        <div className="relative min-w-0 flex-1" ref={viewRef}>
           <MapViewport
             document={doc}
             tool={tool}
@@ -399,6 +451,8 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             panY={panY}
             scale={scale}
             selected={selected}
+            selectionRect={selectionRect}
+            marbleMadness={marbleMadness}
             theaterArt={theaterArt}
             artRevision={artRevision}
             onPanChange={(nextX, nextY) => {
@@ -410,6 +464,19 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             onPick={handlePick}
             onStrokeStart={handleStrokeStart}
             onStrokeEnd={handleStrokeEnd}
+          />
+          <MapMiniMap
+            document={doc}
+            revision={revision}
+            panX={panX}
+            panY={panY}
+            scale={scale}
+            viewWidth={viewSize.w}
+            viewHeight={viewSize.h}
+            onPanChange={(nextX, nextY) => {
+              setPanX(nextX)
+              setPanY(nextY)
+            }}
           />
           <div className="pointer-events-none absolute left-2 top-2 rounded bg-black/60 px-2 py-1 text-xs">{selectedInfo}</div>
           <button
@@ -458,6 +525,19 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                   <input type="number" step="0.01" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={doc.lighting[key]} onChange={(event) => { doc.lighting[key] = Number(event.target.value); bump(doc) }} />
                 </label>
               ))}
+              <div className="pt-2 text-xs font-medium text-gray-300">{t('mapEditor.specialFlags')}</div>
+              <div className="space-y-1" data-testid="map-special-flags">
+                {(Object.keys(doc.specialFlags) as Array<keyof typeof doc.specialFlags>).map((key) => (
+                  <label key={key} className="flex items-center gap-2 text-[11px] text-gray-400">
+                    <input
+                      type="checkbox"
+                      checked={doc.specialFlags[key]}
+                      onChange={(event) => { doc.specialFlags[key] = event.target.checked; bump(doc) }}
+                    />
+                    {key}
+                  </label>
+                ))}
+              </div>
             </div>
           )}
           {logicTab === 'houses' && (
@@ -615,6 +695,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
               ))}
               <p className="text-xs text-gray-400">{t('mapEditor.tubeHint')}</p>
               <p className="text-xs text-gray-400">{t('mapEditor.cliffHint')}</p>
+              <p className="text-xs text-gray-400">{t('mapEditor.copyHint')}</p>
             </div>
           )}
         </aside>

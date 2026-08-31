@@ -1,10 +1,10 @@
 import { Format5 } from '../encoding/Format5'
 import { base64StringToUint8Array, uint8ArrayToBase64String } from '../../util/string'
 import {
-  DEFAULT_HOUSE_NAMES,
   EMPTY_OVERLAY,
   OVERLAY_PLANE_SIZE,
   PLAYABLE_HOUSES,
+  houseNamesForMode,
   overlayIndex,
   type MapTheater,
 } from './constants'
@@ -144,6 +144,8 @@ export type NewMapOptions = {
   groundHeight?: number
   multiplayer?: boolean
   name?: string
+  /** true=YR（含 YuriCountry）；false=原版 RA2。默认 YR。 */
+  yuriRevenge?: boolean
 }
 
 export class MapDocument {
@@ -181,6 +183,8 @@ export class MapDocument {
   tags: MapTag[] = []
   triggers: MapTrigger[] = []
   houses: MapHouse[] = []
+  /** FA2 RA2 的 [Countries] 列表；与 [Houses] 可独立。 */
+  countries: string[] = []
   scripts: MapScriptType[] = []
   taskForces: MapTaskForce[] = []
   teams: MapTeamType[] = []
@@ -239,9 +243,11 @@ export class MapDocument {
     forEachIsoCell(options.width, options.height, ({ rx, ry }) => {
       doc.cells.set(cellKey(rx, ry), emptyCell(rx, ry, height))
     })
-    doc.houses = DEFAULT_HOUSE_NAMES.map((name) => (
+    const houseNames = houseNamesForMode(options.yuriRevenge !== false)
+    doc.houses = houseNames.map((name) => (
       defaultHouse(name, (PLAYABLE_HOUSES as readonly string[]).includes(name))
     ))
+    doc.countries = houseNames.slice()
     if (doc.basic.multiplayerOnly) {
       const centerRx = Math.floor(options.width / 2) + 1
       const centerRy = Math.floor(options.height / 2) + 1
@@ -403,6 +409,8 @@ export class MapDocument {
     })
     doc.triggers = readTriggers(ini)
     doc.houses = readHouses(ini)
+    doc.countries = readCountryNames(ini)
+    if (doc.countries.length === 0) doc.countries = doc.houses.map((house) => house.name)
     doc.scripts = readScripts(ini)
     doc.taskForces = readTaskForces(ini)
     doc.teams = readTeams(ini)
@@ -446,7 +454,7 @@ export class MapDocument {
       'header', 'digest', 'preview', 'previewpack', 'basic', 'map', 'lighting', 'specialflags',
       'isomappack5', 'overlaypack', 'overlaydatapack', 'waypoints', 'infantry', 'units', 'aircraft',
       'structures', 'terrain', 'smudge', 'celltags', 'tags', 'triggers', 'events', 'actions',
-      'houses', 'scripttypes', 'taskforces', 'teamtypes', 'aitriggertypes', 'aitriggertypesenable',
+      'houses', 'countries', 'scripttypes', 'taskforces', 'teamtypes', 'aitriggertypes', 'aitriggertypesenable',
       'tubes', 'variablenames',
     ])
     const houseNames = new Set(doc.houses.map((house) => house.name.toLowerCase()))
@@ -524,6 +532,7 @@ export class MapDocument {
     this.tags = parsed.tags
     this.triggers = parsed.triggers
     this.houses = parsed.houses
+    this.countries = parsed.countries
     this.scripts = parsed.scripts
     this.taskForces = parsed.taskForces
     this.teams = parsed.teams
@@ -651,7 +660,7 @@ export class MapDocument {
       value: `${item.repeatType},${item.name},${item.triggerId}`,
     })))
     writeTriggers(ini, this.triggers)
-    writeHouses(ini, this.houses)
+    writeHouses(ini, this.houses, this.countries)
     writeScripts(ini, this.scripts)
     writeTaskForces(ini, this.taskForces)
     writeTeams(ini, this.teams)
@@ -837,8 +846,15 @@ function writeTriggers(ini: MapIni, triggers: MapTrigger[]): void {
   }))
 }
 
+function readCountryNames(ini: MapIni): string[] {
+  const list = ini.getSection('Countries')?.entries ?? []
+  return list.map((entry) => entry.value || entry.key).filter(Boolean)
+}
+
 function readHouses(ini: MapIni): MapHouse[] {
-  const list = ini.getSection('Houses')?.entries ?? []
+  const houseList = ini.getSection('Houses')?.entries ?? []
+  const countryList = ini.getSection('Countries')?.entries ?? []
+  const list = houseList.length > 0 ? houseList : countryList
   if (list.length === 0) return []
   return list.map((entry) => {
     const name = entry.value || entry.key
@@ -870,7 +886,12 @@ function readHouses(ini: MapIni): MapHouse[] {
   })
 }
 
-function writeHouses(ini: MapIni, houses: MapHouse[]): void {
+function writeHouses(ini: MapIni, houses: MapHouse[], countries: string[]): void {
+  const countryNames = countries.length > 0 ? countries : houses.map((house) => house.name)
+  ini.replaceSection('Countries', countryNames.map((name, index) => ({
+    key: String(index),
+    value: name,
+  })))
   ini.replaceSection('Houses', houses.map((house, index) => ({
     key: String(index),
     value: house.name,

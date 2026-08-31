@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { forEachIsoCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
 import { applyLatAt } from './lat'
-import { parseTheaterIni, tmpFileName, TheaterRules } from './theaterIndex'
+import { parseTheaterIni, tmpFileName, TheaterRules, marbleTileNum } from './theaterIndex'
 
 const SAMPLE_INI = `
 [General]
@@ -77,8 +77,26 @@ describe('parseTheaterIni', () => {
     expect(index.sets).toHaveLength(8)
     expect(index.sets[1].startTileNum).toBe(1)
     expect(index.general.SandTile).toBe(1)
+    expect(index.sets[0].marbleMadnessSet).toBe(-1)
     expect(tmpFileName(index.sets[0], 0, '.tem')).toBe('clear01.tem')
     expect(new TheaterRules(index).getCLATSet(1)).toBe(2)
+  })
+
+  it('remaps MarbleMadness tile sets', () => {
+    const index = parseTheaterIni(`
+[TileSet0000]
+FileName=CLEAR
+SetName=Clear
+TilesInSet=1
+MarbleMadness=1
+
+[TileSet0001]
+FileName=MM
+SetName=Marble
+TilesInSet=1
+`)
+    expect(index.sets[0].marbleMadnessSet).toBe(1)
+    expect(marbleTileNum(index, 0)).toBe(1)
   })
 })
 

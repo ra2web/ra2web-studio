@@ -2731,6 +2731,7 @@ const MixEditor: React.FC = () => {
       groundHeight: result.groundHeight,
       multiplayer: result.multiplayer,
       name: result.name,
+      yuriRevenge: result.yuriRevenge,
     })
     const text = document.toIniString()
     try {

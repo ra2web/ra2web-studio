@@ -24,6 +24,8 @@ export type MapEditorTool =
   | 'cliff'
   | 'shore'
   | 'basenode'
+  | 'copy'
+  | 'paste'
 
 export const TERRAIN_TOOLS: MapEditorTool[] = ['raise', 'lower', 'flatten', 'tile', 'cliff', 'shore']
 export const OVERLAY_TOOLS: MapEditorTool[] = ['overlay', 'ore', 'eraseOverlay']

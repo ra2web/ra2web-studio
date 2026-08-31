@@ -11,6 +11,10 @@ vi.mock('./MapViewport', () => ({
   ),
 }))
 
+vi.mock('./MapMiniMap', () => ({
+  default: () => <canvas data-testid="map-minimap" />,
+}))
+
 function makeSession(): MapEditorSession {
   const document = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE', multiplayer: true })
   return {
@@ -31,6 +35,8 @@ describe('MapEditor', () => {
     expect(screen.getByText(/抬高地形|Raise ground/)).toBeInTheDocument()
     expect(screen.getByText(/触发器|Triggers/)).toBeInTheDocument()
     expect(screen.getByText(/阵营|Houses/)).toBeInTheDocument()
+    expect(screen.getByTestId('map-minimap')).toBeInTheDocument()
+    expect(screen.getByText(/复制区域|Copy region/)).toBeInTheDocument()
   })
 
   it('paints ore through the viewport and keeps overlay', () => {
@@ -44,6 +50,14 @@ describe('MapEditor', () => {
     expect(onChange).toHaveBeenCalled()
     const overlay = session.document.getOverlay(8, 8)
     expect(overlay.id).not.toBe(255)
+  })
+
+  it('exposes SpecialFlags under lighting', () => {
+    renderWithProviders(
+      <MapEditor session={makeSession()} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByText(/光照|Lighting/))
+    expect(screen.getByTestId('map-special-flags')).toBeInTheDocument()
   })
 
   it('exposes FAData event types after adding a trigger', async () => {
@@ -67,6 +81,7 @@ describe('NewMapDialog', () => {
       height: 50,
       theater: 'TEMPERATE',
       multiplayer: true,
+      yuriRevenge: true,
     }))
   })
 })

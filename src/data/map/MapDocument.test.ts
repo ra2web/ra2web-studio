@@ -41,8 +41,52 @@ describe('MapDocument', () => {
     expect(doc.height).toBe(32)
     expect(doc.basic.multiplayerOnly).toBe(true)
     expect(doc.waypoints.map((item) => item.number).sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
-    expect(doc.houses.some((house) => house.name === 'Americans')).toBe(true)
+    expect(doc.houses.some((house) => house.name === 'YuriCountry')).toBe(true)
     expect(THEATERS).toContain(doc.theater)
+  })
+
+  it('omits YuriCountry in RA2 mode and writes [Countries]', () => {
+    const doc = MapDocument.create({
+      width: 16,
+      height: 16,
+      theater: 'TEMPERATE',
+      yuriRevenge: false,
+    })
+    expect(doc.houses.some((house) => house.name === 'YuriCountry')).toBe(false)
+    expect(doc.countries).toContain('Americans')
+    const text = doc.toIniString()
+    expect(text).toContain('[Countries]')
+    expect(text).toContain('[Houses]')
+    expect(text).not.toContain('YuriCountry')
+  })
+
+  it('reads [Countries] when [Houses] is missing', () => {
+    const text = `[Map]
+Size=0,0,16,16
+Theater=TEMPERATE
+[Countries]
+0=Neutral
+1=Special
+2=Americans
+[Americans]
+IQ=0
+Edge=North
+Country=Americans
+Color=DarkOrange
+Allies=Americans
+Credits=10000
+ActsLike=0
+NodeCount=0
+TechLevel=10
+PercentBuilt=100
+PlayerControl=yes
+ParentCountry=Americans
+SmartAI=no
+`
+    const doc = MapDocument.parse(text)
+    expect(doc.houses.map((house) => house.name)).toEqual(['Neutral', 'Special', 'Americans'])
+    expect(doc.countries).toEqual(['Neutral', 'Special', 'Americans'])
+    expect(doc.houses.find((house) => house.name === 'Americans')?.credits).toBe(10000)
   })
 
   it('round-trips tiles, overlay, objects, logic and houses', () => {
@@ -140,6 +184,7 @@ describe('MapDocument', () => {
     expect(text).toContain('[IsoMapPack5]')
     expect(text).toContain('[OverlayPack]')
     expect(text).toContain('[Houses]')
+    expect(text).toContain('[Countries]')
     expect(text).toContain('[Triggers]')
     expect(text).toContain('[Tubes]')
 

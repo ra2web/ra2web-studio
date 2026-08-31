@@ -52,6 +52,12 @@ export const DEFAULT_HOUSE_NAMES = [
 
 export const PLAYABLE_HOUSES = DEFAULT_HOUSE_NAMES.slice(2)
 
+/** FA2 RA2 模式不含 YuriCountry；YR / 运营模式含九个可玩阵营。 */
+export function houseNamesForMode(yuriRevenge: boolean): string[] {
+  if (yuriRevenge) return [...DEFAULT_HOUSE_NAMES]
+  return DEFAULT_HOUSE_NAMES.filter((name) => name !== 'YuriCountry')
+}
+
 export function isTheater(value: string): value is MapTheater {
   return (THEATERS as readonly string[]).includes(value.toUpperCase())
 }

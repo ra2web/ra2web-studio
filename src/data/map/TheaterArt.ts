@@ -1,3 +1,4 @@
+import { VxlFile } from '../VxlFile'
 import { TmpFile } from '../TmpFile'
 import { ShpFile } from '../ShpFile'
 import type { VirtualFile } from '../vfs/VirtualFile'
@@ -8,8 +9,10 @@ import { artShpCandidates, readArtImage } from './imageFinder'
 import { MapIni } from './MapIni'
 import { blitIndexedToRgba } from './shpBlit'
 import { blitTmpToRgba, type TmpRgba } from './tmpBlit'
+import { blitVoxelsToRgba } from './vxlBlit'
 import {
   THEATER_ASSETS,
+  marbleTileNum,
   parseTheaterIni,
   tmpFileName,
   tileNumToSet,
@@ -69,6 +72,12 @@ export class TheaterArt {
 
   peek(tileNum: number, subTile: number): TilePixels | null | undefined {
     return this.pixels.get(`tile:${tileNum}:${subTile}`)
+  }
+
+  /** FA2 Marble Madness：把普通瓦片集映射到对应 Marble 集。 */
+  marbleTile(tileNum: number): number {
+    if (!this.index) return tileNum
+    return marbleTileNum(this.index, tileNum)
   }
 
   request(tileNum: number, subTile: number): void {
@@ -157,13 +166,38 @@ export class TheaterArt {
 
   private async loadArtShp(objectName: string, frame: number, palette: Uint8Array): Promise<TilePixels | null> {
     const info = readArtImage(this.artIni?.getSection(objectName), objectName)
-    if (info.voxel) return null
+    if (info.voxel) return this.loadVxl(info.image || objectName, palette)
     const assets = THEATER_ASSETS[this.theater]
     const settings = { extension: assets.ext, newTheaterChar: assets.newTheaterChar }
     const names = artShpCandidates(objectName, info, settings)
     for (const name of names) {
       const pixels = await this.loadShp(name, frame, info.terrainPalette ? this.palette : palette)
       if (pixels) return pixels
+    }
+    return null
+  }
+
+  private async loadVxl(objectName: string, palette: Uint8Array): Promise<TilePixels | null> {
+    const names = [`${objectName.toLowerCase()}.vxl`, `${objectName}.vxl`]
+    for (const name of names) {
+      const file = await this.openFile(name)
+      if (!file) continue
+      try {
+        const vxl = new VxlFile(file)
+        const voxels = vxl.sections.flatMap((section) => section.getAllVoxels().voxels)
+        const first = vxl.sections[0]
+        const pal = vxl.embeddedPalette.length >= 768 ? vxl.embeddedPalette : palette
+        const pixels = blitVoxelsToRgba(
+          voxels,
+          pal,
+          first?.sizeX ?? 16,
+          first?.sizeY ?? 16,
+          first?.sizeZ ?? 16,
+        )
+        if (pixels) return pixels
+      } catch {
+        continue
+      }
     }
     return null
   }

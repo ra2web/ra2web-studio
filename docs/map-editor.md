@@ -17,16 +17,18 @@
 | P1 编辑器 | `map-editor-p1-editor` | 新建/读写/对象/逻辑面板/触摸工具盘 |
 | P2 剧院 | `map-editor-p2-theater` | theater.ini + TMP 等距渲染、瓦片浏览器、AutoLAT、悬崖/岸线 |
 | P3 逻辑 | `map-editor-p3-logic` | FAData 触发器参数、AITrigger、Base Node、改尺寸、校验、对象属性 |
+| P4 贴图 | `map-editor-p4-sprites` | Overlay/单位 SHP（werhd ImageFinder） |
+| P5 拷贝与小地图 | `map-editor-p5-copy-minimap` | `[Countries]`/`[Houses]`、RA2/YR 新建、区域拷贝粘贴、编辑器内小地图、SpecialFlags、Marble 预览开关、载具 VXL 地格预览 |
 | P6 测试与交付 | `map-editor-p6-tests` | 单元 + 组件 + e2e；阶段 tag 齐全 |
 
 ## 验收标准
 
 1. `git tag map-editor-baseline` 存在，且每个可用阶段有对应 annotated tag。
 2. 可新建地图：theater、宽高（16–400 且 W+H≤512）、单人/多人、起始高度；多人图带航点 0–7。
-3. 打开并保存后，游戏引擎可读的核心段完整：`[Map]` `[Basic]` `[Lighting]` `[SpecialFlags]` `[IsoMapPack5]` `[OverlayPack]` `[OverlayDataPack]` `[Units]` `[Infantry]` `[Aircraft]` `[Structures]` `[Terrain]` `[Smudge]` `[Waypoints]` `[Houses]` `[Triggers]` `[Events]` `[Actions]` `[Tags]` `[CellTags]` `[ScriptTypes]` `[TaskForces]` `[TeamTypes]` `[AITriggerTypes]` `[Tubes]` `[VariableNames]` `[Preview]`/`[PreviewPack]`。
-4. 地形笔刷、高程、Overlay（矿石等）、对象放置与删除、撤销（地形快照最多 64 步）可用。
-5. 触发器/队伍/阵营/光照/隧道可编辑且写回 INI。
-6. 触摸：单指绘制（当前工具）、双指平移缩放、长按打开属性；窄屏工具盘可收起。
+3. 打开并保存后，游戏引擎可读的核心段完整：`[Map]` `[Basic]` `[Lighting]` `[SpecialFlags]` `[IsoMapPack5]` `[OverlayPack]` `[OverlayDataPack]` `[Units]` `[Infantry]` `[Aircraft]` `[Structures]` `[Terrain]` `[Smudge]` `[Waypoints]` `[Houses]` `[Countries]` `[Triggers]` `[Events]` `[Actions]` `[Tags]` `[CellTags]` `[ScriptTypes]` `[TaskForces]` `[TeamTypes]` `[AITriggerTypes]` `[Tubes]` `[VariableNames]` `[Preview]`/`[PreviewPack]`。
+4. 地形笔刷、高程、Overlay（矿石等）、对象放置与删除、区域拷贝/粘贴、撤销（地形快照最多 64 步）可用。
+5. 触发器/队伍/阵营/光照/SpecialFlags/隧道可编辑且写回 INI。
+6. 触摸：单指绘制（当前工具）、双指平移缩放、长按打开属性；窄屏工具盘可收起；编辑器内小地图可点击跳转。
 7. `npm run test:unit` 覆盖编解码往返、编辑命令、触摸命中；相关组件测试通过。
 
 ## 非目标（明确不做）

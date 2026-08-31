@@ -10,6 +10,7 @@ export type NewMapDialogResult = {
   groundHeight: number
   multiplayer: boolean
   name: string
+  yuriRevenge: boolean
 }
 
 type NewMapDialogProps = {
@@ -26,6 +27,7 @@ const NewMapDialog: React.FC<NewMapDialogProps> = ({ open, onCancel, onCreate })
   const [theater, setTheater] = useState<MapTheater>('TEMPERATE')
   const [groundHeight, setGroundHeight] = useState(0)
   const [multiplayer, setMultiplayer] = useState(true)
+  const [yuriRevenge, setYuriRevenge] = useState(true)
   const [name, setName] = useState('No name')
   const error = useMemo(() => validateMapSize(width, height), [width, height])
 
@@ -67,6 +69,15 @@ const NewMapDialog: React.FC<NewMapDialogProps> = ({ open, onCancel, onCreate })
           <input type="checkbox" checked={multiplayer} onChange={(event) => setMultiplayer(event.target.checked)} />
           {t('mapEditor.multiplayer')}
         </label>
+        <label className="mt-2 flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={yuriRevenge}
+            onChange={(event) => setYuriRevenge(event.target.checked)}
+            data-testid="new-map-yuri"
+          />
+          {t('mapEditor.yuriRevenge')}
+        </label>
         {error && <div className="mt-2 text-sm text-red-400">{error}</div>}
         <div className="mt-4 flex justify-end gap-2">
           <button type="button" className="rounded bg-gray-700 px-3 py-2" onClick={onCancel}>{t('common.cancel')}</button>
@@ -74,7 +85,7 @@ const NewMapDialog: React.FC<NewMapDialogProps> = ({ open, onCancel, onCreate })
             type="button"
             className="rounded bg-blue-600 px-3 py-2 disabled:opacity-40"
             disabled={!!error || !fileName.trim()}
-            onClick={() => onCreate({ fileName: fileName.trim(), width, height, theater, groundHeight, multiplayer, name })}
+            onClick={() => onCreate({ fileName: fileName.trim(), width, height, theater, groundHeight, multiplayer, name, yuriRevenge })}
           >
             {t('common.ok')}
           </button>

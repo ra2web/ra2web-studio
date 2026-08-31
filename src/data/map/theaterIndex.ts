@@ -17,6 +17,8 @@ export type TheaterTileSetInfo = {
   setName: string
   tilesInSet: number
   startTileNum: number
+  /** theater.ini MarbleMadness 指向的 TileSet 序号；-1 表示无。 */
+  marbleMadnessSet: number
 }
 
 export type TheaterIndex = {
@@ -40,7 +42,16 @@ export function parseTheaterIni(text: string): TheaterIndex {
     const fileName = section.entries.find((item) => item.key.toLowerCase() === 'filename')?.value ?? ''
     const setName = section.entries.find((item) => item.key.toLowerCase() === 'setname')?.value ?? fileName
     const tilesInSet = Number(section.entries.find((item) => item.key.toLowerCase() === 'tilesinset')?.value ?? '0') || 0
-    sets.push({ setIndex, fileName, setName, tilesInSet, startTileNum: tileNum })
+    const marbleRaw = section.entries.find((item) => item.key.toLowerCase() === 'marblemadness')?.value
+    const marbleMadnessSet = marbleRaw !== undefined && marbleRaw !== '' ? Number(marbleRaw) : -1
+    sets.push({
+      setIndex,
+      fileName,
+      setName,
+      tilesInSet,
+      startTileNum: tileNum,
+      marbleMadnessSet: Number.isFinite(marbleMadnessSet) ? marbleMadnessSet : -1,
+    })
     tileNum += tilesInSet
   }
   return { sets, general, tileCount: tileNum }
@@ -48,6 +59,15 @@ export function parseTheaterIni(text: string): TheaterIndex {
 
 export function tileNumToSet(index: TheaterIndex, tileNum: number): TheaterTileSetInfo | undefined {
   return index.sets.find((set) => tileNum >= set.startTileNum && tileNum < set.startTileNum + set.tilesInSet)
+}
+
+export function marbleTileNum(index: TheaterIndex, tileNum: number): number {
+  const set = tileNumToSet(index, tileNum)
+  if (!set || set.marbleMadnessSet < 0) return tileNum
+  const dest = index.sets[set.marbleMadnessSet]
+  if (!dest) return tileNum
+  const offset = tileNum - set.startTileNum
+  return dest.startTileNum + Math.min(offset, Math.max(0, dest.tilesInSet - 1))
 }
 
 export function tmpFileName(set: TheaterTileSetInfo, tileInSet: number, ext: string): string {
