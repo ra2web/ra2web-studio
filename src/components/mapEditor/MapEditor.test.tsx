@@ -45,6 +45,16 @@ describe('MapEditor', () => {
     const overlay = session.document.getOverlay(8, 8)
     expect(overlay.id).not.toBe(255)
   })
+
+  it('exposes FAData event types after adding a trigger', async () => {
+    renderWithProviders(
+      <MapEditor session={makeSession()} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByText(/触发器|Triggers/))
+    fireEvent.click(screen.getByText(/添加触发器|Add trigger/))
+    expect(await screen.findByTestId('map-event-type')).toBeInTheDocument()
+    expect(screen.getByTestId('map-tileset-browser')).toBeInTheDocument()
+  })
 })
 
 describe('NewMapDialog', () => {

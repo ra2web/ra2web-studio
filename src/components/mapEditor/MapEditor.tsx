@@ -4,11 +4,20 @@ import {
   Loader2, Map as MapIcon, Redo2, Save, Undo2, X,
 } from 'lucide-react'
 import { EMPTY_OVERLAY } from '../../data/map/constants'
+import { applyShoreAt, placeCliffLine } from '../../data/map/cliffShore'
+import { applyLatAt } from '../../data/map/lat'
 import { MapCommandStack, flattenHeight, paintHeight, paintTile } from '../../data/map/MapCommandStack'
 import { MapDocument, createMapObjectId } from '../../data/map/MapDocument'
 import { applyOreBrush, clearOverlay, OBJECT_TOOLS, type MapEditorTool } from '../../data/map/mapTools'
+import { validateMap } from '../../data/map/mapValidate'
+import { resizeMap } from '../../data/map/resizeMap'
+import { emptyRulesObjectLists, parseRulesObjectLists, type RulesObjectLists } from '../../data/map/rulesObjects'
+import { TheaterArt } from '../../data/map/TheaterArt'
+import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { useLocale } from '../../i18n/LocaleContext'
 import MapViewport, { type MapViewportPick } from './MapViewport'
+import ObjectInspector from './ObjectInspector'
+import TriggerLogicPanel from './TriggerLogicPanel'
 
 export type MapEditorSession = {
   filePath: string
@@ -18,7 +27,7 @@ export type MapEditorSession = {
   error: string | null
 }
 
-type LogicTab = 'houses' | 'triggers' | 'teams' | 'lighting' | 'tubes' | 'basic'
+type LogicTab = 'houses' | 'triggers' | 'teams' | 'ai' | 'lighting' | 'tubes' | 'basic'
 
 const TOOLS: { id: MapEditorTool; labelKey: string }[] = [
   { id: 'pan', labelKey: 'mapEditor.toolPan' },
@@ -40,6 +49,9 @@ const TOOLS: { id: MapEditorTool; labelKey: string }[] = [
   { id: 'celltag', labelKey: 'mapEditor.toolCellTag' },
   { id: 'eraseObject', labelKey: 'mapEditor.toolEraseObject' },
   { id: 'tube', labelKey: 'mapEditor.toolTube' },
+  { id: 'cliff', labelKey: 'mapEditor.toolCliff' },
+  { id: 'shore', labelKey: 'mapEditor.toolShore' },
+  { id: 'basenode', labelKey: 'mapEditor.toolBaseNode' },
 ]
 
 type MapEditorProps = {
@@ -48,9 +60,10 @@ type MapEditorProps = {
   onSave: () => void | Promise<void>
   onExit: () => void
   saving?: boolean
+  resourceContext?: ResourceContext | null
 }
 
-const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit, saving }) => {
+const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit, saving, resourceContext }) => {
   const { t } = useLocale()
   const stackRef = useRef(new MapCommandStack())
   const [tool, setTool] = useState<MapEditorTool>('raise')
@@ -66,13 +79,49 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [logicTab, setLogicTab] = useState<LogicTab>('basic')
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false)
   const [revision, setRevision] = useState(0)
+  const [autoLat, setAutoLat] = useState(true)
+  const [theaterArt, setTheaterArt] = useState<TheaterArt | null>(null)
+  const [artRevision, setArtRevision] = useState(0)
+  const [rulesLists, setRulesLists] = useState<RulesObjectLists>(emptyRulesObjectLists)
+  const [mapWidth, setMapWidth] = useState(session.document.width)
+  const [mapHeight, setMapHeight] = useState(session.document.height)
   const tubeStartRef = useRef<{ rx: number; ry: number } | null>(null)
+  const cliffStartRef = useRef<{ rx: number; ry: number } | null>(null)
   const doc = session.document
 
   const bump = useCallback((next: MapDocument) => {
     onChange(next)
     setRevision((value) => value + 1)
   }, [onChange])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!resourceContext) {
+      setTheaterArt(null)
+      return
+    }
+    void TheaterArt.load(resourceContext, doc.theater).then((art) => {
+      if (cancelled) return
+      if (art) art.onUpdate = () => setArtRevision((value) => value + 1)
+      setTheaterArt(art)
+    })
+    return () => { cancelled = true }
+  }, [doc.theater, resourceContext])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!resourceContext) {
+      setRulesLists(emptyRulesObjectLists())
+      return
+    }
+    void (async () => {
+      const file = await resourceContext.resolveFileFromOverlay('rulesmd.ini')
+        ?? await resourceContext.resolveFileFromOverlay('rules.ini')
+      if (cancelled || !file) return
+      setRulesLists(parseRulesObjectLists(file.readAsString()))
+    })()
+    return () => { cancelled = true }
+  }, [resourceContext])
 
   const handlePaint = useCallback((rx: number, ry: number) => {
     const working = doc
@@ -88,6 +137,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         break
       case 'tile':
         paintTile(working, rx, ry, tileNum, brush)
+        if (autoLat && theaterArt?.index) applyLatAt(working, rx, ry, theaterArt.index, brush + 1)
         break
       case 'ore':
         applyOreBrush(working, rx, ry)
@@ -167,16 +217,32 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
           tubeStartRef.current = null
         }
         break
+      case 'cliff':
+        if (!cliffStartRef.current) {
+          cliffStartRef.current = { rx, ry }
+        } else if (theaterArt?.index) {
+          placeCliffLine(working, cliffStartRef.current, { rx, ry }, theaterArt.index)
+          cliffStartRef.current = null
+        }
+        break
+      case 'shore':
+        if (theaterArt?.index) applyShoreAt(working, rx, ry, theaterArt.index)
+        break
+      case 'basenode': {
+        const house = working.houses.find((item) => item.name === owner)
+        house?.nodes.push({ type: objectName, rx, ry })
+        break
+      }
       default:
         break
     }
     setSelected({ rx, ry })
     bump(working)
-  }, [brush, bump, doc, objectName, overlayId, owner, tileNum, tool])
+  }, [autoLat, brush, bump, doc, objectName, overlayId, owner, theaterArt, tileNum, tool])
 
   const strokeRef = useRef<{ commit: () => void } | null>(null)
   const handleStrokeStart = useCallback(() => {
-    if (OBJECT_TOOLS.includes(tool) || tool === 'tube') {
+    if (OBJECT_TOOLS.includes(tool) || tool === 'tube' || tool === 'cliff' || tool === 'basenode') {
       const before = doc.toIniString()
       strokeRef.current = {
         commit: () => {
@@ -271,7 +337,18 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
           </label>
           <label className="mt-2 block text-xs text-gray-400">
             {t('mapEditor.objectName')}
-            <input className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={objectName} onChange={(event) => setObjectName(event.target.value)} />
+            <input className="mt-1 w-full rounded bg-gray-800 px-2 py-1" list="map-object-names" value={objectName} onChange={(event) => setObjectName(event.target.value)} />
+            <datalist id="map-object-names">
+              {(
+                tool === 'infantry' ? rulesLists.infantry
+                  : tool === 'unit' ? rulesLists.units
+                    : tool === 'aircraft' ? rulesLists.aircraft
+                      : tool === 'structure' ? rulesLists.structures
+                        : tool === 'terrain' ? rulesLists.terrain
+                          : tool === 'smudge' ? rulesLists.smudges
+                            : [...rulesLists.infantry, ...rulesLists.units, ...rulesLists.structures]
+              ).map((name) => <option key={name} value={name} />)}
+            </datalist>
           </label>
           <label className="mt-2 block text-xs text-gray-400">
             {t('mapEditor.tileId')}
@@ -280,7 +357,33 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
           <label className="mt-2 block text-xs text-gray-400">
             {t('mapEditor.overlayId')}
             <input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={overlayId} onChange={(event) => setOverlayId(Number(event.target.value))} />
+            {rulesLists.overlays.length > 0 && (
+              <select className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={overlayId} onChange={(event) => setOverlayId(Number(event.target.value))}>
+                {rulesLists.overlays.map((name, index) => <option key={`${index}-${name}`} value={index}>{index} {name}</option>)}
+              </select>
+            )}
           </label>
+          <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
+            <input type="checkbox" checked={autoLat} onChange={(event) => setAutoLat(event.target.checked)} />
+            {t('mapEditor.autoLat')}
+          </label>
+          <div className="mt-3 text-xs text-gray-400">{t('mapEditor.tileSets')}</div>
+          <div className="mt-1 max-h-48 overflow-y-auto rounded border border-gray-800" data-testid="map-tileset-browser">
+            {theaterArt?.index?.sets.map((set) => (
+              <button
+                key={set.setIndex}
+                type="button"
+                className={`block w-full truncate px-2 py-1 text-left text-[11px] ${tileNum >= set.startTileNum && tileNum < set.startTileNum + set.tilesInSet ? 'bg-blue-700' : 'hover:bg-gray-800'}`}
+                onClick={() => {
+                  setTileNum(set.startTileNum)
+                  setTool('tile')
+                }}
+              >
+                {set.setIndex} {set.setName}
+              </button>
+            ))}
+            {!theaterArt && <p className="px-2 py-2 text-[11px] text-gray-500">{t('mapEditor.theaterMissing')}</p>}
+          </div>
         </aside>
 
         <div className="relative min-w-0 flex-1">
@@ -292,6 +395,8 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             panY={panY}
             scale={scale}
             selected={selected}
+            theaterArt={theaterArt}
+            artRevision={artRevision}
             onPanChange={(nextX, nextY) => {
               setPanX(nextX)
               setPanY(nextY)
@@ -315,7 +420,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
 
         <aside className="hidden w-72 flex-shrink-0 overflow-y-auto border-l border-gray-800 bg-gray-900 p-2 lg:block" data-testid="map-logic-panel">
           <div className="mb-2 flex flex-wrap gap-1">
-            {(['basic', 'houses', 'triggers', 'teams', 'lighting', 'tubes'] as LogicTab[]).map((tab) => (
+            {(['basic', 'houses', 'triggers', 'teams', 'ai', 'lighting', 'tubes'] as LogicTab[]).map((tab) => (
               <button key={tab} type="button" className={`rounded px-2 py-1 text-xs ${logicTab === tab ? 'bg-blue-600' : 'bg-gray-800'}`} onClick={() => setLogicTab(tab)}>
                 {t(`mapEditor.tab_${tab}` as never)}
               </button>
@@ -325,6 +430,20 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             <div className="space-y-2 text-sm">
               <label className="block">{t('mapEditor.mapName')}<input className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={doc.basic.name} onChange={(event) => { doc.basic.name = event.target.value; bump(doc) }} /></label>
               <label className="block">{t('mapEditor.player')}<input className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={doc.basic.player} onChange={(event) => { doc.basic.player = event.target.value; bump(doc) }} /></label>
+              <div className="flex gap-2">
+                <label className="block flex-1">{t('mapEditor.width')}<input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={mapWidth} onChange={(event) => setMapWidth(Number(event.target.value))} /></label>
+                <label className="block flex-1">{t('mapEditor.height')}<input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={mapHeight} onChange={(event) => setMapHeight(Number(event.target.value))} /></label>
+              </div>
+              <button type="button" className="rounded bg-gray-800 px-2 py-1" onClick={() => {
+                const error = resizeMap(doc, mapWidth, mapHeight)
+                if (!error) bump(doc)
+              }}>{t('mapEditor.resize')}</button>
+              <div className="text-xs text-gray-400">{t('mapEditor.validate')}</div>
+              <ul className="max-h-32 overflow-y-auto text-[11px] text-amber-300" data-testid="map-validate">
+                {validateMap(doc).map((issue) => <li key={`${issue.code}-${issue.message}`}>{issue.message}</li>)}
+              </ul>
+              <div className="text-xs font-medium text-gray-300">{t('mapEditor.objectProps')}</div>
+              <ObjectInspector doc={doc} selected={selected} bump={bump} />
             </div>
           )}
           {logicTab === 'lighting' && (
@@ -348,30 +467,22 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                   <label className="mt-1 block text-xs">IQ
                     <input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={house.iq} onChange={(event) => { doc.houses[index].iq = Number(event.target.value); bump(doc) }} />
                   </label>
+                  <label className="mt-1 block text-xs">TechLevel
+                    <input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={house.techLevel} onChange={(event) => { doc.houses[index].techLevel = Number(event.target.value); bump(doc) }} />
+                  </label>
+                  <div className="mt-1 text-[11px] text-gray-400">Nodes: {house.nodes.length}</div>
+                  {house.nodes.map((node, nodeIndex) => (
+                    <div key={`${house.name}-${nodeIndex}`} className="mt-1 flex gap-1 text-[11px]">
+                      <input className="w-16 rounded bg-gray-800 px-1" value={node.type} onChange={(event) => { node.type = event.target.value; bump(doc) }} />
+                      <span>{node.rx},{node.ry}</span>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
           )}
           {logicTab === 'triggers' && (
-            <div className="space-y-2 text-sm">
-              <button type="button" className="rounded bg-gray-800 px-2 py-1" onClick={() => {
-                const id = createMapObjectId()
-                doc.triggers.push({
-                  id, houseName: owner, attachedTriggerId: '<none>', name: 'New Trigger',
-                  disabled: false, easy: true, medium: true, hard: true,
-                  events: [{ type: 13, paramKind: 0, params: ['10'] }],
-                  actions: [{ type: 11, params: ['0', '0', '0', '0', '0', '0', '0'] }],
-                })
-                doc.tags.push({ id: createMapObjectId(), repeatType: 2, name: 'New Tag', triggerId: id })
-                bump(doc)
-              }}>{t('mapEditor.addTrigger')}</button>
-              {doc.triggers.map((trigger, index) => (
-                <div key={trigger.id} className="rounded border border-gray-800 p-2">
-                  <input className="w-full rounded bg-gray-800 px-2 py-1" value={trigger.name} onChange={(event) => { doc.triggers[index].name = event.target.value; bump(doc) }} />
-                  <div className="mt-1 text-xs text-gray-400">{trigger.id} / events {trigger.events.length} / actions {trigger.actions.length}</div>
-                </div>
-              ))}
-            </div>
+            <TriggerLogicPanel doc={doc} owner={owner} bump={bump} />
           )}
           {logicTab === 'teams' && (
             <div className="space-y-2 text-sm">
@@ -392,7 +503,102 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                 bump(doc)
               }}>{t('mapEditor.addTeam')}</button>
               {doc.teams.map((team) => (
-                <div key={team.id} className="rounded border border-gray-800 p-2">{team.name} ({team.houseName})</div>
+                <div key={team.id} className="rounded border border-gray-800 p-2 space-y-1">
+                  <input className="w-full rounded bg-gray-800 px-2 py-1" value={team.name} onChange={(event) => { team.name = event.target.value; bump(doc) }} />
+                  <label className="block text-[11px] text-gray-400">House
+                    <select className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={team.houseName} onChange={(event) => { team.houseName = event.target.value; bump(doc) }}>
+                      {doc.houses.map((house) => <option key={house.name} value={house.name}>{house.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="block text-[11px] text-gray-400">Script
+                    <select className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={team.script} onChange={(event) => { team.script = event.target.value; bump(doc) }}>
+                      {doc.scripts.map((script) => <option key={script.id} value={script.id}>{script.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="block text-[11px] text-gray-400">TaskForce
+                    <select className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={team.taskForce} onChange={(event) => { team.taskForce = event.target.value; bump(doc) }}>
+                      {doc.taskForces.map((force) => <option key={force.id} value={force.id}>{force.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="block text-[11px] text-gray-400">Waypoint
+                    <input type="number" className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={team.waypoint} onChange={(event) => { team.waypoint = Number(event.target.value); bump(doc) }} />
+                  </label>
+                  {(['aggressive', 'autocreate', 'reinforce', 'suicide', 'recruiter'] as const).map((flag) => (
+                    <label key={flag} className="mr-2 inline-flex items-center gap-1 text-[11px] text-gray-400">
+                      <input type="checkbox" checked={team[flag]} onChange={(event) => { team[flag] = event.target.checked; bump(doc) }} />
+                      {flag}
+                    </label>
+                  ))}
+                  <div className="text-[11px] text-gray-500">{team.id}</div>
+                </div>
+              ))}
+              {doc.scripts.map((script) => (
+                <div key={script.id} className="rounded border border-gray-800 p-2 text-xs">
+                  <div className="font-medium">Script {script.name}</div>
+                  {script.actions.map((action, actionIndex) => (
+                    <div key={actionIndex} className="mt-1 flex gap-1">
+                      <input type="number" className="w-16 rounded bg-gray-800 px-1" value={action.type} onChange={(event) => { action.type = Number(event.target.value); bump(doc) }} />
+                      <input className="flex-1 rounded bg-gray-800 px-1" value={action.argument} onChange={(event) => { action.argument = event.target.value; bump(doc) }} />
+                    </div>
+                  ))}
+                  <button type="button" className="mt-1 text-sky-400" onClick={() => { script.actions.push({ type: 0, argument: '0' }); bump(doc) }}>+ action</button>
+                </div>
+              ))}
+              {doc.taskForces.map((force) => (
+                <div key={force.id} className="rounded border border-gray-800 p-2 text-xs">
+                  <div className="font-medium">TaskForce {force.name}</div>
+                  {force.entries.map((entry, entryIndex) => (
+                    <div key={entryIndex} className="mt-1 flex gap-1">
+                      <input type="number" className="w-12 rounded bg-gray-800 px-1" value={entry.count} onChange={(event) => { entry.count = Number(event.target.value); bump(doc) }} />
+                      <input className="flex-1 rounded bg-gray-800 px-1" value={entry.objectName} onChange={(event) => { entry.objectName = event.target.value; bump(doc) }} />
+                    </div>
+                  ))}
+                  <button type="button" className="mt-1 text-sky-400" onClick={() => { force.entries.push({ count: 1, objectName: 'E1' }); bump(doc) }}>+ unit</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {logicTab === 'ai' && (
+            <div className="space-y-2 text-sm" data-testid="map-ai-panel">
+              <button type="button" className="rounded bg-gray-800 px-2 py-1" onClick={() => {
+                doc.aiTriggers.push({
+                  id: createMapObjectId(),
+                  name: 'AI Trigger',
+                  team1: doc.teams[0]?.id ?? '<none>',
+                  ownerHouse: owner,
+                  techLevel: 0,
+                  conditionType: -1,
+                  conditionObject: '<none>',
+                  comparator: '0',
+                  startingCredits: 0,
+                  sideIndex: 0,
+                  baseDefense: false,
+                  team2: '<none>',
+                  enabledEasy: true,
+                  enabledMedium: true,
+                  enabledHard: true,
+                  raw: '',
+                })
+                bump(doc)
+              }}>Add AITrigger</button>
+              {doc.aiTriggers.map((trigger) => (
+                <div key={trigger.id} className="rounded border border-gray-800 p-2 space-y-1">
+                  <input className="w-full rounded bg-gray-800 px-2 py-1" value={trigger.name} onChange={(event) => { trigger.name = event.target.value; bump(doc) }} />
+                  <label className="block text-[11px] text-gray-400">Team
+                    <select className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={trigger.team1} onChange={(event) => { trigger.team1 = event.target.value; bump(doc) }}>
+                      <option value="<none>">&lt;none&gt;</option>
+                      {doc.teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="block text-[11px] text-gray-400">House
+                    <select className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={trigger.ownerHouse} onChange={(event) => { trigger.ownerHouse = event.target.value; bump(doc) }}>
+                      {doc.houses.map((house) => <option key={house.name} value={house.name}>{house.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="block text-[11px] text-gray-400">Credits
+                    <input type="number" className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={trigger.startingCredits} onChange={(event) => { trigger.startingCredits = Number(event.target.value); bump(doc) }} />
+                  </label>
+                </div>
               ))}
             </div>
           )}
@@ -404,6 +610,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                 </div>
               ))}
               <p className="text-xs text-gray-400">{t('mapEditor.tubeHint')}</p>
+              <p className="text-xs text-gray-400">{t('mapEditor.cliffHint')}</p>
             </div>
           )}
         </aside>

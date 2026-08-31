@@ -14,10 +14,9 @@
 |------|-----|------|
 | P0 文档模型 | `map-editor-p0-document` | INI + IsoMapPack5/OverlayPack 编解码；新建/打开/保存往返 |
 | P1 视口 | `map-editor-p1-viewport` | 等距画布、缩放平移、小地图、触摸手势 |
-| P2 地形 | `map-editor-p2-terrain` | 刷地/高程/LAT/Overlay/悬崖/平整 |
-| P3 对象 | `map-editor-p3-objects` | 步兵/载具/飞机/建筑/地形物/污痕/航点/CellTag/Node |
-| P4 逻辑 | `map-editor-p4-logic` | Houses、Triggers、Tags、Scripts、TaskForces、Teams、AITriggers、Lighting、Tubes、Basic |
-| P5 移动端 | `map-editor-p5-touch` | 窄屏工具盘、双指缩放、长按属性、不挡画布 |
+| P1 编辑器 | `map-editor-p1-editor` | 新建/读写/对象/逻辑面板/触摸工具盘 |
+| P2 剧院 | `map-editor-p2-theater` | theater.ini + TMP 等距渲染、瓦片浏览器、AutoLAT、悬崖/岸线 |
+| P3 逻辑 | `map-editor-p3-logic` | FAData 触发器参数、AITrigger、Base Node、改尺寸、校验、对象属性 |
 | P6 测试与交付 | `map-editor-p6-tests` | 单元 + 组件 + e2e；阶段 tag 齐全 |
 
 ## 验收标准

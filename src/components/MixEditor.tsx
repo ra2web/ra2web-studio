@@ -4239,6 +4239,7 @@ const MixEditor: React.FC = () => {
           onSave={() => { void handleSaveMap() }}
           onExit={() => { void handleExitMapEdit() }}
           saving={mapSaving}
+          resourceContext={resourceContext}
         />
       )}
 
