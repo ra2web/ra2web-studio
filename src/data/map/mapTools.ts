@@ -5,6 +5,8 @@ export type MapEditorTool =
   | 'select'
   | 'raise'
   | 'lower'
+  | 'raiseTile'
+  | 'lowerTile'
   | 'flatten'
   | 'tile'
   | 'overlay'
@@ -36,7 +38,7 @@ export type MapEditorTool =
   | 'hideTileset'
   | 'hideField'
 
-export const TERRAIN_TOOLS: MapEditorTool[] = ['raise', 'lower', 'flatten', 'tile', 'cliff', 'cliffFront', 'cliffBack', 'shore']
+export const TERRAIN_TOOLS: MapEditorTool[] = ['raise', 'lower', 'raiseTile', 'lowerTile', 'flatten', 'tile', 'cliff', 'cliffFront', 'cliffBack', 'shore']
 export const OVERLAY_TOOLS: MapEditorTool[] = ['overlay', 'ore', 'gems', 'veinhole', 'veins', 'eraseOverlay', 'wall', 'bridge']
 export const OBJECT_TOOLS: MapEditorTool[] = [
   'infantry', 'unit', 'aircraft', 'structure', 'terrain', 'smudge', 'waypoint', 'celltag', 'eraseObject', 'randomTerrain',

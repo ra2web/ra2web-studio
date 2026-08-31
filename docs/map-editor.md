@@ -27,7 +27,8 @@
 | P11 坡度与改尺寸 | `map-editor-p11-slopes-resize` | FA2 CreateSlopesAt、ResizeMap left/top、全图改高度、CAll 式 INI 编辑、Tags 面板 |
 | P12 高程传播与整图 | `map-editor-p12-autolevel` | FA2 ChangeTileHeight/AutoLevel、OverlayData、整图拷贝、AITriggerTypesEnable |
 | P13 脚本交互与隐藏 | `map-editor-p13-scripts-ui` | UserScripts 交互命令（Message/Ask/UInput*/AddTrigger）、Cloak 隐藏瓦片集/格子（仅显示） |
-| P14 测试与交付 | `map-editor-p14-tests` | 单元 + 组件 + e2e；阶段 tag 齐全；对照 FA2 剩余编辑面 |
+| P14 单格高程与队伍 | `map-editor-p14-teams-tile` | FA2 Raise/Lower Tile（SetHeightAt）、TeamTypes 全字段、ScriptTypes TMissions、单人过场字段 |
+| P15 测试与交付 | `map-editor-p15-tests` | 单元 + 组件 + e2e；阶段 tag 齐全；对照 FA2 剩余编辑面 |
 
 ## 验收标准
 
@@ -45,7 +46,7 @@
 - 游戏内 Play 启动
 - 完整 Marble Madness 美术替换（可保留开关位）
 
-## 对照 FA2 仍待移植（P14+）
+## 对照 FA2 仍待移植（P15+）
 
 - 真 `marble.mix` Marble Madness 美术（见非目标）
-- FA2 其余次要 IsoView 面（HEIGHTENTILE 单格抬高菜单项等；抬高笔刷已覆盖同类操作）
+- FA2 选项类/插件面（MapTool DLL、建筑轮廓、Simple view、游戏内 Play）

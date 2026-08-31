@@ -234,6 +234,62 @@ export type MapTeamType = {
   useTransportOrigin: boolean
   areTeamMembersRecruitable: boolean
   onlyTargetHouseEnemy: boolean
+  /** FA2 TeamTypes `Whiner`。 */
+  whiner: boolean
+  avoidThreats: boolean
+  ionImmune: boolean
+  isBaseDefense: boolean
+  /** FA2 YR `MindControlDecision`。 */
+  mindControlDecision: number
+}
+
+export const TEAM_BOOL_FLAGS = [
+  'whiner', 'avoidThreats', 'ionImmune', 'isBaseDefense',
+  'aggressive', 'annoyance', 'autocreate', 'droppod', 'full', 'guardSlower',
+  'loadable', 'looseRecruit', 'onTransOnly', 'prebuild', 'recruiter', 'reinforce',
+  'suicide', 'transportsReturnOnUnload', 'useTransportOrigin',
+  'areTeamMembersRecruitable', 'onlyTargetHouseEnemy',
+] as const
+
+/** FA2 `CTeamTypes::OnNewteamtype` 默认值。 */
+export function defaultTeamType(id: string, houseName: string): MapTeamType {
+  return {
+    id,
+    name: 'New teamtype',
+    houseName,
+    script: '<none>',
+    taskForce: '<none>',
+    tag: '<none>',
+    waypoint: -1,
+    transportWaypoint: -1,
+    veteranLevel: 1,
+    max: 5,
+    priority: 5,
+    techLevel: 0,
+    group: -1,
+    aggressive: false,
+    annoyance: false,
+    autocreate: true,
+    droppod: false,
+    full: true,
+    guardSlower: false,
+    loadable: false,
+    looseRecruit: false,
+    onTransOnly: false,
+    prebuild: false,
+    recruiter: false,
+    reinforce: false,
+    suicide: false,
+    transportsReturnOnUnload: false,
+    useTransportOrigin: false,
+    areTeamMembersRecruitable: false,
+    onlyTargetHouseEnemy: false,
+    whiner: false,
+    avoidThreats: false,
+    ionImmune: false,
+    isBaseDefense: false,
+    mindControlDecision: 0,
+  }
 }
 
 export type MapAiTrigger = {

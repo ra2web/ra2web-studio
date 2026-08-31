@@ -1047,6 +1047,11 @@ function readTeams(ini: MapIni): MapTeamType[] {
       useTransportOrigin: false,
       areTeamMembersRecruitable: false,
       onlyTargetHouseEnemy: false,
+      whiner: false,
+      avoidThreats: false,
+      ionImmune: false,
+      isBaseDefense: false,
+      mindControlDecision: 0,
     }
     if (!section) return team
     const values = Object.fromEntries(section.entries.map((item) => [item.key.toLowerCase(), item.value]))
@@ -1079,6 +1084,11 @@ function readTeams(ini: MapIni): MapTeamType[] {
     team.useTransportOrigin = parseBool(values.usetransportorigin || '')
     team.areTeamMembersRecruitable = parseBool(values.areteammembersrecruitable || '')
     team.onlyTargetHouseEnemy = parseBool(values.onlytargethouseenemy || '')
+    team.whiner = parseBool(values.whiner || '')
+    team.avoidThreats = parseBool(values.avoidthreats || '')
+    team.ionImmune = parseBool(values.ionimmune || '')
+    team.isBaseDefense = parseBool(values.isbasedefense || '')
+    team.mindControlDecision = Number(values.mindcontroldecision ?? 0) || 0
     return team
   })
 }
@@ -1119,6 +1129,11 @@ function writeTeams(ini: MapIni, items: MapTeamType[]): void {
       { key: 'UseTransportOrigin', value: yn(item.useTransportOrigin) },
       { key: 'AreTeamMembersRecruitable', value: yn(item.areTeamMembersRecruitable) },
       { key: 'OnlyTargetHouseEnemy', value: yn(item.onlyTargetHouseEnemy) },
+      { key: 'Whiner', value: yn(item.whiner) },
+      { key: 'AvoidThreats', value: yn(item.avoidThreats) },
+      { key: 'IonImmune', value: yn(item.ionImmune) },
+      { key: 'IsBaseDefense', value: yn(item.isBaseDefense) },
+      { key: 'MindControlDecision', value: String(item.mindControlDecision) },
     ])
   }
 }

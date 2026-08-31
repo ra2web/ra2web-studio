@@ -1,0 +1,72 @@
+/** FA2 `ScriptTypes.cpp` `TMissions` / `TMissionsHelp`。 */
+export type FaScriptMission = {
+  id: number
+  name: string
+  help: string
+}
+
+export const FA2_SCRIPT_MISSIONS: FaScriptMission[] = [
+  { id: 0, name: 'Attack...', help: 'Attack some general target' },
+  { id: 1, name: 'Attack Waypoint...', help: 'Attack anything nearby the specified waypoint' },
+  { id: 2, name: 'Go Berzerk', help: 'Cyborg members of the team will go berzerk.' },
+  { id: 3, name: 'Move to waypoint...', help: 'Orders the team to move to a waypoint on the map' },
+  { id: 4, name: 'Move to Cell...', help: 'Orders the team to move to a specific cell on the map' },
+  { id: 5, name: 'Guard area (timer ticks)...', help: 'Guard an area for a specified amount of time' },
+  { id: 6, name: 'Jump to line #...', help: 'Move to a new line number in the script.  Used for loops.' },
+  { id: 7, name: 'Player wins', help: 'Duh' },
+  { id: 8, name: 'Unload...', help: 'Unloads all loaded units.' },
+  { id: 9, name: 'Deploy', help: 'Causes all deployable units in the team to deploy' },
+  { id: 10, name: 'Follow friendlies', help: 'Causes the team to follow the nearest friendly unit' },
+  { id: 11, name: 'Do this...', help: 'Give all team members the specified mission' },
+  { id: 12, name: 'Set global...', help: 'Sets a global variable' },
+  { id: 13, name: 'Idle Anim...', help: 'Causes team members to enter their idle animation' },
+  { id: 14, name: 'Load onto Transport', help: 'Causes all units to load into transports, if able' },
+  { id: 15, name: 'Spy on bldg @ waypt...', help: '**OBSOLETE**' },
+  { id: 16, name: 'Patrol to waypoint...', help: 'Move to a waypoint while scanning for enemies' },
+  { id: 17, name: 'Change script...', help: 'Causes the team to start using a new script' },
+  { id: 18, name: 'Change team...', help: 'Causes the team to switch team types' },
+  { id: 19, name: 'Panic', help: 'Causes all units in the team to panic' },
+  { id: 20, name: 'Change house...', help: 'All units in the team switch houses' },
+  { id: 21, name: 'Scatter', help: 'Tells all units to scatter' },
+  { id: 22, name: 'Goto nearby shroud', help: 'Causes units to flee to a shrouded cell' },
+  { id: 23, name: 'Player loses', help: 'Causes the player to lose' },
+  { id: 24, name: 'Play speech...', help: 'Plays the specified voice file' },
+  { id: 25, name: 'Play sound...', help: 'Plays the specified sound file' },
+  { id: 26, name: 'Play movie...', help: 'Plays the specified movie file' },
+  { id: 27, name: 'Play music...', help: 'Plays the specified theme' },
+  { id: 28, name: 'Reduce tiberium', help: 'Reduces the amount of tiberium around team members' },
+  { id: 29, name: 'Begin production', help: 'Signals the owning house to begin production' },
+  { id: 30, name: 'Fire sale', help: 'Causes an AI house to sell all of its buildings and do a Braveheart' },
+  { id: 31, name: 'Self destruct', help: 'Causes all team members to self destruct' },
+  { id: 32, name: 'Ion storm start in...', help: 'Causes an ion storm to begin at the specified time' },
+  { id: 33, name: 'Ion storn end', help: 'Causes an ion storm to end' },
+  { id: 34, name: 'Center view on team (speed)...', help: 'Center view on team (speed)...' },
+  { id: 35, name: 'Reshroud map', help: 'Reshrouds the map' },
+  { id: 36, name: 'Reveal map', help: 'Reveals the map' },
+  { id: 37, name: 'Delete team members', help: 'Delete all members from the team' },
+  { id: 38, name: 'Clear global...', help: 'Clears the specified global variable' },
+  { id: 39, name: 'Set local...', help: 'Sets the specified local variable' },
+  { id: 40, name: 'Clear local...', help: 'Clears the specified local variable' },
+  { id: 41, name: 'Unpanic', help: 'Causes all team members to stop panicking' },
+  { id: 42, name: 'Force facing...', help: 'Forces team members to face a certain direction' },
+  { id: 43, name: 'Wait till fully loaded', help: 'Waits until all transports are full' },
+  { id: 44, name: 'Truck unload', help: 'Causes all trucks to unload their crates (ie, change imagery)' },
+  { id: 45, name: 'Truck load', help: 'Causes all trucks to load crates (ie, change imagery)' },
+  { id: 46, name: 'Attack enemy building', help: 'Attack a specific type of building with the specified property' },
+  { id: 47, name: 'Moveto enemy building', help: 'Move to a specific type of building with the specified property' },
+  { id: 48, name: 'Scout', help: 'The team will scout the bases of the players that have not been scouted' },
+  { id: 49, name: 'Success', help: 'Record a team as having successfully accomplished its mission.' },
+  { id: 50, name: 'Flash', help: 'Flashes a team for a period of team.' },
+  { id: 51, name: 'Play Anim', help: 'Plays an anim over every unit in the team.' },
+  { id: 52, name: 'Talk Bubble', help: 'Displays talk bubble over first unit in the team.' },
+  { id: 53, name: 'Gather at Enemy', help: "Uses AISafeDistance to find a spot close to enemy's base to gather close." },
+  { id: 54, name: 'Gather at Base', help: 'Gathers outside own base perimeter.' },
+  { id: 55, name: 'Iron Curtain Me', help: 'Calls (and waits if nearly ready) for House to deliver Iron Curtain to Team.' },
+  { id: 56, name: 'Chrono Prep for ABwP', help: 'Teleports team to Building With Property, but needs similar attack order as next mission.' },
+  { id: 57, name: 'Chrono Prep for AQ', help: 'Teleports team to Attack Quarry, but needs similar attack order as next mission.' },
+  { id: 58, name: 'Move to own building', help: 'A BwP move that will only search through buildings owned by this house.' },
+]
+
+export function scriptMissionName(type: number): string {
+  return FA2_SCRIPT_MISSIONS[type]?.name ?? `Mission ${type}`
+}

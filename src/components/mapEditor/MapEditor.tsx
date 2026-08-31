@@ -28,6 +28,7 @@ import { useLocale } from '../../i18n/LocaleContext'
 import MapMiniMap from './MapMiniMap'
 import MapViewport, { type MapViewportPick } from './MapViewport'
 import ObjectInspector from './ObjectInspector'
+import TeamsLogicPanel from './TeamsLogicPanel'
 import TriggerLogicPanel from './TriggerLogicPanel'
 
 export type MapEditorSession = {
@@ -45,6 +46,8 @@ const TOOLS: { id: MapEditorTool; labelKey: string }[] = [
   { id: 'select', labelKey: 'mapEditor.toolSelect' },
   { id: 'raise', labelKey: 'mapEditor.toolRaise' },
   { id: 'lower', labelKey: 'mapEditor.toolLower' },
+  { id: 'raiseTile', labelKey: 'mapEditor.toolRaiseTile' },
+  { id: 'lowerTile', labelKey: 'mapEditor.toolLowerTile' },
   { id: 'flatten', labelKey: 'mapEditor.toolFlatten' },
   { id: 'tile', labelKey: 'mapEditor.toolTile' },
   { id: 'ore', labelKey: 'mapEditor.toolOre' },
@@ -230,6 +233,14 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         } else {
           paintHeight(working, rx, ry, -1, brush, heightRect ? 'rect' : 'diamond')
         }
+        break
+      case 'raiseTile':
+        paintHeight(working, rx, ry, 1, brush, 'rect')
+        if (slopeCorrection && theaterArt?.index) createSlopesAround(working, rx, ry, theaterArt.index, brush)
+        break
+      case 'lowerTile':
+        paintHeight(working, rx, ry, -1, brush, 'rect')
+        if (slopeCorrection && theaterArt?.index) createSlopesAround(working, rx, ry, theaterArt.index, brush)
         break
       case 'flatten':
         flattenHeight(working, rx, ry, brush)
@@ -760,6 +771,23 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             <div className="space-y-2 text-sm">
               <label className="block">{t('mapEditor.mapName')}<input className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={doc.basic.name} onChange={(event) => { doc.basic.name = event.target.value; bump(doc) }} /></label>
               <label className="block">{t('mapEditor.player')}<input className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={doc.basic.player} onChange={(event) => { doc.basic.player = event.target.value; bump(doc) }} /></label>
+              {([
+                ['nextScenario', 'mapEditor.nextScenario'],
+                ['altNextScenario', 'mapEditor.altNextScenario'],
+                ['intro', 'mapEditor.intro'],
+                ['brief', 'mapEditor.brief'],
+                ['win', 'mapEditor.win'],
+                ['lose', 'mapEditor.lose'],
+              ] as const).map(([key, labelKey]) => (
+                <label key={key} className="block">{t(labelKey as never)}
+                  <input
+                    className="mt-1 w-full rounded bg-gray-800 px-2 py-1"
+                    data-testid={`map-basic-${key}`}
+                    value={doc.basic[key]}
+                    onChange={(event) => { doc.basic[key] = event.target.value; bump(doc) }}
+                  />
+                </label>
+              ))}
               <div className="flex gap-2">
                 <label className="block flex-1">{t('mapEditor.width')}<input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={mapWidth} onChange={(event) => setMapWidth(Number(event.target.value))} /></label>
                 <label className="block flex-1">{t('mapEditor.height')}<input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={mapHeight} onChange={(event) => setMapHeight(Number(event.target.value))} /></label>
@@ -873,78 +901,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             <TriggerLogicPanel doc={doc} owner={owner} bump={bump} />
           )}
           {logicTab === 'teams' && (
-            <div className="space-y-2 text-sm">
-              <button type="button" className="rounded bg-gray-800 px-2 py-1" onClick={() => {
-                const scriptId = createMapObjectId()
-                const taskId = createMapObjectId()
-                const teamId = createMapObjectId()
-                doc.scripts.push({ id: scriptId, name: 'Script', actions: [{ type: 0, argument: '0' }] })
-                doc.taskForces.push({ id: taskId, name: 'Force', group: -1, entries: [{ count: 1, objectName: 'E1' }] })
-                doc.teams.push({
-                  id: teamId, name: 'Team', houseName: owner, script: scriptId, taskForce: taskId, tag: '<none>',
-                  waypoint: -1, transportWaypoint: -1, veteranLevel: 1, max: 1, priority: 5, techLevel: 0, group: -1,
-                  aggressive: false, annoyance: false, autocreate: false, droppod: false, full: false, guardSlower: false,
-                  loadable: false, looseRecruit: false, onTransOnly: false, prebuild: false, recruiter: false, reinforce: false,
-                  suicide: false, transportsReturnOnUnload: false, useTransportOrigin: false, areTeamMembersRecruitable: false,
-                  onlyTargetHouseEnemy: false,
-                })
-                bump(doc)
-              }}>{t('mapEditor.addTeam')}</button>
-              {doc.teams.map((team) => (
-                <div key={team.id} className="rounded border border-gray-800 p-2 space-y-1">
-                  <input className="w-full rounded bg-gray-800 px-2 py-1" value={team.name} onChange={(event) => { team.name = event.target.value; bump(doc) }} />
-                  <label className="block text-[11px] text-gray-400">House
-                    <select className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={team.houseName} onChange={(event) => { team.houseName = event.target.value; bump(doc) }}>
-                      {doc.houses.map((house) => <option key={house.name} value={house.name}>{house.name}</option>)}
-                    </select>
-                  </label>
-                  <label className="block text-[11px] text-gray-400">Script
-                    <select className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={team.script} onChange={(event) => { team.script = event.target.value; bump(doc) }}>
-                      {doc.scripts.map((script) => <option key={script.id} value={script.id}>{script.name}</option>)}
-                    </select>
-                  </label>
-                  <label className="block text-[11px] text-gray-400">TaskForce
-                    <select className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={team.taskForce} onChange={(event) => { team.taskForce = event.target.value; bump(doc) }}>
-                      {doc.taskForces.map((force) => <option key={force.id} value={force.id}>{force.name}</option>)}
-                    </select>
-                  </label>
-                  <label className="block text-[11px] text-gray-400">Waypoint
-                    <input type="number" className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={team.waypoint} onChange={(event) => { team.waypoint = Number(event.target.value); bump(doc) }} />
-                  </label>
-                  {(['aggressive', 'autocreate', 'reinforce', 'suicide', 'recruiter'] as const).map((flag) => (
-                    <label key={flag} className="mr-2 inline-flex items-center gap-1 text-[11px] text-gray-400">
-                      <input type="checkbox" checked={team[flag]} onChange={(event) => { team[flag] = event.target.checked; bump(doc) }} />
-                      {flag}
-                    </label>
-                  ))}
-                  <div className="text-[11px] text-gray-500">{team.id}</div>
-                </div>
-              ))}
-              {doc.scripts.map((script) => (
-                <div key={script.id} className="rounded border border-gray-800 p-2 text-xs">
-                  <div className="font-medium">Script {script.name}</div>
-                  {script.actions.map((action, actionIndex) => (
-                    <div key={actionIndex} className="mt-1 flex gap-1">
-                      <input type="number" className="w-16 rounded bg-gray-800 px-1" value={action.type} onChange={(event) => { action.type = Number(event.target.value); bump(doc) }} />
-                      <input className="flex-1 rounded bg-gray-800 px-1" value={action.argument} onChange={(event) => { action.argument = event.target.value; bump(doc) }} />
-                    </div>
-                  ))}
-                  <button type="button" className="mt-1 text-sky-400" onClick={() => { script.actions.push({ type: 0, argument: '0' }); bump(doc) }}>+ action</button>
-                </div>
-              ))}
-              {doc.taskForces.map((force) => (
-                <div key={force.id} className="rounded border border-gray-800 p-2 text-xs">
-                  <div className="font-medium">TaskForce {force.name}</div>
-                  {force.entries.map((entry, entryIndex) => (
-                    <div key={entryIndex} className="mt-1 flex gap-1">
-                      <input type="number" className="w-12 rounded bg-gray-800 px-1" value={entry.count} onChange={(event) => { entry.count = Number(event.target.value); bump(doc) }} />
-                      <input className="flex-1 rounded bg-gray-800 px-1" value={entry.objectName} onChange={(event) => { entry.objectName = event.target.value; bump(doc) }} />
-                    </div>
-                  ))}
-                  <button type="button" className="mt-1 text-sky-400" onClick={() => { force.entries.push({ count: 1, objectName: 'E1' }); bump(doc) }}>+ unit</button>
-                </div>
-              ))}
-            </div>
+            <TeamsLogicPanel doc={doc} owner={owner} bump={bump} />
           )}
           {logicTab === 'ai' && (
             <div className="space-y-2 text-sm" data-testid="map-ai-panel">

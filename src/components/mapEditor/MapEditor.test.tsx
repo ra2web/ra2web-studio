@@ -33,6 +33,8 @@ describe('MapEditor', () => {
     )
     expect(screen.getByTestId('map-editor')).toBeInTheDocument()
     expect(screen.getByText(/抬高地形|Raise ground/)).toBeInTheDocument()
+    expect(screen.getByText(/抬高单格|Raise tile/)).toBeInTheDocument()
+    expect(screen.getByText(/降低单格|Lower tile/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /触发器|Triggers/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /阵营|Houses/ })).toBeInTheDocument()
     expect(screen.getByTestId('map-minimap')).toBeInTheDocument()
@@ -166,6 +168,48 @@ describe('MapEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: /地图工具|Map tools/ }))
     fireEvent.click(screen.getByTestId('map-run-script'))
     expect(screen.getByTestId('map-script-report').textContent).toMatch(/16x16/)
+  })
+
+  it('raises a single tile without changing its tileNum', () => {
+    const session = makeSession()
+    const cell = session.document.getCell(12, 12)
+    cell.tileNum = 77
+    session.document.setCell(cell)
+    const origin = cell.height
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /抬高单格|Raise tile/ }))
+    fireEvent.click(screen.getByTestId('map-viewport'))
+    expect(session.document.getCell(12, 12).height).toBe(origin + 1)
+    expect(session.document.getCell(12, 12).tileNum).toBe(77)
+  })
+
+  it('creates a FA2 teamtype with Whiner/Autocreate and TMissions', () => {
+    const session = makeSession()
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /队伍|Teams/ }))
+    fireEvent.click(screen.getByTestId('map-add-script'))
+    fireEvent.click(screen.getByTestId('map-add-team'))
+    expect(screen.getByTestId('map-teams-panel').textContent).toMatch(/whiner/i)
+    expect(screen.getByTestId('map-teams-panel').textContent).toMatch(/isBaseDefense/)
+    expect(screen.getByTestId('map-script-mission')).toBeInTheDocument()
+    expect(session.document.teams[0]?.autocreate).toBe(true)
+    expect(session.document.teams[0]?.full).toBe(true)
+    expect(session.document.teams[0]?.max).toBe(5)
+    expect(session.document.toIniString()).toMatch(/Whiner=no/)
+    expect(session.document.toIniString()).toMatch(/New teamtype/)
+  })
+
+  it('edits FA2 single-player NextScenario', () => {
+    const session = makeSession()
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.change(screen.getByTestId('map-basic-nextScenario'), { target: { value: 'map02.md' } })
+    expect(session.document.basic.nextScenario).toBe('map02.md')
   })
 })
 

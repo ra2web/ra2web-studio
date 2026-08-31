@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { EMPTY_OVERLAY, THEATERS, validateMapSize } from './constants'
 import { forEachIsoCell, projectCell, unprojectCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
+import { defaultTeamType } from './types'
 import { MapCommandStack, paintHeight, paintTile } from './MapCommandStack'
 import { applyOreBrush } from './mapTools'
 
@@ -139,36 +140,19 @@ SmartAI=no
     doc.scripts.push({ id: 'scr00001', name: 'Hunt', actions: [{ type: 0, argument: '0' }] })
     doc.taskForces.push({ id: 'tsk00001', name: 'Tanks', group: -1, entries: [{ count: 3, objectName: 'MTNK' }] })
     doc.teams.push({
-      id: 'tem00001',
+      ...defaultTeamType('tem00001', 'Americans'),
       name: 'Attack',
-      houseName: 'Americans',
       script: 'scr00001',
       taskForce: 'tsk00001',
-      tag: '<none>',
       waypoint: 20,
-      transportWaypoint: -1,
-      veteranLevel: 1,
       max: 1,
       priority: 8,
-      techLevel: 0,
-      group: -1,
       aggressive: true,
-      annoyance: false,
       autocreate: true,
-      droppod: false,
       full: false,
-      guardSlower: false,
-      loadable: false,
-      looseRecruit: false,
-      onTransOnly: false,
-      prebuild: false,
-      recruiter: false,
-      reinforce: false,
-      suicide: false,
-      transportsReturnOnUnload: false,
-      useTransportOrigin: false,
-      areTeamMembersRecruitable: false,
-      onlyTargetHouseEnemy: false,
+      whiner: true,
+      isBaseDefense: true,
+      mindControlDecision: 2,
     })
     doc.tubes.push({
       id: '0',
@@ -201,6 +185,10 @@ SmartAI=no
     expect(back.scripts[0].name).toBe('Hunt')
     expect(back.taskForces[0].entries[0].objectName).toBe('MTNK')
     expect(back.teams[0].script).toBe('scr00001')
+    expect(back.teams[0].whiner).toBe(true)
+    expect(back.teams[0].isBaseDefense).toBe(true)
+    expect(back.teams[0].mindControlDecision).toBe(2)
+    expect(back.toIniString()).toMatch(/Whiner=yes/)
     expect(back.tubes[0].endX).toBe(12)
     expect(back.houses.some((house) => house.name === 'Russians')).toBe(true)
   })
@@ -255,5 +243,16 @@ describe('MapCommandStack', () => {
     expect(doc.getCell(12, 12).height).toBe(origin + 1)
     expect(doc.getCell(13, 13).height).toBe(origin + 1)
     expect(doc.getCell(14, 12).height).toBe(origin)
+  })
+
+  it('FA2 Raise Tile SetHeightAt ignores morphable and uses a rect brush', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const cell = doc.getCell(12, 12)
+    cell.tileNum = 99
+    doc.setCell(cell)
+    const origin = cell.height
+    paintHeight(doc, 12, 12, 1, 1, 'rect')
+    expect(doc.getCell(12, 12).height).toBe(origin + 1)
+    expect(doc.getCell(12, 12).tileNum).toBe(99)
   })
 })
