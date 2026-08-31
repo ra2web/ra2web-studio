@@ -185,3 +185,23 @@ export function pasteRegion(doc: MapDocument, clip: MapClipboard, destRx: number
     house?.nodes.push({ type: item.type, rx, ry })
   }
 }
+
+/** FA2 `CMapData::Copy()` 无参：整张 iso 菱形。 */
+export function copyWholeMap(doc: MapDocument): MapClipboard {
+  let minRx = Number.POSITIVE_INFINITY
+  let minRy = Number.POSITIVE_INFINITY
+  let maxRx = Number.NEGATIVE_INFINITY
+  let maxRy = Number.NEGATIVE_INFINITY
+  forEachIsoCell(doc.width, doc.height, ({ rx, ry }) => {
+    minRx = Math.min(minRx, rx)
+    minRy = Math.min(minRy, ry)
+    maxRx = Math.max(maxRx, rx)
+    maxRy = Math.max(maxRy, ry)
+  })
+  return copyRegion(doc, { minRx, minRy, maxRx, maxRy })
+}
+
+/** FA2 `Paste(isoSize/2, isoSize/2, 0)`：以目标格为中心贴回。 */
+export function pasteWholeMap(doc: MapDocument, clip: MapClipboard, destRx?: number, destRy?: number): void {
+  pasteRegion(doc, clip, destRx ?? Math.floor(doc.isoSize / 2), destRy ?? Math.floor(doc.isoSize / 2))
+}

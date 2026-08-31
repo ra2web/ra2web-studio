@@ -5,9 +5,10 @@ import {
 } from 'lucide-react'
 import { EMPTY_OVERLAY } from '../../data/map/constants'
 import { applyShoreAt, placeCliffLine } from '../../data/map/cliffShore'
-import { copyRegion, normalizeCopyRect, pasteRegion, type MapClipboard, type MapCopyRect } from '../../data/map/copyPaste'
+import { copyRegion, copyWholeMap, normalizeCopyRect, pasteRegion, pasteWholeMap, type MapClipboard, type MapCopyRect } from '../../data/map/copyPaste'
 import { autoCreateShores } from '../../data/map/fa2Shore'
 import { createSlopesAround, changeMapHeight } from '../../data/map/fa2Slopes'
+import { autoLevel, heightenGround, lookupFromTheater, lowerGround } from '../../data/map/fa2Height'
 import { applyIniEdit, isPackedIniSection, listIniKeys, listIniSections } from '../../data/map/fa2IniEdit'
 import { Fa2Tube, nextTubeId } from '../../data/map/fa2Tube'
 import { runUserScript } from '../../data/map/fa2UserScript'
@@ -89,6 +90,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [brush, setBrush] = useState(1)
   const [tileNum, setTileNum] = useState(0)
   const [overlayId, setOverlayId] = useState(102)
+  const [overlayDataValue, setOverlayDataValue] = useState(0)
   const [owner, setOwner] = useState('Americans')
   const [objectName, setObjectName] = useState('E1')
   const [panX, setPanX] = useState(80)
@@ -204,12 +206,26 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     const working = doc
     switch (tool) {
       case 'raise':
-        paintHeight(working, rx, ry, 1, brush, heightRect ? 'rect' : 'diamond')
-        if (slopeCorrection && theaterArt?.index) createSlopesAround(working, rx, ry, theaterArt.index, brush)
+        if (theaterArt?.index) {
+          heightenGround(working, rx, ry, lookupFromTheater(theaterArt.index, theaterArt.tileShapeMap()), theaterArt.index, {
+            brush,
+            rect: heightRect,
+            slopeCorrection,
+          })
+        } else {
+          paintHeight(working, rx, ry, 1, brush, heightRect ? 'rect' : 'diamond')
+        }
         break
       case 'lower':
-        paintHeight(working, rx, ry, -1, brush, heightRect ? 'rect' : 'diamond')
-        if (slopeCorrection && theaterArt?.index) createSlopesAround(working, rx, ry, theaterArt.index, brush)
+        if (theaterArt?.index) {
+          lowerGround(working, rx, ry, lookupFromTheater(theaterArt.index, theaterArt.tileShapeMap()), theaterArt.index, {
+            brush,
+            rect: heightRect,
+            slopeCorrection,
+          })
+        } else {
+          paintHeight(working, rx, ry, -1, brush, heightRect ? 'rect' : 'diamond')
+        }
         break
       case 'flatten':
         flattenHeight(working, rx, ry, brush)
@@ -245,7 +261,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         break
       case 'overlay':
       case 'wall':
-        working.setOverlay(rx, ry, overlayId, 0)
+        working.setOverlay(rx, ry, overlayId, overlayDataValue)
         handleTrail(working, rx, ry)
         break
       case 'eraseOverlay':
@@ -376,7 +392,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     }
     setSelected({ rx, ry })
     bump(working)
-  }, [autoLat, bridgeKind, brush, bump, doc, heightRect, objectName, oreRandom, overlayId, owner, rulesLists.terrain, slopeCorrection, theaterArt, tileNum, tool, tubeBidirectional])
+  }, [autoLat, bridgeKind, brush, bump, doc, heightRect, objectName, oreRandom, overlayDataValue, overlayId, owner, rulesLists.terrain, slopeCorrection, theaterArt, tileNum, tool, tubeBidirectional])
 
   const strokeRef = useRef<{ commit: () => void } | null>(null)
   const handleStrokeStart = useCallback(() => {
@@ -528,6 +544,10 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
               </select>
             )}
           </label>
+          <label className="mt-2 block text-xs text-gray-400">
+            {t('mapEditor.overlayData')}
+            <input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={overlayDataValue} onChange={(event) => setOverlayDataValue(Number(event.target.value))} data-testid="map-overlay-data" />
+          </label>
           {tool === 'wall' && (
             <label className="mt-2 block text-xs text-gray-400">
               {t('mapEditor.toolWall')}
@@ -584,6 +604,44 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             }}
           >
             {t('mapEditor.autoCreateShores')}
+          </button>
+          <button
+            type="button"
+            className="mt-2 w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
+            data-testid="map-auto-level"
+            onClick={() => {
+              const index = theaterArt?.index
+              if (!index) return
+              commitEdit('autoLevel', () => {
+                autoLevel(doc, lookupFromTheater(index, theaterArt.tileShapeMap()), index)
+              })
+            }}
+          >
+            {t('mapEditor.autoLevel')}
+          </button>
+          <button
+            type="button"
+            className="mt-2 w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
+            data-testid="map-copy-whole"
+            onClick={() => {
+              clipboardRef.current = copyWholeMap(doc)
+            }}
+          >
+            {t('mapEditor.copyWholeMap')}
+          </button>
+          <button
+            type="button"
+            className="mt-2 w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
+            data-testid="map-paste-whole"
+            onClick={() => {
+              const clip = clipboardRef.current
+              if (!clip) return
+              commitEdit('pasteWhole', () => {
+                pasteWholeMap(doc, clip, selected?.rx, selected?.ry)
+              })
+            }}
+          >
+            {t('mapEditor.pasteWholeMap')}
           </button>
           <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
             <input type="checkbox" checked={marbleMadness} onChange={(event) => setMarbleMadness(event.target.checked)} data-testid="map-marble-toggle" />
@@ -874,6 +932,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                   enabledHard: true,
                   raw: '',
                 })
+                doc.aiTriggerEnable[doc.aiTriggers[doc.aiTriggers.length - 1].id] = true
                 bump(doc)
               }}>Add AITrigger</button>
               {doc.aiTriggers.map((trigger) => (
@@ -892,6 +951,18 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                   </label>
                   <label className="block text-[11px] text-gray-400">Credits
                     <input type="number" className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={trigger.startingCredits} onChange={(event) => { trigger.startingCredits = Number(event.target.value); bump(doc) }} />
+                  </label>
+                  <label className="flex items-center gap-2 text-[11px] text-gray-400">
+                    <input
+                      type="checkbox"
+                      data-testid="map-ai-enable"
+                      checked={doc.aiTriggerEnable[trigger.id] !== false}
+                      onChange={(event) => {
+                        doc.aiTriggerEnable[trigger.id] = event.target.checked
+                        bump(doc)
+                      }}
+                    />
+                    {t('mapEditor.aiTriggerEnable')}
                   </label>
                 </div>
               ))}

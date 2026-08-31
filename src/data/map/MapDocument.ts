@@ -196,6 +196,8 @@ export class MapDocument {
   taskForces: MapTaskForce[] = []
   teams: MapTeamType[] = []
   aiTriggers: MapAiTrigger[] = []
+  /** FA2 `[AITriggerTypesEnable]`：值为 yes 的 ID。 */
+  aiTriggerEnable: Record<string, boolean> = {}
   tubes: MapTube[] = []
   variables: MapVariable[] = []
   extraSections: { name: string; entries: MapIniEntry[] }[] = []
@@ -422,6 +424,7 @@ export class MapDocument {
     doc.taskForces = readTaskForces(ini)
     doc.teams = readTeams(ini)
     doc.aiTriggers = readAiTriggers(ini)
+    doc.aiTriggerEnable = readAiTriggerEnable(ini)
     doc.tubes = (ini.getSection('Tubes')?.entries ?? []).map((entry) => {
       const fields = csv(entry.value).map(Number)
       const end = fields.indexOf(-1, 5)
@@ -548,6 +551,7 @@ export class MapDocument {
     this.taskForces = parsed.taskForces
     this.teams = parsed.teams
     this.aiTriggers = parsed.aiTriggers
+    this.aiTriggerEnable = parsed.aiTriggerEnable
     this.tubes = parsed.tubes
     this.variables = parsed.variables
     this.extraSections = parsed.extraSections
@@ -679,6 +683,9 @@ export class MapDocument {
       key: item.id,
       value: item.raw || serializeAiTrigger(item),
     })))
+    ini.replaceSection('AITriggerTypesEnable', Object.entries(this.aiTriggerEnable)
+      .filter(([, enabled]) => enabled)
+      .map(([id]) => ({ key: id, value: 'yes' })))
     ini.replaceSection('Tubes', this.tubes.map((item) => ({
       key: item.id,
       value: [item.startY, item.startX, item.startDir, item.endY, item.endX, ...item.parts, -1].join(','),
@@ -1148,6 +1155,15 @@ function serializeAiTrigger(item: MapAiTrigger): string {
     String(item.startingCredits), String(item.sideIndex), item.baseDefense ? '1' : '0',
     item.team2, item.enabledEasy ? '1' : '0', item.enabledMedium ? '1' : '0', item.enabledHard ? '1' : '0',
   ].join(',')
+}
+
+function readAiTriggerEnable(ini: MapIni): Record<string, boolean> {
+  const enabled: Record<string, boolean> = {}
+  for (const entry of ini.getSection('AITriggerTypesEnable')?.entries ?? []) {
+    const value = entry.value.trim().toLowerCase()
+    enabled[entry.key] = value === 'yes' || value === 'true' || value === '1'
+  }
+  return enabled
 }
 
 export function createMapObjectId(): string {

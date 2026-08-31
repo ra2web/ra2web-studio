@@ -904,6 +904,11 @@ export const en = {
     iniEditor: 'INI editor',
     tags: 'Tags',
     addTag: 'Add tag',
+    overlayData: 'Overlay data',
+    autoLevel: 'Auto level (FA2 AutoLevel)',
+    copyWholeMap: 'Copy whole map',
+    pasteWholeMap: 'Paste whole map',
+    aiTriggerEnable: 'Enable AI trigger (AITriggerTypesEnable)',
   },
 
   map: {

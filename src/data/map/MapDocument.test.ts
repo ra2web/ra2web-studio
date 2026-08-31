@@ -204,6 +204,32 @@ SmartAI=no
     expect(back.tubes[0].endX).toBe(12)
     expect(back.houses.some((house) => house.name === 'Russians')).toBe(true)
   })
+
+  it('round-trips AITriggerTypesEnable yes flags', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    doc.aiTriggers.push({
+      id: '010000AA',
+      name: 'Attack',
+      team1: '<none>',
+      ownerHouse: '<all>',
+      techLevel: 0,
+      conditionType: -1,
+      conditionObject: '<none>',
+      comparator: '0',
+      startingCredits: 0,
+      sideIndex: 0,
+      baseDefense: false,
+      team2: '<none>',
+      enabledEasy: true,
+      enabledMedium: true,
+      enabledHard: true,
+      raw: '',
+    })
+    doc.aiTriggerEnable['010000AA'] = true
+    const back = MapDocument.parse(doc.toIniString())
+    expect(back.aiTriggerEnable['010000AA']).toBe(true)
+    expect(back.toIniString()).toMatch(/\[AITriggerTypesEnable\]/)
+  })
 })
 
 describe('MapCommandStack', () => {

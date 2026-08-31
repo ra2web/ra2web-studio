@@ -57,6 +57,9 @@ describe('MapEditor', () => {
     expect(screen.getByTestId('map-search-waypoint')).toBeInTheDocument()
     expect(screen.getByTestId('map-height-rect')).toBeInTheDocument()
     expect(screen.getByTestId('map-auto-shore')).toBeInTheDocument()
+    expect(screen.getByTestId('map-auto-level')).toBeInTheDocument()
+    expect(screen.getByTestId('map-copy-whole')).toBeInTheDocument()
+    expect(screen.getByTestId('map-overlay-data')).toBeInTheDocument()
     expect(screen.getByTestId('map-ini-section')).toBeInTheDocument()
     expect(screen.getByTestId('map-change-height')).toBeInTheDocument()
     expect(screen.getByTestId('map-slope-correction')).toBeInTheDocument()
@@ -102,6 +105,28 @@ describe('MapEditor', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: /光照|Lighting/ }))
     expect(screen.getByTestId('map-special-flags')).toBeInTheDocument()
+  })
+
+  it('writes overlay data onto the painted cell', () => {
+    const session = makeSession()
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /^Overlay$/ }))
+    fireEvent.change(screen.getByTestId('map-overlay-data'), { target: { value: '5' } })
+    fireEvent.click(screen.getByTestId('map-viewport'))
+    expect(session.document.getOverlay(12, 12).value).toBe(5)
+  })
+
+  it('enables AITriggerTypesEnable when adding an AI trigger', () => {
+    const session = makeSession()
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /AI 触发|AI triggers/ }))
+    fireEvent.click(screen.getByText(/Add AITrigger/))
+    expect(screen.getByTestId('map-ai-enable')).toBeInTheDocument()
+    expect(Object.values(session.document.aiTriggerEnable).some(Boolean)).toBe(true)
   })
 
   it('exposes FAData event types after adding a trigger', async () => {

@@ -916,6 +916,11 @@ export const zh = {
     iniEditor: 'INI 编辑',
     tags: '标签',
     addTag: '添加标签',
+    overlayData: 'Overlay 数据',
+    autoLevel: '自动平整（FA2 AutoLevel）',
+    copyWholeMap: '复制整图',
+    pasteWholeMap: '粘贴整图',
+    aiTriggerEnable: '启用 AI 触发（AITriggerTypesEnable）',
   },
 
   // MapViewer

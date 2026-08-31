@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { EMPTY_OVERLAY } from './constants'
-import { copyRegion, normalizeCopyRect, pasteRegion } from './copyPaste'
+import { copyRegion, copyWholeMap, normalizeCopyRect, pasteRegion } from './copyPaste'
 import { forEachIsoCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
 
@@ -48,5 +48,16 @@ describe('copyRegion / pasteRegion', () => {
     expect(doc.getCell(dest.rx, dest.ry).tileNum).toBe(9)
     expect(doc.getOverlay(dest.rx, dest.ry).id).not.toBe(EMPTY_OVERLAY)
     expect(doc.units.some((unit) => unit.rx === dest.rx && unit.ry === dest.ry && unit.name === 'MTNK')).toBe(true)
+  })
+
+  it('copies the whole iso field like FA2 Copy()', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const [origin] = twoCells()
+    const cell = doc.getCell(origin.rx, origin.ry)
+    cell.tileNum = 11
+    doc.setCell(cell)
+    const clip = copyWholeMap(doc)
+    expect(clip.cells.length).toBeGreaterThan(1)
+    expect(clip.cells.some((item) => item.tileNum === 11)).toBe(true)
   })
 })

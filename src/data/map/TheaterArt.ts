@@ -122,6 +122,14 @@ export class TheaterArt {
     return this.cliffShapes.get(tileInSet)
   }
 
+  tileShape(tileNum: number): TmpTileShape | undefined {
+    return this.tileShapes.get(tileNum)
+  }
+
+  tileShapeMap(): Map<number, TmpTileShape> {
+    return this.tileShapes
+  }
+
   setTerrainType(setNum: number): number | undefined {
     return this.setTerrain.get(setNum)
   }
@@ -173,7 +181,13 @@ export class TheaterArt {
     const extra = TILE_TO_LAT.flatMap(([smooth, lat, target]) => (
       [smooth, lat, target].map((key) => rules.getGeneralValue(key)).filter((setNum) => setNum >= 0)
     ))
-    const unique = [...new Set([shoreNum, cliffNum, waterNum, ...extra].filter((setNum) => setNum >= 0))]
+    const unique = [...new Set([
+      shoreNum, cliffNum, waterNum,
+      rules.getGeneralValue('ClearTile'),
+      rules.getGeneralValue('RampBase'),
+      rules.getGeneralValue('RampSmooth'),
+      ...extra,
+    ].filter((setNum) => setNum >= 0))]
     const loaded = await Promise.all(unique.map((setNum) => loadSet(setNum)))
     const bySet = new Map(unique.map((setNum, index) => [setNum, loaded[index]]))
     const shore = shoreNum >= 0 ? bySet.get(shoreNum) : undefined
