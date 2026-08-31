@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { Pencil } from 'lucide-react'
 import { MixFileInfo } from '../../services/MixParser'
 import { useLocale } from '../../i18n/LocaleContext'
 import {
@@ -80,7 +81,8 @@ const MapViewer: React.FC<{
   mixFiles?: MixFileData[]
   target?: PreviewTarget | null
   resourceContext?: ResourceContext | null
-}> = ({ selectedFile, mixFiles, target }) => {
+  onEdit?: () => void
+}> = ({ selectedFile, mixFiles, target, onEdit }) => {
   const { t } = useLocale()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [loading, setLoading] = useState(false)
@@ -139,10 +141,22 @@ const MapViewer: React.FC<{
     <div className="w-full h-full flex flex-col">
       <div className="px-3 py-2 text-xs text-gray-400 border-b border-gray-700 flex items-center justify-between gap-3">
         <span>{t('map.title')}</span>
-        <span className="text-gray-500 truncate">
-          {source.resolved?.name || selectedFile}
-          {previewData ? ` · ${previewData.previewRect.width} x ${previewData.previewRect.height}` : ''}
-        </span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-gray-500 truncate">
+            {source.resolved?.name || selectedFile}
+            {previewData ? ` · ${previewData.previewRect.width} x ${previewData.previewRect.height}` : ''}
+          </span>
+          {onEdit && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-white hover:bg-blue-500"
+              onClick={onEdit}
+            >
+              <Pencil size={12} />
+              {t('mapEditor.editMap')}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 min-h-0 p-4 overflow-auto">

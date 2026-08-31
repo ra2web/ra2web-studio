@@ -77,5 +77,19 @@ export class Format80 {
       output[destinationIndex + i] = output[sourceIndex + i]
     }
   }
+
+  /** Literal-copy Format80. Count 0 (0x80) is EOF, so chunks are 1–63 bytes. */
+  static encode(input: Uint8Array): Uint8Array {
+    const out: number[] = []
+    let offset = 0
+    while (offset < input.length) {
+      const count = Math.min(63, input.length - offset)
+      out.push(0x80 | count)
+      for (let i = 0; i < count; i++) out.push(input[offset + i])
+      offset += count
+    }
+    out.push(0x80)
+    return new Uint8Array(out)
+  }
 }
 

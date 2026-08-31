@@ -87,6 +87,7 @@ interface PreviewPanelProps {
    * 点击后由 MixEditor 全屏 portal 接管。
    */
   onEnterVxlEdit?: () => void
+  onEnterMapEdit?: () => void
 }
 
 const PreviewPanel: React.FC<PreviewPanelProps> = ({
@@ -131,6 +132,7 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
   csfLoading = false,
   csfError = null,
   onEnterVxlEdit,
+  onEnterMapEdit,
 }) => {
   const { t } = useLocale()
 
@@ -550,6 +552,17 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
               )
             }
             // VxlViewer3D：项目模式下接 onEdit，toolbar 挂"编辑 VXL"按钮，点了进全屏 portal
+            if ((ext === 'map' || ext === 'mpr') && activeView === 'minimap') {
+              return (
+                <MapViewer
+                  selectedFile={selectedFile}
+                  mixFiles={mixFiles}
+                  target={target}
+                  resourceContext={resourceContext}
+                  onEdit={onEnterMapEdit}
+                />
+              )
+            }
             if (ext === 'vxl' && activeView === 'viewer3d') {
               return (
                 <VxlViewer3D

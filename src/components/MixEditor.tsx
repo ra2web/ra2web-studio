@@ -40,6 +40,9 @@ import {
 } from '../data/vxl/AnimMetadata'
 import VxlEditor, { type VxlEditorChangePayload } from './vxl/VxlEditor'
 import PalettePickerDialog, { type PaletteEntry } from './vxl/PalettePickerDialog'
+import MapEditor, { type MapEditorSession } from './mapEditor/MapEditor'
+import NewMapDialog, { type NewMapDialogResult } from './mapEditor/NewMapDialog'
+import { MapDocument } from '../data/map/MapDocument'
 import { GameResBootstrap } from '../services/gameRes/GameResBootstrap'
 import { GameResConfig } from '../services/gameRes/GameResConfig'
 import { FileSystemUtil } from '../services/gameRes/FileSystemUtil'
@@ -328,6 +331,10 @@ const MixEditor: React.FC = () => {
   const [vxlEditSession, setVxlEditSession] = useState<EditableVxlSession | null>(null)
   const [vxlEditMode, setVxlEditMode] = useState(false)
   const [vxlSaving, setVxlSaving] = useState(false)
+  const [mapEditSession, setMapEditSession] = useState<MapEditorSession | null>(null)
+  const [mapEditMode, setMapEditMode] = useState(false)
+  const [mapSaving, setMapSaving] = useState(false)
+  const [newMapDialogOpen, setNewMapDialogOpen] = useState(false)
   // 替换调色板对话框（VXL 编辑器内调用）
   const [palettePickerOpen, setPalettePickerOpen] = useState(false)
   const [palettePickerEntries, setPalettePickerEntries] = useState<PaletteEntry[]>([])
@@ -628,6 +635,7 @@ const MixEditor: React.FC = () => {
   const isPktSelected = ['ini', 'pkt', 'txt'].includes(selectedFileExtension)
   const isCsfSelected = selectedFileExtension === 'csf'
   const isVxlSelected = selectedFileExtension === 'vxl'
+  const isMapSelected = selectedFileExtension === 'map' || selectedFileExtension === 'mpr'
   const hasUnsavedPktChanges = useMemo(() => {
     if (!pktEditSession) return false
     return pktEditSession.draftContent !== pktEditSession.originalContent
@@ -647,6 +655,10 @@ const MixEditor: React.FC = () => {
     if (!animMetadataEquals(animOrigOrEmpty, vxlEditSession.anim)) return true
     return false
   }, [vxlEditSession])
+  const hasUnsavedMapChanges = useMemo(() => {
+    if (!mapEditSession) return false
+    return mapEditSession.document.toIniString() !== mapEditSession.original
+  }, [mapEditSession])
 
   const loadTextEntryContent = useCallback(async (): Promise<string> => {
     if (!currentPreviewTarget) throw new Error('No file selected')
@@ -689,6 +701,17 @@ const MixEditor: React.FC = () => {
     })
   }, [])
 
+  const discardMapEdits = useCallback(() => {
+    setMapEditSession((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        document: MapDocument.parse(prev.original),
+        error: null,
+      }
+    })
+  }, [])
+
   // 这两个 confirm helper 名字保持原样兼容（多处依赖 useCallback 引用），
   // 但都已升级为"任意脏 session 都会询问"——保证导航/模式切换时既不丢 PKT 也不丢 CSF/VXL。
   const confirmDiscardPktEdits = useCallback(async (): Promise<boolean> => {
@@ -719,10 +742,19 @@ const MixEditor: React.FC = () => {
       if (!confirmed) return false
       discardVxlEdits()
     }
+    if (hasUnsavedMapChanges) {
+      const confirmed = await dialog.confirmDanger({
+        title: t('mapEditor.confirmDiscardTitle'),
+        message: t('mapEditor.confirmDiscardMsg'),
+        confirmText: t('mapEditor.discard'),
+      })
+      if (!confirmed) return false
+      discardMapEdits()
+    }
     return true
   }, [
-    dialog, discardCsfEdits, discardPktEdits, discardVxlEdits,
-    hasUnsavedCsfChanges, hasUnsavedPktChanges, hasUnsavedVxlChanges, t,
+    dialog, discardCsfEdits, discardMapEdits, discardPktEdits, discardVxlEdits,
+    hasUnsavedCsfChanges, hasUnsavedMapChanges, hasUnsavedPktChanges, hasUnsavedVxlChanges, t,
   ])
 
   const restoreNavigation = useCallback(
@@ -2600,6 +2632,134 @@ const MixEditor: React.FC = () => {
     return isVxlSelected
   }, [activeProjectName, isVxlSelected, projectSelection, studioMode])
 
+  const canEnterMapEdit = useMemo(() => {
+    if (studioMode !== 'projects' || !activeProjectName) return false
+    if (projectSelection?.kind !== 'project-file') return false
+    return isMapSelected
+  }, [activeProjectName, isMapSelected, projectSelection, studioMode])
+
+  const handleEnterMapEdit = useCallback(async () => {
+    if (!isMapSelected) return
+    if (studioMode !== 'projects' || !activeProjectName) return
+    if (projectSelection?.kind !== 'project-file') return
+    const path = projectSelection.relativePath
+    setMapEditSession({
+      filePath: path,
+      original: '',
+      document: MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' }),
+      loading: true,
+      error: null,
+    })
+    setMapEditMode(true)
+    try {
+      const file = await ProjectService.readProjectFile(activeProjectName, path)
+      const text = await file.text()
+      const document = text.trim()
+        ? MapDocument.parse(text)
+        : MapDocument.create({ width: 50, height: 50, theater: 'TEMPERATE', name: getResourcePathBasename(path) })
+      const original = document.toIniString()
+      setMapEditSession({
+        filePath: path,
+        original,
+        document,
+        loading: false,
+        error: null,
+      })
+    } catch (error: any) {
+      setMapEditSession((prev) => prev ? { ...prev, loading: false, error: error?.message ?? String(error) } : prev)
+      await dialog.alert({
+        message: t('mapEditor.loadFailed', { error: error?.message ?? String(error) }),
+      })
+      setMapEditMode(false)
+    }
+  }, [activeProjectName, dialog, isMapSelected, projectSelection, studioMode, t])
+
+  const handleExitMapEdit = useCallback(async () => {
+    if (mapSaving) return
+    if (hasUnsavedMapChanges) {
+      const ok = await dialog.confirmDanger({
+        title: t('mapEditor.confirmDiscardTitle'),
+        message: t('mapEditor.confirmDiscardMsg'),
+        confirmText: t('mapEditor.discard'),
+      })
+      if (!ok) return
+    }
+    setMapEditMode(false)
+    setMapEditSession(null)
+  }, [dialog, hasUnsavedMapChanges, mapSaving, t])
+
+  const handleSaveMap = useCallback(async () => {
+    if (!mapEditSession || mapEditSession.loading) return
+    if (!activeProjectName) return
+    setMapSaving(true)
+    setProgressMessage(t('mixEditor.savingFile'))
+    try {
+      const text = mapEditSession.document.toIniString()
+      const filename = getResourcePathBasename(mapEditSession.filePath)
+      await ProjectService.writeProjectFile(
+        activeProjectName,
+        mapEditSession.filePath,
+        new File([text], filename, { type: 'text/plain' }),
+      )
+      await reloadStudioData(undefined, {
+        skipUnsavedGuard: true,
+        studioMode: 'projects',
+        activeProjectName,
+        projectSelectionPath: mapEditSession.filePath,
+      })
+      setMapEditSession((prev) => prev ? { ...prev, original: text } : prev)
+      showStatusNotice(t('mapEditor.saved'), 'success')
+    } catch (error: any) {
+      await dialog.alert({
+        message: t('mapEditor.saveFailed', { error: error?.message ?? String(error) }),
+      })
+    } finally {
+      setMapSaving(false)
+      setProgressMessage('')
+    }
+  }, [activeProjectName, dialog, mapEditSession, reloadStudioData, showStatusNotice, t])
+
+  const handleCreateNewMap = useCallback(async (result: NewMapDialogResult) => {
+    if (!activeProjectName) return
+    setNewMapDialogOpen(false)
+    let fileName = result.fileName.trim()
+    if (!/\.(map|mpr)$/i.test(fileName)) fileName += '.map'
+    const document = MapDocument.create({
+      width: result.width,
+      height: result.height,
+      theater: result.theater,
+      groundHeight: result.groundHeight,
+      multiplayer: result.multiplayer,
+      name: result.name,
+    })
+    const text = document.toIniString()
+    try {
+      await ProjectService.writeProjectFile(
+        activeProjectName,
+        fileName,
+        new File([text], fileName, { type: 'text/plain' }),
+      )
+      await reloadStudioData(undefined, {
+        skipUnsavedGuard: true,
+        studioMode: 'projects',
+        activeProjectName,
+        projectSelectionPath: fileName,
+      })
+      setMapEditSession({
+        filePath: fileName,
+        original: text,
+        document,
+        loading: false,
+        error: null,
+      })
+      setMapEditMode(true)
+    } catch (error: any) {
+      await dialog.alert({
+        message: t('mixEditor.createFileFailed', { error: error?.message || String(error) }),
+      })
+    }
+  }, [activeProjectName, dialog, reloadStudioData, t])
+
   /**
    * 收集所有可用调色板：
    *  - 当前项目里所有 .pal 文件（按相对路径）
@@ -3774,6 +3934,7 @@ const MixEditor: React.FC = () => {
             onOpenProjectArchivePicker={openProjectArchivePicker}
             onCreateProjectFolder={handleCreateProjectFolder}
             onCreateProjectFile={handleCreateProjectFile}
+            onCreateMap={() => setNewMapDialogOpen(true)}
           />
           {studioMode === 'base' ? (
             <div className="w-80 bg-gray-800 border-r border-gray-700">
@@ -3888,6 +4049,7 @@ const MixEditor: React.FC = () => {
                 })
               }}
               onEnterVxlEdit={canEnterVxlEdit ? () => { void handleEnterVxlEdit() } : undefined}
+              onEnterMapEdit={canEnterMapEdit ? () => { void handleEnterMapEdit() } : undefined}
               onBeforeViewChange={async () => confirmDiscardPktEdits()}
               onOpenRawExport={() => {
                 void handleOpenRawExport()
@@ -4067,6 +4229,24 @@ const MixEditor: React.FC = () => {
           onPickPalette={handleVxlPickPalette}
         />
       )}
+
+      {mapEditMode && mapEditSession && (
+        <MapEditor
+          session={mapEditSession}
+          onChange={(document) => {
+            setMapEditSession((prev) => prev ? { ...prev, document } : prev)
+          }}
+          onSave={() => { void handleSaveMap() }}
+          onExit={() => { void handleExitMapEdit() }}
+          saving={mapSaving}
+        />
+      )}
+
+      <NewMapDialog
+        open={newMapDialogOpen}
+        onCancel={() => setNewMapDialogOpen(false)}
+        onCreate={(result) => { void handleCreateNewMap(result) }}
+      />
 
       {/* 替换调色板对话框（VxlEditor 触发） */}
       <PalettePickerDialog

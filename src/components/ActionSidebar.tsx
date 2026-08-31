@@ -6,6 +6,7 @@ import {
   FilePlus2,
   FolderOpen,
   FolderPlus,
+  Map,
   PackagePlus,
   Pencil,
   Trash2,
@@ -35,6 +36,7 @@ interface ActionSidebarProps {
   onOpenProjectArchivePicker?: () => void
   onCreateProjectFolder?: () => void
   onCreateProjectFile?: () => void
+  onCreateMap?: () => void
 }
 
 type SidebarIconButtonProps = {
@@ -92,6 +94,7 @@ const ActionSidebar: React.FC<ActionSidebarProps> = ({
   onOpenProjectArchivePicker,
   onCreateProjectFolder,
   onCreateProjectFile,
+  onCreateMap,
 }) => {
   const { t } = useLocale()
 
@@ -177,6 +180,12 @@ const ActionSidebar: React.FC<ActionSidebarProps> = ({
             icon={FilePlus}
             label={t('toolbar.createProjectFile')}
             onClick={() => onCreateProjectFile?.()}
+            disabled={!!loading || !activeProjectName}
+          />
+          <SidebarIconButton
+            icon={Map}
+            label={t('toolbar.newMap')}
+            onClick={() => onCreateMap?.()}
             disabled={!!loading || !activeProjectName}
           />
         </>
