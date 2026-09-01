@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { EMPTY_OVERLAY } from '../../data/map/constants'
 import { applyShoreAt, placeCliffLine } from '../../data/map/cliffShore'
 import { copyRegion, copyWholeMap, normalizeCopyRect, pasteRegion, pasteWholeMap, type MapClipboard, type MapCopyRect } from '../../data/map/copyPaste'
+import { fa2CenteredRectOffsets, fa2PaintRectOffsets, manhattanDiamondOffsets } from '../../data/map/fa2Brush'
 import { autoCreateShores } from '../../data/map/fa2Shore'
 import { createSlopesAround, changeMapHeight } from '../../data/map/fa2Slopes'
 import { autoLevel, heightenGround, lookupFromTheater, lowerGround } from '../../data/map/fa2Height'
@@ -36,6 +37,7 @@ import {
   brushSizeFromId,
   FA2_BRUSH_SIZES,
   resolveTreeTileNum,
+  toolUsesBrush,
   type Fa2BrushSizeId,
   type ObjectTreeAction,
 } from './fa2Layout'
@@ -63,7 +65,6 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const { t } = useLocale()
   const stackRef = useRef(new MapCommandStack())
   const [tool, setTool] = useState<MapEditorTool>('select')
-  const [brush, setBrush] = useState(1)
   const [brushSizeId, setBrushSizeId] = useState<Fa2BrushSizeId>('1x1')
   const [treeNodeId, setTreeNodeId] = useState<string>('nothing')
   const [previewSetIndex, setPreviewSetIndex] = useState(0)
@@ -195,6 +196,23 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     return () => observer.disconnect()
   }, [])
 
+  const brushSize = brushSizeFromId(brushSizeId)
+  const brushW = brushSize.w
+  const brushH = brushSize.h
+  const brush = brushSize.brush
+  const brushPreviewCells = useMemo(() => {
+    if (!selected) return []
+    const paintRect = tool === 'tile' || tool === 'ore' || tool === 'gems' || tool === 'veins'
+    const offsets = paintRect
+      ? fa2PaintRectOffsets(brushW, brushH)
+      : (heightRect || tool === 'raiseTile' || tool === 'lowerTile')
+        ? fa2CenteredRectOffsets(brushW, brushH)
+        : toolUsesBrush(tool)
+          ? manhattanDiamondOffsets(brush)
+          : [{ dx: 0, dy: 0 }]
+    return offsets.map(({ dx, dy }) => ({ rx: selected.rx + dx, ry: selected.ry + dy }))
+  }, [selected, tool, brushW, brushH, brush, heightRect])
+
   const handlePaint = useCallback((rx: number, ry: number) => {
     const working = doc
     switch (tool) {
@@ -233,16 +251,17 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         if (slopeCorrection && theaterArt?.index) createSlopesAround(working, rx, ry, theaterArt.index, brush)
         break
       case 'tile':
-        paintTile(working, rx, ry, tileNum, brush)
+        paintTile(working, rx, ry, tileNum, { w: brushW, h: brushH })
         if (autoLat && theaterArt?.index) {
-          applyLatAt(working, rx, ry, theaterArt.index, brush + 1, theaterArt.smoothLookup((cx, cy) => working.getCell(cx, cy)))
+          applyLatAt(working, rx, ry, theaterArt.index, Math.max(brushW, brushH) + 1, theaterArt.smoothLookup((cx, cy) => working.getCell(cx, cy)))
         }
         break
       case 'ore':
         applyOreBrush(working, rx, ry, {
           kind: 'riparius',
           style: oreRandom ? 'random' : 'fixed',
-          brush,
+          brush: brushW,
+          brushH,
           theater: theaterArt?.index,
         })
         break
@@ -250,7 +269,8 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         applyOreBrush(working, rx, ry, {
           kind: 'gems',
           style: oreRandom ? 'random' : 'fixed',
-          brush,
+          brush: brushW,
+          brushH,
           theater: theaterArt?.index,
         })
         break
@@ -258,7 +278,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         placeVeinhole(working, rx, ry)
         break
       case 'veins':
-        placeVeins(working, rx, ry, brush)
+        placeVeins(working, rx, ry, brushW, brushH)
         break
       case 'overlay':
       case 'wall':
@@ -403,7 +423,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     }
     setSelected({ rx, ry })
     bump(working)
-  }, [autoLat, bridgeKind, brush, bump, doc, heightRect, objectName, oreRandom, overlayDataValue, overlayId, owner, rulesLists.terrain, slopeCorrection, theaterArt, tileNum, tool, tubeBidirectional])
+  }, [autoLat, bridgeKind, brush, brushH, brushW, bump, doc, heightRect, objectName, oreRandom, overlayDataValue, overlayId, owner, rulesLists.terrain, slopeCorrection, theaterArt, tileNum, tool, tubeBidirectional])
 
   const strokeRef = useRef<{ commit: () => void } | null>(null)
   const handleStrokeStart = useCallback(() => {
@@ -472,7 +492,6 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
 
   const applyBrushSize = (id: Fa2BrushSizeId) => {
     setBrushSizeId(id)
-    setBrush(brushSizeFromId(id).brush)
   }
 
   const handleTreeSelect = (id: string, action: ObjectTreeAction) => {
@@ -484,8 +503,8 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     if (action.bridgeKind) setBridgeKind(action.bridgeKind)
     if (action.brush != null) {
       const match = FA2_BRUSH_SIZES.find((item) => item.w === action.brush && item.h === action.brush)
+        ?? FA2_BRUSH_SIZES.find((item) => item.brush === action.brush)
       if (match) applyBrushSize(match.id)
-      else setBrush(action.brush)
     }
     const nextTile = resolveTreeTileNum(theaterArt?.index, action.tileGeneral)
     if (nextTile != null) {
@@ -645,6 +664,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             document={doc}
             tool={tool}
             brush={brush}
+            brushCells={brushPreviewCells}
             panX={panX}
             panY={panY}
             scale={scale}

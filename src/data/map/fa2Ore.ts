@@ -31,6 +31,7 @@ export type OrePaintOptions = {
   kind?: OreKind
   style?: OreStyle
   brush?: number
+  brushH?: number
   theater?: TheaterIndex | null
   random?: () => number
 }
@@ -95,10 +96,11 @@ export function applyOreBrush(
   const opts: OrePaintOptions = typeof options === 'number' ? {} : options
   const kind = opts.kind ?? 'riparius'
   const style = opts.style ?? 'fixed'
-  const brush = Math.max(1, opts.brush ?? 1)
+  const bw = Math.max(1, opts.brush ?? 1)
+  const bh = Math.max(1, opts.brushH ?? bw)
   const random = opts.random ?? Math.random
-  for (let dx = 0; dx < brush; dx++) {
-    for (let dy = 0; dy < brush; dy++) {
+  for (let dx = 0; dx < bw; dx++) {
+    for (let dy = 0; dy < bh; dy++) {
       const cx = rx + dx
       const cy = ry + dy
       if (!isValidIsoCell(cx, cy, doc.width, doc.height)) continue
@@ -125,10 +127,11 @@ export function placeVeinhole(doc: MapDocument, rx: number, ry: number): void {
 }
 
 /** FA2 `AD.data==4 data2==1`：Veins，OverlayData=0x30。 */
-export function placeVeins(doc: MapDocument, rx: number, ry: number, brush = 1): void {
-  const size = Math.max(1, brush)
-  for (let dx = 0; dx < size; dx++) {
-    for (let dy = 0; dy < size; dy++) {
+export function placeVeins(doc: MapDocument, rx: number, ry: number, brush = 1, brushH = brush): void {
+  const bw = Math.max(1, brush)
+  const bh = Math.max(1, brushH)
+  for (let dx = 0; dx < bw; dx++) {
+    for (let dy = 0; dy < bh; dy++) {
       const cx = rx + dx
       const cy = ry + dy
       if (!isValidIsoCell(cx, cy, doc.width, doc.height)) continue

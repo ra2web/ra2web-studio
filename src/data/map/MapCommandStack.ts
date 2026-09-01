@@ -1,4 +1,5 @@
 import { MAX_UNDO_TERRAIN } from './constants'
+import { fa2CenteredRectOffsets, fa2PaintRectOffsets, manhattanDiamondOffsets } from './fa2Brush'
 import { MapDocument } from './MapDocument'
 import { cellKey } from './packs'
 import type { MapCell } from './types'
@@ -108,30 +109,25 @@ export function paintHeight(
     cell.height = Math.max(0, Math.min(14, cell.height + delta))
     doc.setCell(cell)
   }
-  if (shape === 'rect') {
-    const half = Math.floor(brush / 2)
-    for (let m = -half; m < half + 1; m++) {
-      for (let n = -half; n < half + 1; n++) bump(rx + m, ry + n)
-    }
-    return
-  }
-  for (let dy = -brush + 1; dy < brush; dy++) {
-    for (let dx = -brush + 1; dx < brush; dx++) {
-      if (Math.abs(dx) + Math.abs(dy) >= brush) continue
-      bump(rx + dx, ry + dy)
-    }
-  }
+  const offsets = shape === 'rect' ? fa2CenteredRectOffsets(brush) : manhattanDiamondOffsets(brush)
+  for (const { dx, dy } of offsets) bump(rx + dx, ry + dy)
 }
 
-export function paintTile(doc: MapDocument, rx: number, ry: number, tileNum: number, brush = 1): void {
-  for (let dy = -brush + 1; dy < brush; dy++) {
-    for (let dx = -brush + 1; dx < brush; dx++) {
-      if (Math.abs(dx) + Math.abs(dy) >= brush) continue
-      const cell = doc.getCell(rx + dx, ry + dy)
-      cell.tileNum = tileNum
-      cell.subTile = 0
-      doc.setCell(cell)
-    }
+export function paintTile(
+  doc: MapDocument,
+  rx: number,
+  ry: number,
+  tileNum: number,
+  brush: number | { w: number; h: number } = 1,
+): void {
+  const w = typeof brush === 'number' ? brush : Math.max(1, brush.w)
+  const h = typeof brush === 'number' ? brush : Math.max(1, brush.h)
+  const offsets = fa2PaintRectOffsets(w, h)
+  for (const { dx, dy } of offsets) {
+    const cell = doc.getCell(rx + dx, ry + dy)
+    cell.tileNum = tileNum
+    cell.subTile = 0
+    doc.setCell(cell)
   }
 }
 

@@ -28,10 +28,30 @@ describe('tmpCatalog', () => {
     expect(shape.subtiles[subtileIndex(1, 0, 2)]?.zHeight).toBe(30)
   })
 
-  it('hacks ROUGH to GROUND and WaterSet to WATER', () => {
+  it('hacks ROUGH to GROUND, 0x0a/WATER to WATER, and WaterSet to WATER', () => {
     expect(hackTerrainType(TERRAIN_ROUGH)).toBe(TERRAIN_GROUND)
     expect(hackTerrainType(0, true)).toBe(TERRAIN_WATER)
     expect(hackTerrainType(TERRAIN_WATER)).toBe(TERRAIN_WATER)
+    expect(hackTerrainType(0x0a)).toBe(TERRAIN_WATER)
+  })
+
+  it('swaps TMP cblocks for FA2 ShorePieces TILEDATA (iTilesX = cblocks_y)', () => {
+    const shape = shapeFromTmp({
+      width: 2,
+      height: 1,
+      images: [
+        { terrainType: TERRAIN_ROUGH, height: 2, tileData: new Uint8Array([1]) },
+        { terrainType: TERRAIN_WATER, height: 0, tileData: new Uint8Array([1]) },
+      ],
+    }, true)
+    expect(shape.cx).toBe(1)
+    expect(shape.cy).toBe(2)
+    expect(shape.subtiles.map((item) => item.terrainType)).toEqual([TERRAIN_ROUGH, TERRAIN_WATER])
+    const piece = shorePieceFromShape(4, shape)
+    expect(piece.cx).toBe(1)
+    expect(piece.cy).toBe(2)
+    expect(piece.terrain).toEqual([TERRAIN_GROUND, TERRAIN_WATER])
+    expect(piece.zHeight).toEqual([2, 0])
   })
 
   it('builds a ShorePiece with FA2 zHeight and hacked terrain', () => {
@@ -48,6 +68,26 @@ describe('tmpCatalog', () => {
     expect(piece.terrain).toEqual([TERRAIN_GROUND, TERRAIN_WATER])
     expect(piece.zHeight).toEqual([2, 0])
     expect(piece.hasPic).toEqual([true, true])
+  })
+
+  it('applies FAData ShoreTerrainRA2 water overrides on shore subtiles', () => {
+    const shape = shapeFromTmp({
+      width: 3,
+      height: 2,
+      images: Array.from({ length: 6 }, () => ({
+        terrainType: TERRAIN_GROUND,
+        height: 0,
+        tileData: new Uint8Array([1]),
+      })),
+    }, true)
+    expect(shape.cx).toBe(2)
+    expect(shape.cy).toBe(3)
+    const piece = shorePieceFromShape(12, shape)
+    expect(piece.terrain[4]).toBe(TERRAIN_WATER)
+    expect(piece.terrain[5]).toBe(TERRAIN_WATER)
+    expect(piece.terrain.slice(0, 4)).toEqual([
+      TERRAIN_GROUND, TERRAIN_GROUND, TERRAIN_GROUND, TERRAIN_GROUND,
+    ])
   })
 
   it('uses TMP footprint when placing cliffs, else FAData 2×2 / z=+4', () => {

@@ -259,6 +259,15 @@ describe('MapCommandStack', () => {
     expect(doc.getCell(8, 8).tileNum).toBe(3)
   })
 
+  it('paints a 2×1 FA2 iso rect along +rx, not a screen-square manhattan diamond', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'URBAN' })
+    paintTile(doc, 8, 8, 7, { w: 2, h: 1 })
+    expect(doc.getCell(8, 8).tileNum).toBe(7)
+    expect(doc.getCell(9, 8).tileNum).toBe(7)
+    expect(doc.getCell(8, 9).tileNum).toBe(0)
+    expect(doc.getCell(7, 8).tileNum).toBe(0)
+  })
+
   it('FA2 HeightenTile uses a rectangular brush', () => {
     const doc = MapDocument.create({ width: 16, height: 16, theater: 'URBAN' })
     const origin = doc.getCell(12, 12).height

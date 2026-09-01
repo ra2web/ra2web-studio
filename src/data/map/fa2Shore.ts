@@ -8,15 +8,8 @@ import { TheaterRules, type TheaterIndex } from './theaterIndex'
 export const TERRAIN_GROUND = 0x0d
 export const TERRAIN_WATER = 0x09
 export const TERRAIN_ROUGH = 0x0e
-
-/**
- * FA2 CreateShore 第一轮优先放置的 ShorePieces 件编号（相对集起点）。
- * MapData.cpp：4–7、12–15、20–23、28–31、32–39。
- */
-const PREFERRED_SHORE_OFFSETS = new Set([
-  4, 5, 6, 7, 12, 13, 14, 15, 20, 21, 22, 23, 28, 29, 30, 31,
-  32, 33, 34, 35, 36, 37, 38, 39,
-])
+/** TMP 常见水面标记；FA2 Loading.cpp 把它 hack 成 `TERRAINTYPE_WATER`。 */
+export const TERRAIN_WATER_ALT = 0x0a
 
 export type ShorePiece = {
   /** 相对 ShorePieces 集起点的件编号（FA2 `i - tStart`）。 */
@@ -30,7 +23,41 @@ export type ShorePiece = {
   zHeight?: number[]
 }
 
+export function isWaterTerrain(terrainType: number): boolean {
+  return terrainType === TERRAIN_WATER || terrainType === TERRAIN_WATER_ALT
+}
+
+/**
+ * 岸块必须同时含陆地与水域，否则 `pieceFits` 会在整片陆地上成立。
+ * FA2 靠 TMP `0x0a` / ShoreTerrainRA2 保证这一点。
+ */
+export function isShoreTransition(piece: ShorePiece): boolean {
+  let water = 0
+  let land = 0
+  for (const terrainType of piece.terrain) {
+    if (isWaterTerrain(terrainType)) water++
+    else land++
+  }
+  return water > 0 && land > 0
+}
+
 const SOFT_INI = MapIni.parse(faDataText)
+
+/** FA2 `[ShoreTerrainRA2]`：`{件编号}_{子格}=1` 强制水域，`=0` 为 ROUGH。 */
+export function shoreTerrainOverride(setOffset: number, subIndex: number): number | undefined {
+  const raw = SOFT_INI.getValue('ShoreTerrainRA2', `${setOffset}_${subIndex}`)
+  if (!raw) return undefined
+  return Number(raw) ? TERRAIN_WATER : TERRAIN_ROUGH
+}
+
+/**
+ * FA2 CreateShore 第一轮优先放置的 ShorePieces 件编号（相对集起点）。
+ * MapData.cpp：4–7、12–15、20–23、28–31、32–39。
+ */
+const PREFERRED_SHORE_OFFSETS = new Set([
+  4, 5, 6, 7, 12, 13, 14, 15, 20, 21, 22, 23, 28, 29, 30, 31,
+  32, 33, 34, 35, 36, 37, 38, 39,
+])
 
 export function softTileSetNames(): string[] {
   const names: string[] = []
@@ -84,7 +111,8 @@ function pieceFits(
   height: number,
 ): boolean {
   let p = 0
-  const waterCount = piece.terrain.filter((item) => item === TERRAIN_WATER).length
+  let mapWater = 0
+  const waterCount = piece.terrain.filter((item) => isWaterTerrain(item)).length
   for (let xx = 0; xx < piece.cx; xx++) {
     for (let yy = 0; yy < piece.cy; yy++) {
       const rx = originX + xx
@@ -104,15 +132,18 @@ function pieceFits(
       if (noChange.has(pos)) return false
       const tileT = piece.terrain[p] ?? TERRAIN_GROUND
       const mapT = terrain.get(pos) ?? TERRAIN_GROUND
-      if (tileT === TERRAIN_WATER) {
-        if (mapT !== TERRAIN_WATER) return false
+      if (isWaterTerrain(mapT)) mapWater++
+      if (isWaterTerrain(tileT)) {
+        if (!isWaterTerrain(mapT)) return false
       } else if (mapT !== TERRAIN_GROUND) {
         return false
       }
       p++
     }
   }
-  return true
+  // FA2 曾用 wat_ex：岸块覆盖范围内必须碰到水域。注释掉后靠 TMP 水域掩码；
+  // 目录缺水域标记时必须保留这道检查，否则内陆会被全 GROUND 岸块刷满。
+  return mapWater > 0
 }
 
 function placePiece(
@@ -167,6 +198,7 @@ function fitPass(
 ): void {
   for (const piece of pieces) {
     if (preferred !== isPreferred(piece.setOffset)) continue
+    if (!isShoreTransition(piece)) continue
     for (let x = left; x < right; x++) {
       for (let y = top; y < bottom; y++) {
         if (!isValidIsoCell(x, y, doc.width, doc.height)) continue
@@ -275,7 +307,7 @@ export function createShore(
       let waterHits = 0
       for (const [nx, ny] of neighbors4(rx, ry)) {
         if (!isValidIsoCell(nx, ny, doc.width, doc.height)) continue
-        if (terrain.get(keyOf(nx, ny)) === TERRAIN_WATER) waterHits++
+        if (isWaterTerrain(terrain.get(keyOf(nx, ny)) ?? TERRAIN_GROUND)) waterHits++
       }
       const cell = doc.getCell(rx, ry)
       if (waterHits >= 4) {
@@ -298,18 +330,18 @@ export function createShore(
         const setNum = tsets.get(keyOf(rx, ry)) ?? 0
         if (softSets.size > 0 && !softSets.has(setNum)) continue
         const center = terrain.get(keyOf(rx, ry)) ?? TERRAIN_GROUND
-        if (center !== TERRAIN_WATER && center !== TERRAIN_GROUND) continue
+        if (!isWaterTerrain(center) && center !== TERRAIN_GROUND) continue
         const n = terrain.get(keyOf(rx, ry - 1)) ?? TERRAIN_GROUND
         const s = terrain.get(keyOf(rx, ry + 1)) ?? TERRAIN_GROUND
         const w = terrain.get(keyOf(rx - 1, ry)) ?? TERRAIN_GROUND
         const e = terrain.get(keyOf(rx + 1, ry)) ?? TERRAIN_GROUND
         if ((n !== center && s !== center) || (w !== center && e !== center)) {
           const cell = doc.getCell(rx, ry)
-          if (center === TERRAIN_WATER) {
+          if (isWaterTerrain(center)) {
             cell.tileNum = clearTile
             cell.subTile = 0
             doc.setCell(cell)
-          } else if ((n === TERRAIN_WATER && s === TERRAIN_WATER) || (w === TERRAIN_WATER && e === TERRAIN_WATER)) {
+          } else if ((isWaterTerrain(n) && isWaterTerrain(s)) || (isWaterTerrain(w) && isWaterTerrain(e))) {
             cell.tileNum = waterTile
             cell.subTile = 0
             doc.setCell(cell)
@@ -318,6 +350,27 @@ export function createShore(
       }
     }
     snapshot()
+  }
+
+  for (let rx = left; rx < right; rx++) {
+    for (let ry = top; ry < bottom; ry++) {
+      if (!isValidIsoCell(rx, ry, doc.width, doc.height)) continue
+      const pos = keyOf(rx, ry)
+      const setNum = tsets.get(pos) ?? 0
+      if (softSets.size > 0 && !softSets.has(setNum)) {
+        noChange.add(pos)
+        continue
+      }
+      if (setNum !== shoreSet || pieces.length === 0) continue
+      const cell = doc.getCell(rx, ry)
+      const piece = pieces.find((item) => item.setOffset === cell.tileNum - shoreStart)
+      if (!piece) continue
+      const ox = Math.floor(cell.subTile / piece.cy)
+      const oy = cell.subTile % piece.cy
+      if (rx - ox < left || ry - oy < top || rx - ox + piece.cx >= right || ry - oy + piece.cy >= bottom) {
+        noChange.add(pos)
+      }
+    }
   }
 
   if (pieces.length > 0) {

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { autoCreateShores, createShore, createShoreAt, softTileSetNames, TERRAIN_GROUND, TERRAIN_WATER, type ShorePiece } from './fa2Shore'
+import {
+  autoCreateShores,
+  createShore,
+  createShoreAt,
+  isShoreTransition,
+  softTileSetNames,
+  TERRAIN_GROUND,
+  TERRAIN_WATER,
+  type ShorePiece,
+} from './fa2Shore'
 import { applyShoreAt } from './cliffShore'
 import { forEachIsoCell, isValidIsoCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
@@ -130,5 +139,58 @@ describe('FA2 CreateShore', () => {
     doc.setCell(shore)
     createShoreAt(doc, center.rx, center.ry, theater, 1)
     expect(doc.getCell(center.rx, center.ry).tileNum).toBe(1)
+  })
+
+  it('does not paint inland land when shore catalog has all-ground pieces', () => {
+    const theater = parseTheaterIni(SHORE_INI)
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    let blob: { land: { rx: number; ry: number }; waters: Array<{ rx: number; ry: number }> } | null = null
+    forEachIsoCell(16, 16, (cell) => {
+      if (blob) return
+      const waters = [
+        { rx: cell.rx + 1, ry: cell.ry },
+        { rx: cell.rx + 2, ry: cell.ry },
+        { rx: cell.rx + 1, ry: cell.ry + 1 },
+        { rx: cell.rx + 2, ry: cell.ry + 1 },
+      ]
+      if (!isValidIsoCell(cell.rx, cell.ry, 16, 16)) return
+      if (!waters.every((item) => isValidIsoCell(item.rx, item.ry, 16, 16))) return
+      blob = { land: { rx: cell.rx, ry: cell.ry }, waters }
+    })
+    if (!blob) throw new Error('no water blob')
+    const waters = blob.waters
+    const edgeLand = blob.land
+    for (const water of waters) {
+      const cell = doc.getCell(water.rx, water.ry)
+      cell.tileNum = 1
+      doc.setCell(cell)
+    }
+    let far: { rx: number; ry: number } | null = null
+    forEachIsoCell(16, 16, (cell) => {
+      if (far) return
+      if (waters.some((water) => Math.abs(cell.rx - water.rx) + Math.abs(cell.ry - water.ry) < 6)) return
+      far = { rx: cell.rx, ry: cell.ry }
+    })
+    if (!far) throw new Error('no inland cell')
+    const groundOnly: ShorePiece = {
+      setOffset: 5,
+      cx: 2,
+      cy: 2,
+      terrain: [TERRAIN_GROUND, TERRAIN_GROUND, TERRAIN_GROUND, TERRAIN_GROUND],
+      hasPic: [true, true, true, true],
+    }
+    const edge: ShorePiece = {
+      setOffset: 4,
+      cx: 2,
+      cy: 1,
+      terrain: [TERRAIN_GROUND, TERRAIN_WATER],
+      hasPic: [true, true],
+    }
+    expect(isShoreTransition(groundOnly)).toBe(false)
+    expect(isShoreTransition(edge)).toBe(true)
+    autoCreateShores(doc, theater, [groundOnly, edge])
+    expect(doc.getCell(far.rx, far.ry).tileNum).toBe(0)
+    expect(doc.getCell(edgeLand.rx, edgeLand.ry).tileNum).toBe(2 + 4)
+    expect(doc.getCell(waters[0].rx, waters[0].ry).tileNum).toBe(2 + 4)
   })
 })

@@ -219,14 +219,16 @@ export class TheaterArt {
     if (!this.index) return
     const rules = new TheaterRules(this.index)
     const ext = THEATER_ASSETS[this.theater].ext
+    const shoreNum = rules.getGeneralValue('ShorePieces')
     const loadSet = async (setNum: number) => {
       const set = this.index?.sets[setNum]
       if (!set || set.tilesInSet <= 0) return undefined
       const shapes: Array<TmpTileShape | undefined> = []
+      const fa2Cblocks = setNum === shoreNum
       for (let i = 0; i < set.tilesInSet; i++) {
         const tmp = await this.loadTmp(tmpFileName(set, i, ext))
         if (!tmp) continue
-        const shape = shapeFromTmp(tmp)
+        const shape = shapeFromTmp(tmp, fa2Cblocks)
         shapes[i] = shape
         this.tileShapes.set(set.startTileNum + i, shape)
         if (!this.setTerrain.has(setNum)) this.setTerrain.set(setNum, shape.subtiles[0]?.terrainType ?? 0)
@@ -234,7 +236,6 @@ export class TheaterArt {
       return { set, shapes }
     }
 
-    const shoreNum = rules.getGeneralValue('ShorePieces')
     const cliffNum = rules.getGeneralValue('CliffSet')
     const waterNum = rules.getGeneralValue('WaterSet')
     const extra = TILE_TO_LAT.flatMap(([smooth, lat, target]) => (

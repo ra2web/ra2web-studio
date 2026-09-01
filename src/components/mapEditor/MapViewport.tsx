@@ -32,6 +32,7 @@ type MapViewportProps = {
   panY: number
   scale: number
   selected?: { rx: number; ry: number } | null
+  brushCells?: Array<{ rx: number; ry: number }>
   selectionRect?: { minRx: number; minRy: number; maxRx: number; maxRy: number } | null
   marbleMadness?: boolean
   showBuildingOutline?: boolean
@@ -133,6 +134,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
   panY,
   scale,
   selected,
+  brushCells = [],
   selectionRect,
   marbleMadness = false,
   showBuildingOutline = true,
@@ -261,7 +263,13 @@ const MapViewport: React.FC<MapViewportProps> = ({
     }
 
     for (const item of cells) {
-      if (selected && selected.rx === item.rx && selected.ry === item.ry) {
+      const inBrush = brushCells.some((cell) => cell.rx === item.rx && cell.ry === item.ry)
+      if (inBrush) {
+        pathDiamond(wctx, item.origin)
+        wctx.strokeStyle = '#38bdf8'
+        wctx.lineWidth = 2 / scale
+        wctx.stroke()
+      } else if (selected && selected.rx === item.rx && selected.ry === item.ry) {
         pathDiamond(wctx, item.origin)
         wctx.strokeStyle = '#38bdf8'
         wctx.lineWidth = 2 / scale
@@ -345,7 +353,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
     ctx.fillStyle = '#0f172a'
     ctx.fillRect(0, 0, cssW, cssH)
     ctx.drawImage(world, bufX * scale + panX, bufY * scale + panY, bufW * scale, bufH * scale)
-  }, [artRevision, doc, foundations, hideView, marbleMadness, panX, panY, scale, selected, selectionRect, showBuildingOutline, theaterArt])
+  }, [artRevision, brushCells, doc, foundations, hideView, marbleMadness, panX, panY, scale, selected, selectionRect, showBuildingOutline, theaterArt])
 
   React.useEffect(() => {
     draw()
