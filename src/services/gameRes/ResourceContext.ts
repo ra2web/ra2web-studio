@@ -108,24 +108,9 @@ export class ResourceContext {
   }
 
   private async warmNestedPalettePaths(): Promise<void> {
-    const mixLikeExts = new Set(['mix', 'mmx', 'yro'])
-    for (const archive of this.archives) {
-      const rootPath = archive.info.name
-      for (const entry of archive.info.files) {
-        if (!mixLikeExts.has(entry.extension.toLowerCase())) continue
-        const nestedContainerPath = `${rootPath}/${entry.filename}`
-        try {
-          const nestedVf = await MixParser.extractFile(archive.file, entry.filename)
-          if (!nestedVf) continue
-          const nestedInfo = await MixParser.parseVirtualFile(nestedVf, entry.filename)
-          for (const nestedEntry of nestedInfo.files) {
-            if (nestedEntry.extension.toLowerCase() !== 'pal') continue
-            this.addPalettePath(`${nestedContainerPath}/${nestedEntry.filename}`)
-          }
-        } catch {
-          // Ignore unreadable nested MIX while keeping other palettes available.
-        }
-      }
+    await this.vfs.ensureNestedMixes()
+    for (const path of this.vfs.listNestedFilePaths('pal')) {
+      this.addPalettePath(path)
     }
   }
 
@@ -231,13 +216,14 @@ export class ResourceContext {
       loadedCount,
       totalCount,
     })
-    return new ResourceContext({
+    const loaded = new ResourceContext({
       activeProjectName,
       importedFiles,
       archives,
       standaloneFiles,
       discoveredPalettePaths,
     })
+    return loaded
   }
 
   toMixFileData(): Array<{ file: File; info: MixFileInfo }> {

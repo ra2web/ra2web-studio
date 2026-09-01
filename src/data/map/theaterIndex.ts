@@ -11,6 +11,13 @@ export const THEATER_ASSETS: Record<MapTheater, { ini: string; pal: string; ext:
   DESERT: { ini: 'desert.ini', pal: 'isodes.pal', ext: '.des', unitPal: 'unitdes.pal', overlayPal: 'isodes.pal', newTheaterChar: 'D' },
 }
 
+/** YR ships `temperatmd.ini` etc.; fall back to the vanilla theater.ini. */
+export function theaterIniNames(theater: MapTheater): string[] {
+  const ini = THEATER_ASSETS[theater].ini
+  const md = ini.replace(/\.ini$/i, 'md.ini')
+  return md.toLowerCase() === ini.toLowerCase() ? [ini] : [md, ini]
+}
+
 export type TheaterTileSetInfo = {
   setIndex: number
   fileName: string
@@ -43,8 +50,8 @@ export function parseTheaterIni(text: string): TheaterIndex {
   for (let setIndex = 0; setIndex < 1024; setIndex++) {
     const section = ini.getSection(`TileSet${pad(setIndex, '0000')}`)
     if (!section) break
-    const fileName = section.entries.find((item) => item.key.toLowerCase() === 'filename')?.value ?? ''
-    const setName = section.entries.find((item) => item.key.toLowerCase() === 'setname')?.value ?? fileName
+    const fileName = (section.entries.find((item) => item.key.toLowerCase() === 'filename')?.value ?? '').trim()
+    const setName = (section.entries.find((item) => item.key.toLowerCase() === 'setname')?.value ?? fileName).trim()
     const tilesInSet = Number(section.entries.find((item) => item.key.toLowerCase() === 'tilesinset')?.value ?? '0') || 0
     const marbleRaw = section.entries.find((item) => item.key.toLowerCase() === 'marblemadness')?.value
     const marbleMadnessSet = marbleRaw !== undefined && marbleRaw !== '' ? Number(marbleRaw) : -1
@@ -79,7 +86,31 @@ export function marbleTileNum(index: TheaterIndex, tileNum: number): number {
 }
 
 export function tmpFileName(set: TheaterTileSetInfo, tileInSet: number, ext: string): string {
-  return `${set.fileName}${pad(tileInSet + 1, '00')}${ext}`.toLowerCase()
+  return `${set.fileName.trim()}${pad(tileInSet + 1, '00')}${ext}`.toLowerCase()
+}
+
+/** werhd TileSets: letter -1 is the numbered file, 0=`a`, 1=`b`, … */
+export function tmpVariantFileName(baseFileName: string, letter: number): string {
+  const name = baseFileName.toLowerCase()
+  if (letter < 0) return name
+  const dot = name.lastIndexOf('.')
+  const suffix = String.fromCharCode(97 + letter)
+  if (dot < 0) return `${name}${suffix}`
+  return `${name.slice(0, dot)}${suffix}${name.slice(dot)}`
+}
+
+/**
+ * Stable stand-in for werhd `getTmpFile(subTile, getRandomInt)` / FA2 `bRNDImage`.
+ * Hash by cell so pan/zoom does not re-roll the variant every frame.
+ */
+export function cellTmpVariantIndex(rx: number, ry: number, tileNum: number, count: number): number {
+  if (count <= 1) return 0
+  const hash = (
+    Math.imul(rx | 0, 73856093)
+    ^ Math.imul(ry | 0, 19349663)
+    ^ Math.imul(tileNum | 0, 83492791)
+  ) >>> 0
+  return hash % count
 }
 
 export function latSets(general: Record<string, number>) {

@@ -1,5 +1,6 @@
 import { VxlFile } from '../VxlFile'
 import { TmpFile } from '../TmpFile'
+import type { TmpImage } from '../TmpImage'
 import { ShpFile } from '../ShpFile'
 import { HvaFile } from '../HvaFile'
 import type { VirtualFile } from '../vfs/VirtualFile'
@@ -8,8 +9,8 @@ import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { RA2_ISO_TILE_HEIGHT, RA2_ISO_TILE_WIDTH, type MapTheater } from './constants'
 import { artShpCandidates, readArtImage } from './imageFinder'
 import { MapIni } from './MapIni'
-import { blitIndexedToRgba } from './shpBlit'
-import { blitTmpToRgba, type TmpRgba } from './tmpBlit'
+import { blitIndexedToRgba, type IndexedRgba } from './shpBlit'
+import { blitTmpToRgba, type TmpRadarRgb, type TmpRgba } from './tmpBlit'
 import { blitVoxelsToRgba, applyHvaToVoxels, facingStep, quantizedFacing } from './vxlBlit'
 import { TILE_TO_LAT, type SmoothTerrainLookup } from './fa2Smooth'
 import { shorePieceFromShape, shapeFromTmp, type TmpTileShape } from './tmpCatalog'
@@ -19,12 +20,15 @@ import {
   TheaterRules,
   marbleTileNum,
   parseTheaterIni,
+  theaterIniNames,
   tmpFileName,
+  tmpVariantFileName,
+  cellTmpVariantIndex,
   tileNumToSet,
   type TheaterIndex,
 } from './theaterIndex'
 
-export type TilePixels = TmpRgba
+export type TilePixels = IndexedRgba & Partial<Pick<TmpRgba, 'drawOffsetX' | 'drawOffsetY' | 'blockWidth' | 'blockHeight' | 'radarLeft' | 'radarRight'>>
 
 type OpenFile = (name: string) => Promise<VirtualFile | null>
 
@@ -56,6 +60,7 @@ export class TheaterArt {
   private readonly setTerrain = new Map<number, number>()
   private readonly tileShapes = new Map<number, TmpTileShape>()
   private readonly inflight = new Set<string>()
+  private readonly variantFiles = new Map<string, TmpFile[]>()
 
   constructor(
     private readonly openFile: OpenFile,
@@ -67,10 +72,18 @@ export class TheaterArt {
     const openFile: OpenFile = (name) => resourceContext.resolveFileFromOverlay(name)
     const art = new TheaterArt(openFile, theater)
     const assets = THEATER_ASSETS[theater]
-    const iniFile = await openFile(assets.ini)
+    let iniFile: VirtualFile | null = null
+    for (const iniName of theaterIniNames(theater)) {
+      const opened = await openFile(iniName)
+      if (opened) {
+        iniFile = opened
+        break
+      }
+    }
     if (!iniFile) return null
     art.index = parseTheaterIni(iniFile.readAsString())
-    fillPalette(art.palette, await openFile(assets.pal))
+    const palFile = await openFile(assets.pal)
+    fillPalette(art.palette, palFile)
     art.unitPalette.set(art.palette)
     fillPalette(art.unitPalette, await openFile(assets.unitPal))
     art.overlayPalette.set(art.palette)
@@ -81,8 +94,19 @@ export class TheaterArt {
     return art
   }
 
-  peek(tileNum: number, subTile: number): TilePixels | null | undefined {
-    return this.pixels.get(`tile:${tileNum}:${subTile}`)
+  peek(tileNum: number, subTile: number, variant = 0): TilePixels | null | undefined {
+    return this.pixels.get(this.tileKey(tileNum, subTile, variant))
+  }
+
+  /** TMP header radar color without waiting for RGBA blit when the mix is already cached. */
+  peekRadar(tileNum: number, subTile: number): TmpRadarRgb | null | undefined {
+    const pixels = this.peek(tileNum, subTile, 0)
+    if (pixels?.radarLeft) return pixels.radarLeft
+    if (pixels === null) return null
+    const image = this.peekTmpImage(tileNum, subTile)
+    if (image === undefined) return undefined
+    if (!image) return null
+    return image.radarLeft
   }
 
   /** FA2 Marble Madness：把普通瓦片集映射到对应 Marble 集。 */
@@ -91,8 +115,42 @@ export class TheaterArt {
     return marbleTileNum(this.index, tileNum)
   }
 
-  request(tileNum: number, subTile: number): void {
-    this.queue(`tile:${tileNum}:${subTile}`, () => this.loadTile(tileNum, subTile))
+  request(tileNum: number, subTile: number, variant = 0): void {
+    this.queue(this.tileKey(tileNum, subTile, variant), () => this.loadTile(tileNum, subTile, variant))
+  }
+
+  /** werhd `files.filter(subTile < images.length).length` after letter variants are loaded. */
+  variantCount(tileNum: number, subTile = 0): number {
+    const files = this.variantFiles.get(this.baseTmpName(tileNum) ?? '')
+    if (!files?.length) return 0
+    return files.filter((file) => subTile < file.images.length).length
+  }
+
+  /** Stable per-cell pick among werhd TMP letter variants. */
+  cellVariant(rx: number, ry: number, tileNum: number, subTile = 0): number {
+    return cellTmpVariantIndex(rx, ry, tileNum, this.variantCount(tileNum, subTile))
+  }
+
+  private tileKey(tileNum: number, subTile: number, variant = 0): string {
+    return `tile:${tileNum}:${subTile}:${variant}`
+  }
+
+  private baseTmpName(tileNum: number): string | null {
+    if (!this.index) return null
+    const set = tileNumToSet(this.index, tileNum)
+    if (!set) return null
+    return tmpFileName(set, tileNum - set.startTileNum, THEATER_ASSETS[this.theater].ext)
+  }
+
+  private peekTmpImage(tileNum: number, subTile: number): TmpImage | null | undefined {
+    if (!this.index) return null
+    const set = tileNumToSet(this.index, tileNum)
+    if (!set) return null
+    const fileName = tmpFileName(set, tileNum - set.startTileNum, THEATER_ASSETS[this.theater].ext)
+    const tmp = this.tmpCache.get(fileName)
+    if (tmp === undefined) return undefined
+    if (!tmp) return null
+    return tmp.images[subTile] ?? tmp.images[0] ?? null
   }
 
   peekOverlay(id: number, frame = 0): TilePixels | null | undefined {
@@ -100,6 +158,7 @@ export class TheaterArt {
   }
 
   requestOverlay(id: number, frame = 0): void {
+    if (this.overlayNames.length === 0) return
     const name = this.overlayNames[id]
     if (!name) {
       this.pixels.set(`ovl:${id}:${frame}`, null)
@@ -219,22 +278,47 @@ export class TheaterArt {
     })
   }
 
-  private async loadTile(tileNum: number, subTile: number): Promise<TilePixels | null> {
+  private async loadTile(tileNum: number, subTile: number, variant = 0): Promise<TilePixels | null> {
     if (!this.index) return null
     const set = tileNumToSet(this.index, tileNum)
     if (!set) return null
     const ext = THEATER_ASSETS[this.theater].ext
     const fileName = tmpFileName(set, tileNum - set.startTileNum, ext)
-    const tmp = await this.loadTmp(fileName)
-    if (!tmp) return null
-    const image = tmp.images[subTile] ?? tmp.images[0]
-    if (!image) return null
-    return blitTmpToRgba(
-      image,
-      this.palette,
-      tmp.blockWidth || RA2_ISO_TILE_WIDTH,
-      tmp.blockHeight || RA2_ISO_TILE_HEIGHT,
-    )
+    const files = await this.loadTmpVariants(fileName, set.setName)
+    const usable = files.filter((file) => subTile < file.images.length)
+    if (!usable.length) return null
+    const pick = Math.min(Math.max(0, variant), usable.length - 1)
+    let requested: TilePixels | null = null
+    for (let index = 0; index < usable.length; index++) {
+      const tmp = usable[index]
+      const image = tmp.images[subTile] ?? tmp.images[0]
+      if (!image) continue
+      const pixels = blitTmpToRgba(
+        image,
+        this.palette,
+        tmp.blockWidth || RA2_ISO_TILE_WIDTH,
+        tmp.blockHeight || RA2_ISO_TILE_HEIGHT,
+      )
+      this.pixels.set(this.tileKey(tileNum, subTile, index), pixels)
+      if (index === pick) requested = pixels
+    }
+    return requested
+  }
+
+  /** werhd TileSets: numbered file then a–z until the first miss. Bridges skip letter suffixes. */
+  private async loadTmpVariants(baseFileName: string, setName: string): Promise<TmpFile[]> {
+    const cached = this.variantFiles.get(baseFileName)
+    if (cached) return cached
+    const files: TmpFile[] = []
+    const skipLetters = setName === 'Bridges'
+    for (let letter = -1; letter < 26; letter++) {
+      if (letter >= 0 && skipLetters) break
+      const tmp = await this.loadTmp(tmpVariantFileName(baseFileName, letter))
+      if (!tmp) break
+      files.push(tmp)
+    }
+    this.variantFiles.set(baseFileName, files)
+    return files
   }
 
   /** werhd TileSets also tries letter suffixes (clear01a.tem) after the numbered file. */

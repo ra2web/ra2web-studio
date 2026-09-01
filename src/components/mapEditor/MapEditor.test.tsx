@@ -31,7 +31,7 @@ describe('MapEditor', () => {
     renderWithProviders(
       <MapEditor session={makeSession()} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
     )
-    expect(screen.getByTestId('map-editor')).toBeInTheDocument()
+    expect(screen.getByTestId('map-theater-missing')).toBeInTheDocument()
     expect(screen.getByText(/抬高地形|Raise ground/)).toBeInTheDocument()
     expect(screen.getByText(/抬高单格|Raise tile/)).toBeInTheDocument()
     expect(screen.getByText(/降低单格|Lower tile/)).toBeInTheDocument()

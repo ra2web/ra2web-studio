@@ -139,75 +139,82 @@ export class MixParser {
     }
   }
 
-  static async parseVirtualFile(vf: VirtualFile, name: string): Promise<MixFileInfo> {
+  static async loadMixFromVirtualFile(vf: VirtualFile, name: string): Promise<{ info: MixFileInfo; mix: MixFile } | null> {
+    const size = vf.getSize()
+    if (size < this.MIN_MIX_HEADER_BYTES) return null
+    const dataStream = vf.stream as DataStream
+    dataStream.seek(0)
+    const mixFile = new MixFile(dataStream)
+
+    const files: MixEntryInfo[] = []
+    const entries = mixFile.getAllEntries()
+
+    const hashToName = new Map<number, string>()
     try {
-      const size = vf.getSize()
-      if (size < this.MIN_MIX_HEADER_BYTES) {
-        console.info('[MixParser] empty/placeholder nested MIX, treating as 0 entries', {
-          name,
-          size,
-        })
-        return { name, size, files: [] }
-      }
-      const dataStream = vf.stream as DataStream
-      const mixFile = new MixFile(dataStream)
-
-      const files: MixEntryInfo[] = []
-      const entries = mixFile.getAllEntries()
-
-      const hashToName = new Map<number, string>()
-      try {
-        const lmdName = 'local mix database.dat'
-        if (mixFile.containsFile(lmdName)) {
-          const v = mixFile.openFile(lmdName)
-          const s = v.stream
-          s.seek(0)
-          const id = s.readString(32)
-          if (id.startsWith('XCC by Olaf van der Spek')) {
+      const lmdName = 'local mix database.dat'
+      if (mixFile.containsFile(lmdName)) {
+        const v = mixFile.openFile(lmdName)
+        const s = v.stream
+        s.seek(0)
+        const id = s.readString(32)
+        if (id.startsWith('XCC by Olaf van der Spek')) {
+          s.readInt32()
+          const type = s.readInt32()
+          const version = s.readInt32()
+          if (version === 0 && type === 0) {
             s.readInt32()
-            const type = s.readInt32()
-            const version = s.readInt32()
-            if (version === 0 && type === 0) {
-              s.readInt32()
-              const count = s.readInt32()
-              for (let i = 0; i < count; i++) {
-                const n = s.readCString()
-                if (!n) continue
-                const h = MixEntry.hashFilename(n)
-                hashToName.set(h >>> 0, n)
-              }
+            const count = s.readInt32()
+            for (let i = 0; i < count; i++) {
+              const n = s.readCString()
+              if (!n) continue
+              const h = MixEntry.hashFilename(n)
+              hashToName.set(h >>> 0, n)
             }
           }
         }
-      } catch {}
+      }
+    } catch {}
 
-      const globalMap = await GlobalMixDatabase.get().catch(() => new Map<number, string>())
+    const globalMap = await GlobalMixDatabase.get().catch(() => new Map<number, string>())
 
-      entries.forEach((entry) => {
-        const h = entry.hash >>> 0
-        const lmdName = hashToName.get(h)
-        const gmdName = lmdName ? undefined : globalMap.get(h)
-        const preferred = lmdName ?? gmdName
-        const hashHex = (entry.hash >>> 0).toString(16).toUpperCase().padStart(8, '0')
-        const extGuess = this.guessExtensionByHeader(mixFile, entry)
-        const preferredExt = preferred ? this.getExtensionFromFilename(preferred) : ''
-        const shouldProbe = !extGuess || this.isTheaterTmpLikeExtension(preferredExt)
-        const structuralProbe = shouldProbe ? this.probeLegacyAssetType(mixFile, entry) : ''
-        const resolvedExt = this.normalizeAssetExtension(preferredExt, extGuess, structuralProbe)
-        const fallbackName = resolvedExt ? `${hashHex}.${resolvedExt}` : hashHex
-        const filename = preferred ?? fallbackName
-        const extension = resolvedExt || this.getExtensionFromFilename(filename)
+    entries.forEach((entry) => {
+      const h = entry.hash >>> 0
+      const lmdName = hashToName.get(h)
+      const gmdName = lmdName ? undefined : globalMap.get(h)
+      const preferred = lmdName ?? gmdName
+      const hashHex = (entry.hash >>> 0).toString(16).toUpperCase().padStart(8, '0')
+      const extGuess = this.guessExtensionByHeader(mixFile, entry)
+      const preferredExt = preferred ? this.getExtensionFromFilename(preferred) : ''
+      const shouldProbe = !extGuess || this.isTheaterTmpLikeExtension(preferredExt)
+      const structuralProbe = shouldProbe ? this.probeLegacyAssetType(mixFile, entry) : ''
+      const resolvedExt = this.normalizeAssetExtension(preferredExt, extGuess, structuralProbe)
+      const fallbackName = resolvedExt ? `${hashHex}.${resolvedExt}` : hashHex
+      const filename = preferred ?? fallbackName
+      const extension = resolvedExt || this.getExtensionFromFilename(filename)
 
-        files.push({
-          filename,
-          hash: entry.hash,
-          offset: entry.offset,
-          length: entry.length,
-          extension,
-        })
+      files.push({
+        filename,
+        hash: entry.hash,
+        offset: entry.offset,
+        length: entry.length,
+        extension,
       })
+    })
 
-      return { name, size: vf.getSize(), files }
+    return { info: { name, size: vf.getSize(), files }, mix: mixFile }
+  }
+
+  static async parseVirtualFile(vf: VirtualFile, name: string): Promise<MixFileInfo> {
+    try {
+      const loaded = await this.loadMixFromVirtualFile(vf, name)
+      if (!loaded) {
+        console.info('[MixParser] empty/placeholder nested MIX, treating as 0 entries', {
+          name,
+          size: vf.getSize(),
+        })
+        return { name, size: vf.getSize(), files: [] }
+      }
+      return loaded.info
     } catch (error) {
       if (this.isHeaderTooSmallError(error)) {
         console.warn('[MixParser] skipping invalid/placeholder nested MIX', {

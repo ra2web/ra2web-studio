@@ -891,7 +891,7 @@ export const en = {
     resize: 'Resize',
     validate: 'Validate',
     objectProps: 'Object properties',
-    theaterMissing: 'Theater TMP not found (import isotemp.mix to render real tiles)',
+    theaterMissing: 'Theater art not found (need isotemp.mix / temperat.mix inside ra2.mix, or imported theater MIX files)',
     confirmDiscardTitle: 'Discard map changes?',
     confirmDiscardMsg: 'Unsaved map edits will be lost.',
     discard: 'Discard',

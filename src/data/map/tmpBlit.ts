@@ -1,9 +1,32 @@
 import type { TmpImage } from '../TmpImage'
 
+export type TmpRadarRgb = { r: number; g: number; b: number }
+
 export type TmpRgba = {
   width: number
   height: number
   rgba: Uint8ClampedArray
+  drawOffsetX: number
+  drawOffsetY: number
+  blockWidth: number
+  blockHeight: number
+  radarLeft: TmpRadarRgb
+  radarRight: TmpRadarRgb
+}
+
+/** FA2 `XCC_GetTMPTileInfo` sX/sY and werhd extra pad: canvas grows left/up, blit origin shifts by the pad. */
+export function tmpDrawOffset(image: Pick<TmpImage, 'hasExtraData' | 'x' | 'y' | 'extraX' | 'extraY'>): {
+  offsetX: number
+  offsetY: number
+  drawOffsetX: number
+  drawOffsetY: number
+} {
+  if (!image.hasExtraData) {
+    return { offsetX: 0, offsetY: 0, drawOffsetX: 0, drawOffsetY: 0 }
+  }
+  const offsetX = Math.max(0, image.x - image.extraX)
+  const offsetY = Math.max(0, image.y - image.extraY)
+  return { offsetX, offsetY, drawOffsetX: -offsetX, drawOffsetY: -offsetY }
 }
 
 /** Port of engine TmpDrawable diamond unpack, writing RGBA via a 256-color palette. */
@@ -13,22 +36,31 @@ export function blitTmpToRgba(
   blockWidth: number,
   blockHeight: number,
 ): TmpRgba {
-  let width = Math.max(blockWidth, 1)
-  let height = Math.max(blockHeight, 1)
-  let offsetX = 0
-  let offsetY = 0
+  const extra = tmpDrawOffset(image)
+  let width = Math.max(blockWidth, 1) + extra.offsetX
+  let height = Math.max(blockHeight, 1) + extra.offsetY
   if (image.hasExtraData) {
-    offsetX += Math.max(0, image.x - image.extraX)
-    offsetY += Math.max(0, image.y - image.extraY)
-    width += Math.max(0, image.x - image.extraX)
-    height += Math.max(0, image.y - image.extraY)
+    const extraInX = Math.max(0, image.extraX - image.x)
+    const extraInY = Math.max(0, image.extraY - image.y)
+    width = Math.max(width, extraInX + Math.max(0, image.extraWidth))
+    height = Math.max(height, extraInY + Math.max(0, image.extraHeight))
   }
   const rgba = new Uint8ClampedArray(width * height * 4)
-  drawDiamond(image, palette, rgba, width, height, blockWidth, blockHeight, offsetX, offsetY)
+  drawDiamond(image, palette, rgba, width, height, blockWidth, blockHeight, extra.offsetX, extra.offsetY)
   if (image.hasExtraData && image.extraData) {
     drawExtra(image, palette, rgba, width, height)
   }
-  return { width, height, rgba }
+  return {
+    width,
+    height,
+    rgba,
+    drawOffsetX: extra.drawOffsetX,
+    drawOffsetY: extra.drawOffsetY,
+    blockWidth,
+    blockHeight,
+    radarLeft: { r: image.radarLeft?.r ?? 0, g: image.radarLeft?.g ?? 0, b: image.radarLeft?.b ?? 0 },
+    radarRight: { r: image.radarRight?.r ?? 0, g: image.radarRight?.g ?? 0, b: image.radarRight?.b ?? 0 },
+  }
 }
 
 function drawDiamond(

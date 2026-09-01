@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { forEachIsoCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
 import { applyLatAt } from './lat'
-import { parseTheaterIni, tmpFileName, TheaterRules, marbleTileNum } from './theaterIndex'
+import { parseTheaterIni, tmpFileName, tmpVariantFileName, cellTmpVariantIndex, TheaterRules, marbleTileNum, theaterIniNames } from './theaterIndex'
 
 const SAMPLE_INI = `
 [General]
@@ -80,7 +80,30 @@ describe('parseTheaterIni', () => {
     expect(index.sets[0].marbleMadnessSet).toBe(-1)
     expect(index.sets[0].morphable).toBe(false)
     expect(tmpFileName(index.sets[0], 0, '.tem')).toBe('clear01.tem')
+    expect(theaterIniNames('TEMPERATE')).toEqual(['temperatmd.ini', 'temperat.ini'])
     expect(new TheaterRules(index).getCLATSet(1)).toBe(2)
+  })
+
+  it('builds werhd letter-suffix TMP names and a stable per-cell pick', () => {
+    expect(tmpVariantFileName('clear01.tem', -1)).toBe('clear01.tem')
+    expect(tmpVariantFileName('clear01.tem', 0)).toBe('clear01a.tem')
+    expect(tmpVariantFileName('clear01.tem', 6)).toBe('clear01g.tem')
+    expect(cellTmpVariantIndex(1, 16, 0, 1)).toBe(0)
+    expect(cellTmpVariantIndex(1, 16, 0, 8)).toBe(cellTmpVariantIndex(1, 16, 0, 8))
+    const picks = new Set<number>()
+    for (let rx = 1; rx <= 32; rx++) picks.add(cellTmpVariantIndex(rx, 16, 0, 8))
+    expect(picks.size).toBeGreaterThan(1)
+  })
+
+  it('trims theater.ini FileName so TMP names match mix entries', () => {
+    const index = parseTheaterIni(`
+[TileSet0000]
+FileName= SHORE
+SetName= Shore pieces
+TilesInSet=1
+`)
+    expect(index.sets[0].fileName).toBe('SHORE')
+    expect(tmpFileName(index.sets[0], 0, '.tem')).toBe('shore01.tem')
   })
 
   it('remaps MarbleMadness tile sets', () => {

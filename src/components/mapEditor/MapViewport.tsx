@@ -1,6 +1,7 @@
 import React, { useRef } from 'react'
 import { RA2_ISO_TILE_HEIGHT, RA2_ISO_TILE_WIDTH, EMPTY_OVERLAY } from '../../data/map/constants'
 import { forEachIsoCell, hitTestDiamond, projectCell } from '../../data/map/isoCoords'
+import { objectBlitPosition, overlayBlitPosition, tmpBlitPosition } from '../../data/map/isoDraw'
 import { MapDocument } from '../../data/map/MapDocument'
 import { walkTubeCells } from '../../data/map/fa2Tube'
 import type { MapEditorTool } from '../../data/map/mapTools'
@@ -91,6 +92,15 @@ function tileCanvas(cache: Map<string, HTMLCanvasElement>, key: string, pixels: 
   return canvas
 }
 
+function pathDiamond(ctx: CanvasRenderingContext2D, origin: { px: number; py: number }) {
+  ctx.beginPath()
+  ctx.moveTo(origin.px, origin.py)
+  ctx.lineTo(origin.px + RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
+  ctx.lineTo(origin.px, origin.py + RA2_ISO_TILE_HEIGHT)
+  ctx.lineTo(origin.px - RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
+  ctx.closePath()
+}
+
 function drawBuildingOutline(
   ctx: CanvasRenderingContext2D,
   rx: number,
@@ -143,96 +153,130 @@ const MapViewport: React.FC<MapViewportProps> = ({
   const paintingRef = useRef(false)
   const lastPaintRef = useRef<string | null>(null)
   const tileCacheRef = useRef(new Map<string, HTMLCanvasElement>())
+  const worldBufRef = useRef<HTMLCanvasElement | null>(null)
 
   const draw = React.useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    const width = canvas.clientWidth
-    const height = canvas.clientHeight
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width
-      canvas.height = height
+    const cssW = canvas.clientWidth
+    const cssH = canvas.clientHeight
+    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1
+    const pixelW = Math.max(1, Math.round(cssW * dpr))
+    const pixelH = Math.max(1, Math.round(cssH * dpr))
+    if (canvas.width !== pixelW || canvas.height !== pixelH) {
+      canvas.width = pixelW
+      canvas.height = pixelH
     }
-    ctx.fillStyle = '#0f172a'
-    ctx.fillRect(0, 0, width, height)
-    ctx.save()
-    ctx.translate(panX, panY)
-    ctx.scale(scale, scale)
-    ctx.imageSmoothingEnabled = false
 
+    const worldLeft = -panX / scale
+    const worldTop = -panY / scale
+    const worldRight = (cssW - panX) / scale
+    const worldBottom = (cssH - panY) / scale
+    const pad = 128
+    const bufX = Math.floor(worldLeft) - pad
+    const bufY = Math.floor(worldTop) - pad
+    const bufW = Math.max(1, Math.ceil(worldRight) - bufX + pad)
+    const bufH = Math.max(1, Math.ceil(worldBottom) - bufY + pad)
+    let world = worldBufRef.current
+    if (!world) {
+      world = document.createElement('canvas')
+      worldBufRef.current = world
+    }
+    if (world.width !== bufW || world.height !== bufH) {
+      world.width = bufW
+      world.height = bufH
+    }
+    const wctx = world.getContext('2d')
+    if (!wctx) return
+    wctx.imageSmoothingEnabled = false
+    wctx.fillStyle = '#0f172a'
+    wctx.fillRect(0, 0, bufW, bufH)
+    wctx.save()
+    wctx.translate(-bufX, -bufY)
+
+    const cells: Array<{
+      rx: number
+      ry: number
+      origin: { px: number; py: number }
+      tileNum: number
+      subTile: number
+      overlayId: number
+      overlayValue: number
+      height: number
+    }> = []
     forEachIsoCell(doc.width, doc.height, ({ rx, ry }) => {
       const cell = doc.getCell(rx, ry)
       if (isCellHidden(rx, ry, cell.tileNum, hideView, theaterArt?.index)) return
       const tileNum = marbleMadness && theaterArt ? theaterArt.marbleTile(cell.tileNum) : cell.tileNum
-      const origin = projectCell(rx, ry, cell.height, doc.isoSize)
       const overlay = doc.getOverlay(rx, ry)
-      const key = `${tileNum}:${cell.subTile}`
-      const pixels = theaterArt?.peek(tileNum, cell.subTile)
-      if (pixels === undefined) theaterArt?.request(tileNum, cell.subTile)
+      cells.push({
+        rx,
+        ry,
+        origin: projectCell(rx, ry, cell.height, doc.isoSize),
+        tileNum,
+        subTile: cell.subTile,
+        overlayId: overlay.id,
+        overlayValue: overlay.value,
+        height: cell.height,
+      })
+    })
+
+    for (const item of cells) {
+      const variant = theaterArt?.cellVariant(item.rx, item.ry, item.tileNum, item.subTile) ?? 0
+      const key = `${item.tileNum}:${item.subTile}:${variant}`
+      const pixels = theaterArt?.peek(item.tileNum, item.subTile, variant)
+      if (pixels === undefined) theaterArt?.request(item.tileNum, item.subTile, variant)
       if (pixels) {
         const sprite = tileCanvas(tileCacheRef.current, key, pixels)
-        ctx.drawImage(sprite, origin.px - pixels.width / 2, origin.py)
+        const pos = tmpBlitPosition(item.origin, pixels)
+        wctx.drawImage(sprite, pos.x, pos.y)
       } else {
-        const shade = 50 + cell.height * 12
+        const shade = 50 + item.height * 12
         let fill = `rgb(${shade},${shade + 18},${shade - 8})`
-        if (overlay.id !== EMPTY_OVERLAY) {
-          fill = overlay.id >= 102 && overlay.id <= 166 ? '#d4a017' : '#64748b'
+        if (item.overlayId !== EMPTY_OVERLAY) {
+          fill = item.overlayId >= 102 && item.overlayId <= 166 ? '#d4a017' : '#64748b'
         }
-        ctx.beginPath()
-        ctx.moveTo(origin.px, origin.py)
-        ctx.lineTo(origin.px + RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
-        ctx.lineTo(origin.px, origin.py + RA2_ISO_TILE_HEIGHT)
-        ctx.lineTo(origin.px - RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
-        ctx.closePath()
-        ctx.fillStyle = fill
-        ctx.fill()
+        pathDiamond(wctx, item.origin)
+        wctx.fillStyle = fill
+        wctx.fill()
       }
-      if (overlay.id !== EMPTY_OVERLAY) {
-        const ovl = theaterArt?.peekOverlay(overlay.id, overlay.value)
-        if (ovl === undefined) theaterArt?.requestOverlay(overlay.id, overlay.value)
-        if (ovl) {
-          const sprite = tileCanvas(tileCacheRef.current, `ovl:${overlay.id}:${overlay.value}`, ovl)
-          ctx.drawImage(sprite, origin.px - ovl.width / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2 - ovl.height)
-        } else if (pixels) {
-          ctx.fillStyle = overlay.id >= 102 && overlay.id <= 166 ? 'rgba(212,160,23,0.45)' : 'rgba(100,116,139,0.45)'
-          ctx.beginPath()
-          ctx.moveTo(origin.px, origin.py)
-          ctx.lineTo(origin.px + RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
-          ctx.lineTo(origin.px, origin.py + RA2_ISO_TILE_HEIGHT)
-          ctx.lineTo(origin.px - RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
-          ctx.closePath()
-          ctx.fill()
-        }
+    }
+
+    for (const item of cells) {
+      if (item.overlayId === EMPTY_OVERLAY) continue
+      const ovl = theaterArt?.peekOverlay(item.overlayId, item.overlayValue)
+      if (ovl === undefined) theaterArt?.requestOverlay(item.overlayId, item.overlayValue)
+      if (ovl) {
+        const sprite = tileCanvas(tileCacheRef.current, `ovl:${item.overlayId}:${item.overlayValue}`, ovl)
+        const pos = overlayBlitPosition(item.origin, ovl.width, ovl.height, item.overlayId)
+        wctx.drawImage(sprite, pos.x, pos.y)
+      } else if (theaterArt?.peek(item.tileNum, item.subTile, theaterArt.cellVariant(item.rx, item.ry, item.tileNum, item.subTile))) {
+        wctx.fillStyle = item.overlayId >= 102 && item.overlayId <= 166 ? 'rgba(212,160,23,0.45)' : 'rgba(100,116,139,0.45)'
+        pathDiamond(wctx, item.origin)
+        wctx.fill()
       }
-      if (selected && selected.rx === rx && selected.ry === ry) {
-        ctx.beginPath()
-        ctx.moveTo(origin.px, origin.py)
-        ctx.lineTo(origin.px + RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
-        ctx.lineTo(origin.px, origin.py + RA2_ISO_TILE_HEIGHT)
-        ctx.lineTo(origin.px - RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
-        ctx.closePath()
-        ctx.strokeStyle = '#38bdf8'
-        ctx.lineWidth = 2 / scale
-        ctx.stroke()
+    }
+
+    for (const item of cells) {
+      if (selected && selected.rx === item.rx && selected.ry === item.ry) {
+        pathDiamond(wctx, item.origin)
+        wctx.strokeStyle = '#38bdf8'
+        wctx.lineWidth = 2 / scale
+        wctx.stroke()
       }
       if (
         selectionRect
-        && rx >= selectionRect.minRx && rx <= selectionRect.maxRx
-        && ry >= selectionRect.minRy && ry <= selectionRect.maxRy
+        && item.rx >= selectionRect.minRx && item.rx <= selectionRect.maxRx
+        && item.ry >= selectionRect.minRy && item.ry <= selectionRect.maxRy
       ) {
-        ctx.beginPath()
-        ctx.moveTo(origin.px, origin.py)
-        ctx.lineTo(origin.px + RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
-        ctx.lineTo(origin.px, origin.py + RA2_ISO_TILE_HEIGHT)
-        ctx.lineTo(origin.px - RA2_ISO_TILE_WIDTH / 2, origin.py + RA2_ISO_TILE_HEIGHT / 2)
-        ctx.closePath()
-        ctx.strokeStyle = 'rgba(250,204,21,0.85)'
-        ctx.lineWidth = 1.5 / scale
-        ctx.stroke()
+        pathDiamond(wctx, item.origin)
+        wctx.strokeStyle = 'rgba(250,204,21,0.85)'
+        wctx.lineWidth = 1.5 / scale
+        wctx.stroke()
       }
-    })
+    }
 
     const mark = (rx: number, ry: number, color: string, label?: string, objectName?: string, facing = 0) => {
       const cell = doc.getCell(rx, ry)
@@ -243,19 +287,20 @@ const MapViewport: React.FC<MapViewportProps> = ({
         if (sprite === undefined) theaterArt?.requestObject(objectName, 0, facing)
         if (sprite) {
           const canvasSprite = tileCanvas(tileCacheRef.current, `obj:${objectName}:${facing}`, sprite)
-          ctx.drawImage(canvasSprite, origin.px - sprite.width / 2, origin.py + 16 - sprite.height)
+          const pos = objectBlitPosition(origin, sprite.width, sprite.height)
+          wctx.drawImage(canvasSprite, pos.x, pos.y)
           return
         }
       }
-      ctx.fillStyle = color
-      ctx.beginPath()
-      ctx.arc(origin.px, origin.py + 10, 5, 0, Math.PI * 2)
-      ctx.fill()
+      wctx.fillStyle = color
+      wctx.beginPath()
+      wctx.arc(origin.px, origin.py + 10, 5, 0, Math.PI * 2)
+      wctx.fill()
       if (label) {
-        ctx.fillStyle = '#f8fafc'
-        ctx.font = `${12 / scale}px sans-serif`
-        ctx.textAlign = 'center'
-        ctx.fillText(label, origin.px, origin.py + 4)
+        wctx.fillStyle = '#f8fafc'
+        wctx.font = `${12 / scale}px sans-serif`
+        wctx.textAlign = 'center'
+        wctx.fillText(label, origin.px, origin.py + 4)
       }
     }
 
@@ -266,7 +311,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
       mark(building.rx, building.ry, '#fb7185', building.name, building.name, building.direction)
       if (showBuildingOutline) {
         const size = foundations[building.name] ?? { w: 1, h: 1 }
-        drawBuildingOutline(ctx, building.rx, building.ry, doc.getCell(building.rx, building.ry).height, doc.isoSize, size.w, size.h, scale)
+        drawBuildingOutline(wctx, building.rx, building.ry, doc.getCell(building.rx, building.ry).height, doc.isoSize, size.w, size.h, scale)
       }
     }
     for (const terrain of doc.terrains) mark(terrain.rx, terrain.ry, '#4ade80', terrain.name, terrain.name)
@@ -278,20 +323,25 @@ const MapViewport: React.FC<MapViewportProps> = ({
       mark(node.rx, node.ry, '#f97316', node.type)
     }
     for (const tube of doc.tubes) {
-      ctx.strokeStyle = '#22d3ee'
-      ctx.lineWidth = 2 / scale
+      wctx.strokeStyle = '#22d3ee'
+      wctx.lineWidth = 2 / scale
       const cells = walkTubeCells(tube)
       if (cells.length === 0) continue
-      ctx.beginPath()
+      wctx.beginPath()
       cells.forEach((cell, index) => {
         const point = projectCell(cell.x, cell.y, doc.getCell(cell.x, cell.y).height, doc.isoSize)
-        if (index === 0) ctx.moveTo(point.px, point.py)
-        else ctx.lineTo(point.px, point.py)
+        if (index === 0) wctx.moveTo(point.px, point.py)
+        else wctx.lineTo(point.px, point.py)
       })
-      ctx.stroke()
+      wctx.stroke()
     }
 
-    ctx.restore()
+    wctx.restore()
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.imageSmoothingEnabled = false
+    ctx.fillStyle = '#0f172a'
+    ctx.fillRect(0, 0, cssW, cssH)
+    ctx.drawImage(world, bufX * scale + panX, bufY * scale + panY, bufW * scale, bufH * scale)
   }, [artRevision, doc, foundations, hideView, marbleMadness, panX, panY, scale, selected, selectionRect, showBuildingOutline, theaterArt])
 
   React.useEffect(() => {

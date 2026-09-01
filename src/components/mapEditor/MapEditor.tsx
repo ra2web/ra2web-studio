@@ -111,6 +111,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [revision, setRevision] = useState(0)
   const [autoLat, setAutoLat] = useState(true)
   const [theaterArt, setTheaterArt] = useState<TheaterArt | null>(null)
+  const [theaterArtReady, setTheaterArtReady] = useState(false)
   const [artRevision, setArtRevision] = useState(0)
   const [rulesLists, setRulesLists] = useState<RulesObjectLists>(emptyRulesObjectLists)
   const [mapWidth, setMapWidth] = useState(session.document.width)
@@ -173,14 +174,17 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
 
   useEffect(() => {
     let cancelled = false
+    setTheaterArtReady(false)
     if (!resourceContext) {
       setTheaterArt(null)
+      setTheaterArtReady(true)
       return
     }
     void TheaterArt.load(resourceContext, doc.theater).then((art) => {
       if (cancelled) return
       if (art) art.onUpdate = () => setArtRevision((value) => value + 1)
       setTheaterArt(art)
+      setTheaterArtReady(true)
     })
     return () => { cancelled = true }
   }, [doc.theater, resourceContext])
@@ -204,7 +208,9 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   }, [resourceContext])
 
   useEffect(() => {
-    if (theaterArt) theaterArt.overlayNames = rulesLists.overlays
+    if (!theaterArt) return
+    theaterArt.overlayNames = rulesLists.overlays
+    setArtRevision((value) => value + 1)
   }, [rulesLists.overlays, theaterArt])
 
   useEffect(() => {
@@ -723,7 +729,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                 {set.setIndex} {set.setName}
               </button>
             ))}
-            {!theaterArt && <p className="px-2 py-2 text-[11px] text-gray-500">{t('mapEditor.theaterMissing')}</p>}
+            {!theaterArt && theaterArtReady && <p className="px-2 py-2 text-[11px] text-gray-500">{t('mapEditor.theaterMissing')}</p>}
           </div>
         </aside>
 
@@ -761,12 +767,22 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             scale={scale}
             viewWidth={viewSize.w}
             viewHeight={viewSize.h}
+            theaterArt={theaterArt}
+            artRevision={artRevision}
             onPanChange={(nextX, nextY) => {
               setPanX(nextX)
               setPanY(nextY)
             }}
           />
           <div className="pointer-events-none absolute left-2 top-2 rounded bg-black/60 px-2 py-1 text-xs">{selectedInfo}</div>
+          {theaterArtReady && !theaterArt && (
+            <div
+              className="pointer-events-none absolute left-2 top-10 max-w-sm rounded bg-amber-900/80 px-2 py-1 text-xs text-amber-100"
+              data-testid="map-theater-missing"
+            >
+              {t('mapEditor.theaterMissing')}
+            </div>
+          )}
           <button
             type="button"
             className="absolute bottom-3 left-3 rounded bg-gray-900/90 px-3 py-2 text-sm md:hidden"

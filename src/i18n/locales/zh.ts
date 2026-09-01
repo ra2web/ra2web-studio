@@ -903,7 +903,7 @@ export const zh = {
     resize: '改尺寸',
     validate: '校验',
     objectProps: '对象属性',
-    theaterMissing: '未找到剧院 TMP（导入 isotemp.mix 等资源后可显示真实瓦片）',
+    theaterMissing: '未找到剧院素材（基座 ra2.mix 内的 isotemp.mix / temperat.mix，或单独导入的剧院 MIX）',
     confirmDiscardTitle: '放弃地图修改？',
     confirmDiscardMsg: '未保存的地图编辑将丢失。',
     discard: '放弃',

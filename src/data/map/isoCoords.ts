@@ -7,7 +7,7 @@ export type IsoCell = {
   ry: number
 }
 
-/** FA2 / RA2 等距投影。x/y 为 IsoMapPack 的 wX/wY。 */
+/** IsoMapPack 格投影。Studio 视口把它当作菱形顶点（命中测试 / 占位）。公式与 FA2 `ProjectCoords3d` 相同。 */
 export function projectCell(rx: number, ry: number, z: number, isoSize: number): { px: number; py: number } {
   const halfX = RA2_ISO_TILE_WIDTH / 2
   const halfY = RA2_ISO_TILE_HEIGHT / 2
