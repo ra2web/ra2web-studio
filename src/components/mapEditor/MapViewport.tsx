@@ -1,9 +1,10 @@
 import React, { useRef } from 'react'
 import { RA2_ISO_TILE_HEIGHT, RA2_ISO_TILE_WIDTH, EMPTY_OVERLAY } from '../../data/map/constants'
-import { forEachIsoCell, hitTestDiamond, projectCell } from '../../data/map/isoCoords'
+import { forEachIsoCell, hitTestDiamond, isValidIsoCell, projectCell } from '../../data/map/isoCoords'
 import { objectBlitPosition, overlayBlitPosition, tmpBlitPosition } from '../../data/map/isoDraw'
 import { MapDocument } from '../../data/map/MapDocument'
 import { walkTubeCells } from '../../data/map/fa2Tube'
+import { outerDiamondEdges } from '../../data/map/fa2Brush'
 import { drawTriggerLocation } from './drawTriggerLocation'
 import type { MapEditorTool } from '../../data/map/mapTools'
 import type { TheaterArt, TilePixels } from '../../data/map/TheaterArt'
@@ -44,8 +45,10 @@ type MapViewportProps = {
   onScaleChange: (scale: number) => void
   onPaint: (rx: number, ry: number) => void
   onPick: (pick: MapViewportPick) => void
+  onHover?: (cell: { rx: number; ry: number } | null) => void
   onStrokeStart?: () => void
   onStrokeEnd?: () => void
+  revision?: number
 }
 
 function worldFromClient(
@@ -103,6 +106,40 @@ function pathDiamond(ctx: CanvasRenderingContext2D, origin: { px: number; py: nu
   ctx.closePath()
 }
 
+function diamondVerts(origin: { px: number; py: number }): Array<{ x: number; y: number }> {
+  const hw = RA2_ISO_TILE_WIDTH / 2
+  const hh = RA2_ISO_TILE_HEIGHT / 2
+  return [
+    { x: origin.px, y: origin.py },
+    { x: origin.px + hw, y: origin.py + hh },
+    { x: origin.px, y: origin.py + hh * 2 },
+    { x: origin.px - hw, y: origin.py + hh },
+  ]
+}
+
+function strokeBrushOutline(
+  ctx: CanvasRenderingContext2D,
+  cells: Array<{ rx: number; ry: number }>,
+  doc: MapDocument,
+  scale: number,
+) {
+  if (cells.length === 0) return
+  ctx.strokeStyle = '#38bdf8'
+  ctx.lineWidth = 2 / scale
+  ctx.lineJoin = 'round'
+  ctx.beginPath()
+  for (const item of outerDiamondEdges(cells)) {
+    if (!isValidIsoCell(item.rx, item.ry, doc.width, doc.height)) continue
+    const origin = projectCell(item.rx, item.ry, doc.getCell(item.rx, item.ry).height, doc.isoSize)
+    const verts = diamondVerts(origin)
+    const a = verts[item.edge]
+    const b = verts[(item.edge + 1) % 4]
+    ctx.moveTo(a.x, a.y)
+    ctx.lineTo(b.x, b.y)
+  }
+  ctx.stroke()
+}
+
 function drawBuildingOutline(
   ctx: CanvasRenderingContext2D,
   rx: number,
@@ -146,8 +183,10 @@ const MapViewport: React.FC<MapViewportProps> = ({
   onScaleChange,
   onPaint,
   onPick,
+  onHover,
   onStrokeStart,
   onStrokeEnd,
+  revision = 0,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const pointersRef = useRef<Map<number, PointerState>>(new Map())
@@ -155,23 +194,17 @@ const MapViewport: React.FC<MapViewportProps> = ({
   const longPressRef = useRef<number | null>(null)
   const paintingRef = useRef(false)
   const lastPaintRef = useRef<string | null>(null)
+  const hoverKeyRef = useRef<string | null>(null)
   const tileCacheRef = useRef(new Map<string, HTMLCanvasElement>())
   const worldBufRef = useRef<HTMLCanvasElement | null>(null)
+  const worldBlitRef = useRef({ bufX: 0, bufY: 0, bufW: 1, bufH: 1 })
 
-  const draw = React.useCallback(() => {
+  const paintWorld = React.useCallback(() => {
+    void revision
     const canvas = canvasRef.current
     if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
     const cssW = canvas.clientWidth
     const cssH = canvas.clientHeight
-    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1
-    const pixelW = Math.max(1, Math.round(cssW * dpr))
-    const pixelH = Math.max(1, Math.round(cssH * dpr))
-    if (canvas.width !== pixelW || canvas.height !== pixelH) {
-      canvas.width = pixelW
-      canvas.height = pixelH
-    }
 
     const worldLeft = -panX / scale
     const worldTop = -panY / scale
@@ -262,31 +295,6 @@ const MapViewport: React.FC<MapViewportProps> = ({
       }
     }
 
-    for (const item of cells) {
-      const inBrush = brushCells.some((cell) => cell.rx === item.rx && cell.ry === item.ry)
-      if (inBrush) {
-        pathDiamond(wctx, item.origin)
-        wctx.strokeStyle = '#38bdf8'
-        wctx.lineWidth = 2 / scale
-        wctx.stroke()
-      } else if (selected && selected.rx === item.rx && selected.ry === item.ry) {
-        pathDiamond(wctx, item.origin)
-        wctx.strokeStyle = '#38bdf8'
-        wctx.lineWidth = 2 / scale
-        wctx.stroke()
-      }
-      if (
-        selectionRect
-        && item.rx >= selectionRect.minRx && item.rx <= selectionRect.maxRx
-        && item.ry >= selectionRect.minRy && item.ry <= selectionRect.maxRy
-      ) {
-        pathDiamond(wctx, item.origin)
-        wctx.strokeStyle = 'rgba(250,204,21,0.85)'
-        wctx.lineWidth = 1.5 / scale
-        wctx.stroke()
-      }
-    }
-
     const mark = (rx: number, ry: number, color: string, label?: string, objectName?: string, facing = 0) => {
       const cell = doc.getCell(rx, ry)
       if (isCellHidden(rx, ry, cell.tileNum, hideView, theaterArt?.index)) return
@@ -348,24 +356,83 @@ const MapViewport: React.FC<MapViewportProps> = ({
     }
 
     wctx.restore()
+    worldBlitRef.current = { bufX, bufY, bufW, bufH }
+  }, [artRevision, doc, foundations, hideView, marbleMadness, panX, panY, revision, scale, showBuildingOutline, theaterArt])
+
+  const paintFrame = React.useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const world = worldBufRef.current
+    if (!world) return
+    const cssW = canvas.clientWidth
+    const cssH = canvas.clientHeight
+    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1
+    const pixelW = Math.max(1, Math.round(cssW * dpr))
+    const pixelH = Math.max(1, Math.round(cssH * dpr))
+    if (canvas.width !== pixelW || canvas.height !== pixelH) {
+      canvas.width = pixelW
+      canvas.height = pixelH
+    }
+    const { bufX, bufY, bufW, bufH } = worldBlitRef.current
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.imageSmoothingEnabled = false
     ctx.fillStyle = '#0f172a'
     ctx.fillRect(0, 0, cssW, cssH)
     ctx.drawImage(world, bufX * scale + panX, bufY * scale + panY, bufW * scale, bufH * scale)
-  }, [artRevision, brushCells, doc, foundations, hideView, marbleMadness, panX, panY, scale, selected, selectionRect, showBuildingOutline, theaterArt])
+    ctx.save()
+    ctx.translate(panX, panY)
+    ctx.scale(scale, scale)
+    strokeBrushOutline(ctx, brushCells, doc, scale)
+    if (selected && !brushCells.some((cell) => cell.rx === selected.rx && cell.ry === selected.ry)) {
+      pathDiamond(ctx, projectCell(selected.rx, selected.ry, doc.getCell(selected.rx, selected.ry).height, doc.isoSize))
+      ctx.strokeStyle = '#38bdf8'
+      ctx.lineWidth = 2 / scale
+      ctx.stroke()
+    }
+    if (selectionRect) {
+      const rectCells: Array<{ rx: number; ry: number }> = []
+      for (let rx = selectionRect.minRx; rx <= selectionRect.maxRx; rx++) {
+        for (let ry = selectionRect.minRy; ry <= selectionRect.maxRy; ry++) {
+          if (isValidIsoCell(rx, ry, doc.width, doc.height)) rectCells.push({ rx, ry })
+        }
+      }
+      ctx.strokeStyle = 'rgba(250,204,21,0.85)'
+      ctx.lineWidth = 1.5 / scale
+      ctx.beginPath()
+      for (const item of outerDiamondEdges(rectCells)) {
+        const origin = projectCell(item.rx, item.ry, doc.getCell(item.rx, item.ry).height, doc.isoSize)
+        const verts = diamondVerts(origin)
+        const a = verts[item.edge]
+        const b = verts[(item.edge + 1) % 4]
+        ctx.moveTo(a.x, a.y)
+        ctx.lineTo(b.x, b.y)
+      }
+      ctx.stroke()
+    }
+    ctx.restore()
+  }, [brushCells, doc, panX, panY, scale, selected, selectionRect])
 
   React.useEffect(() => {
-    draw()
-  }, [draw])
+    paintWorld()
+  }, [paintWorld])
+
+  React.useEffect(() => {
+    paintFrame()
+  }, [paintFrame, paintWorld])
 
   React.useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const observer = new ResizeObserver(() => draw())
+    const redraw = () => {
+      paintWorld()
+      paintFrame()
+    }
+    const observer = new ResizeObserver(redraw)
     observer.observe(canvas)
     return () => observer.disconnect()
-  }, [draw])
+  }, [paintFrame, paintWorld])
 
   const clearLongPress = () => {
     if (longPressRef.current != null) {
@@ -393,6 +460,13 @@ const MapViewport: React.FC<MapViewportProps> = ({
     }
     const world = worldFromClient(canvas, event.clientX, event.clientY, panX, panY, scale)
     const cell = pickCell(doc, world.x, world.y)
+    if (cell) {
+      const hoverKey = `${cell.rx},${cell.ry}`
+      if (hoverKeyRef.current !== hoverKey) {
+        hoverKeyRef.current = hoverKey
+        onHover?.(cell)
+      }
+    }
     if (tool === 'pan' || event.button === 1 || event.button === 2) return
     longPressRef.current = window.setTimeout(() => {
       if (!cell) return
@@ -411,8 +485,12 @@ const MapViewport: React.FC<MapViewportProps> = ({
   const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const prev = pointersRef.current.get(event.pointerId)
-    pointersRef.current.set(event.pointerId, { id: event.pointerId, x: event.clientX, y: event.clientY })
+    const prev = event.buttons || pointersRef.current.has(event.pointerId)
+      ? pointersRef.current.get(event.pointerId)
+      : undefined
+    if (event.buttons || pointersRef.current.has(event.pointerId)) {
+      pointersRef.current.set(event.pointerId, { id: event.pointerId, x: event.clientX, y: event.clientY })
+    }
     if (pointersRef.current.size >= 2) {
       const [a, b] = [...pointersRef.current.values()]
       const distance = Math.hypot(a.x - b.x, a.y - b.y)
@@ -432,9 +510,14 @@ const MapViewport: React.FC<MapViewportProps> = ({
     if (Math.hypot((prev?.x ?? event.clientX) - event.clientX, (prev?.y ?? event.clientY) - event.clientY) > 8) {
       clearLongPress()
     }
-    if (!paintingRef.current) return
     const world = worldFromClient(canvas, event.clientX, event.clientY, panX, panY, scale)
     const cell = pickCell(doc, world.x, world.y)
+    const hoverKey = cell ? `${cell.rx},${cell.ry}` : ''
+    if (hoverKeyRef.current !== hoverKey) {
+      hoverKeyRef.current = hoverKey
+      onHover?.(cell)
+    }
+    if (!paintingRef.current) return
     if (!cell) return
     const key = `${cell.rx},${cell.ry}`
     if (lastPaintRef.current === key) return
@@ -453,6 +536,12 @@ const MapViewport: React.FC<MapViewportProps> = ({
     }
   }
 
+  const handlePointerLeave = () => {
+    if (hoverKeyRef.current === '') return
+    hoverKeyRef.current = ''
+    onHover?.(null)
+  }
+
   const handleWheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
     event.preventDefault()
     const next = event.deltaY < 0 ? scale * 1.1 : scale / 1.1
@@ -468,6 +557,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
+      onPointerLeave={handlePointerLeave}
       onContextMenu={(event) => event.preventDefault()}
       onWheel={handleWheel}
     />

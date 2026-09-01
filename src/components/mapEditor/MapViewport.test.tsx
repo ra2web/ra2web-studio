@@ -146,4 +146,33 @@ describe('MapViewport touch', () => {
       proto.getContext = origGetContext
     }
   })
+
+  it('reports hover cell on pointer move without painting', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const onHover = vi.fn()
+    const onPaint = vi.fn()
+    renderWithProviders(
+      <div style={{ width: 2000, height: 2000 }}>
+        <MapViewport
+          document={doc}
+          tool="tile"
+          brush={1}
+          panX={0}
+          panY={0}
+          scale={1}
+          onPanChange={vi.fn()}
+          onScaleChange={vi.fn()}
+          onPaint={onPaint}
+          onPick={vi.fn()}
+          onHover={onHover}
+        />
+      </div>,
+    )
+    const canvas = screen.getByTestId('map-viewport') as HTMLCanvasElement
+    stubCanvas(canvas)
+    const origin = projectCell(12, 12, 0, doc.isoSize)
+    dispatchPointer(canvas, 'pointermove', { pointerId: 1, clientX: origin.px, clientY: origin.py + 15, buttons: 0 })
+    expect(onHover).toHaveBeenCalledWith({ rx: 12, ry: 12 })
+    expect(onPaint).not.toHaveBeenCalled()
+  })
 })

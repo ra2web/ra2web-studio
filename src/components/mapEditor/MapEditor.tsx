@@ -78,6 +78,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [panY, setPanY] = useState(40)
   const [scale, setScale] = useState(0.45)
   const [selected, setSelected] = useState<{ rx: number; ry: number } | null>(null)
+  const [hover, setHover] = useState<{ rx: number; ry: number } | null>(null)
   const [logicTab, setLogicTab] = useState<LogicTab>('basic')
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false)
   const [revision, setRevision] = useState(0)
@@ -201,7 +202,8 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const brushH = brushSize.h
   const brush = brushSize.brush
   const brushPreviewCells = useMemo(() => {
-    if (!selected) return []
+    const origin = hover ?? selected
+    if (!origin || tool === 'pan') return []
     const paintRect = tool === 'tile' || tool === 'ore' || tool === 'gems' || tool === 'veins'
     const offsets = paintRect
       ? fa2PaintRectOffsets(brushW, brushH)
@@ -210,8 +212,8 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         : toolUsesBrush(tool)
           ? manhattanDiamondOffsets(brush)
           : [{ dx: 0, dy: 0 }]
-    return offsets.map(({ dx, dy }) => ({ rx: selected.rx + dx, ry: selected.ry + dy }))
-  }, [selected, tool, brushW, brushH, brush, heightRect])
+    return offsets.map(({ dx, dy }) => ({ rx: origin.rx + dx, ry: origin.ry + dy }))
+  }, [hover, selected, tool, brushW, brushH, brush, heightRect])
 
   const handlePaint = useCallback((rx: number, ry: number) => {
     const working = doc
@@ -676,6 +678,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             hideView={hideView}
             theaterArt={theaterArt}
             artRevision={artRevision}
+            revision={revision}
             onPanChange={(nextX, nextY) => {
               setPanX(nextX)
               setPanY(nextY)
@@ -683,6 +686,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             onScaleChange={setScale}
             onPaint={handlePaint}
             onPick={handlePick}
+            onHover={setHover}
             onStrokeStart={handleStrokeStart}
             onStrokeEnd={handleStrokeEnd}
           />
