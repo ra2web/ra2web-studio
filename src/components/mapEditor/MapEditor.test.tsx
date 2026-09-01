@@ -40,6 +40,7 @@ describe('MapEditor', () => {
     expect(screen.getByRole('button', { name: /触发器|Triggers/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /阵营|Houses/ })).toBeInTheDocument()
     expect(screen.getByTestId('map-minimap')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /基本|Basic/ }))
     expect(screen.getByTestId('map-resize-left')).toBeInTheDocument()
     expect(screen.getByTestId('map-resize-top')).toBeInTheDocument()
     expect(screen.getByText(/复制区域|Copy region/)).toBeInTheDocument()
@@ -52,6 +53,9 @@ describe('MapEditor', () => {
     expect(screen.getByText(/^宝石$|^Gems$/)).toBeInTheDocument()
     expect(screen.getByText(/矿脉洞|Veinhole/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /触发位置|Trigger location/ })).toBeInTheDocument()
+    expect(screen.getByTestId('map-brush-bar')).toBeInTheDocument()
+    expect(screen.getByTestId('map-tileset-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('map-brush-size')).toBeDisabled()
   })
 
   it('exposes FA2 map tools, globals and user scripts', () => {
@@ -215,6 +219,7 @@ describe('MapEditor', () => {
     renderWithProviders(
       <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
     )
+    fireEvent.click(screen.getByRole('button', { name: /基本|Basic/ }))
     fireEvent.change(screen.getByTestId('map-basic-nextScenario'), { target: { value: 'map02.md' } })
     expect(session.document.basic.nextScenario).toBe('map02.md')
   })
@@ -224,6 +229,7 @@ describe('MapEditor', () => {
     renderWithProviders(
       <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
     )
+    fireEvent.click(screen.getByRole('button', { name: /基本|Basic/ }))
     fireEvent.change(screen.getByTestId('map-basic-fillSilos'), { target: { value: 'yes' } })
     fireEvent.change(screen.getByTestId('map-localWidth'), { target: { value: '10' } })
     expect(session.document.basic.fillSilos).toBe('yes')
@@ -234,6 +240,7 @@ describe('MapEditor', () => {
     expect(session.document.houses.some((house) => house.name === 'CustomAI')).toBe(true)
     expect(screen.getByTestId('map-building-outline')).toBeInTheDocument()
     expect(screen.getByTestId('map-mobile-logic-toggle')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('map-mobile-logic-close'))
     expect(screen.getByTestId('map-logic-panel')).toHaveAttribute('data-open', '0')
     fireEvent.click(screen.getByTestId('map-mobile-logic-toggle'))
     expect(screen.getByTestId('map-logic-panel')).toHaveAttribute('data-open', '1')

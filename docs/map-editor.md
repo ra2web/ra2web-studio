@@ -30,6 +30,7 @@
 | P14 单格高程与队伍 | `map-editor-p14-teams-tile` | FA2 Raise/Lower Tile（SetHeightAt）、TeamTypes 全字段、ScriptTypes TMissions、单人过场字段 |
 | P15 逻辑全字段与轮廓 | `map-editor-p15-logic-fields` | FA2 AITriggerTypes 18 字段、阵营增删/PrepareHouses、单人剩余 Basic、LocalSize、CheckMap、建筑轮廓 |
 | P16 窄屏逻辑与测试 | `map-editor-p16-mobile-tests` | 窄屏逻辑面板、单元 + 组件 + e2e；阶段 tag 齐全 |
+| P17 FA2 布局 | `map-editor-p17-fa2-layout` | 顶栏工具/弹窗配置、左侧对象树、底部地形预览、FA2 笔刷/无笔刷选择栏 |
 
 ## 验收标准
 

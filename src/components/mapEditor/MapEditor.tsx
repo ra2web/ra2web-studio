@@ -1,8 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import {
-  Loader2, Map as MapIcon, Redo2, Save, Undo2, X,
-} from 'lucide-react'
 import { EMPTY_OVERLAY } from '../../data/map/constants'
 import { applyShoreAt, placeCliffLine } from '../../data/map/cliffShore'
 import { copyRegion, copyWholeMap, normalizeCopyRect, pasteRegion, pasteWholeMap, type MapClipboard, type MapCopyRect } from '../../data/map/copyPaste'
@@ -27,11 +24,21 @@ import { projectCell } from '../../data/map/isoCoords'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { useLocale } from '../../i18n/LocaleContext'
 import AiTriggerPanel from './AiTriggerPanel'
+import MapEditorToolbar, { type MapLogicTab } from './MapEditorToolbar'
 import MapMiniMap from './MapMiniMap'
 import MapViewport, { type MapViewportPick } from './MapViewport'
 import ObjectInspector from './ObjectInspector'
+import ObjectToolTree from './ObjectToolTree'
 import TeamsLogicPanel from './TeamsLogicPanel'
+import TileSetPreviewBar from './TileSetPreviewBar'
 import TriggerLogicPanel from './TriggerLogicPanel'
+import {
+  brushSizeFromId,
+  FA2_BRUSH_SIZES,
+  resolveTreeTileNum,
+  type Fa2BrushSizeId,
+  type ObjectTreeAction,
+} from './fa2Layout'
 
 export type MapEditorSession = {
   filePath: string
@@ -41,46 +48,7 @@ export type MapEditorSession = {
   error: string | null
 }
 
-type LogicTab = 'houses' | 'triggers' | 'teams' | 'ai' | 'lighting' | 'tubes' | 'basic' | 'maptools'
-
-const TOOLS: { id: MapEditorTool; labelKey: string }[] = [
-  { id: 'pan', labelKey: 'mapEditor.toolPan' },
-  { id: 'select', labelKey: 'mapEditor.toolSelect' },
-  { id: 'raise', labelKey: 'mapEditor.toolRaise' },
-  { id: 'lower', labelKey: 'mapEditor.toolLower' },
-  { id: 'raiseTile', labelKey: 'mapEditor.toolRaiseTile' },
-  { id: 'lowerTile', labelKey: 'mapEditor.toolLowerTile' },
-  { id: 'flatten', labelKey: 'mapEditor.toolFlatten' },
-  { id: 'tile', labelKey: 'mapEditor.toolTile' },
-  { id: 'ore', labelKey: 'mapEditor.toolOre' },
-  { id: 'gems', labelKey: 'mapEditor.toolGems' },
-  { id: 'veinhole', labelKey: 'mapEditor.toolVeinhole' },
-  { id: 'veins', labelKey: 'mapEditor.toolVeins' },
-  { id: 'overlay', labelKey: 'mapEditor.toolOverlay' },
-  { id: 'eraseOverlay', labelKey: 'mapEditor.toolEraseOverlay' },
-  { id: 'infantry', labelKey: 'mapEditor.toolInfantry' },
-  { id: 'unit', labelKey: 'mapEditor.toolUnit' },
-  { id: 'aircraft', labelKey: 'mapEditor.toolAircraft' },
-  { id: 'structure', labelKey: 'mapEditor.toolStructure' },
-  { id: 'terrain', labelKey: 'mapEditor.toolTerrain' },
-  { id: 'smudge', labelKey: 'mapEditor.toolSmudge' },
-  { id: 'waypoint', labelKey: 'mapEditor.toolWaypoint' },
-  { id: 'celltag', labelKey: 'mapEditor.toolCellTag' },
-  { id: 'eraseObject', labelKey: 'mapEditor.toolEraseObject' },
-  { id: 'tube', labelKey: 'mapEditor.toolTube' },
-  { id: 'cliff', labelKey: 'mapEditor.toolCliff' },
-  { id: 'cliffFront', labelKey: 'mapEditor.toolCliffFront' },
-  { id: 'cliffBack', labelKey: 'mapEditor.toolCliffBack' },
-  { id: 'shore', labelKey: 'mapEditor.toolShore' },
-  { id: 'basenode', labelKey: 'mapEditor.toolBaseNode' },
-  { id: 'copy', labelKey: 'mapEditor.toolCopy' },
-  { id: 'paste', labelKey: 'mapEditor.toolPaste' },
-  { id: 'bridge', labelKey: 'mapEditor.toolBridge' },
-  { id: 'wall', labelKey: 'mapEditor.toolWall' },
-  { id: 'randomTerrain', labelKey: 'mapEditor.toolRandomTerrain' },
-  { id: 'hideTileset', labelKey: 'mapEditor.toolHideTileset' },
-  { id: 'hideField', labelKey: 'mapEditor.toolHideField' },
-]
+type LogicTab = MapLogicTab
 
 type MapEditorProps = {
   session: MapEditorSession
@@ -94,8 +62,12 @@ type MapEditorProps = {
 const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit, saving, resourceContext }) => {
   const { t } = useLocale()
   const stackRef = useRef(new MapCommandStack())
-  const [tool, setTool] = useState<MapEditorTool>('raise')
+  const [tool, setTool] = useState<MapEditorTool>('select')
   const [brush, setBrush] = useState(1)
+  const [brushSizeId, setBrushSizeId] = useState<Fa2BrushSizeId>('1x1')
+  const [treeNodeId, setTreeNodeId] = useState<string>('nothing')
+  const [previewSetIndex, setPreviewSetIndex] = useState(0)
+  const [logicOpen, setLogicOpen] = useState(false)
   const [tileNum, setTileNum] = useState(0)
   const [overlayId, setOverlayId] = useState(102)
   const [overlayDataValue, setOverlayDataValue] = useState(0)
@@ -107,7 +79,6 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [selected, setSelected] = useState<{ rx: number; ry: number } | null>(null)
   const [logicTab, setLogicTab] = useState<LogicTab>('basic')
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false)
-  const [mobileLogicOpen, setMobileLogicOpen] = useState(false)
   const [revision, setRevision] = useState(0)
   const [autoLat, setAutoLat] = useState(true)
   const [theaterArt, setTheaterArt] = useState<TheaterArt | null>(null)
@@ -479,7 +450,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     setSelected({ rx: pick.rx, ry: pick.ry })
     if (pick.longPress) {
       setLogicTab('basic')
-      setMobileLogicOpen(true)
+      setLogicOpen(true)
     }
   }, [])
 
@@ -497,6 +468,37 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   }
   const redo = () => {
     if (stackRef.current.redo(doc)) bump(doc)
+  }
+
+  const applyBrushSize = (id: Fa2BrushSizeId) => {
+    setBrushSizeId(id)
+    setBrush(brushSizeFromId(id).brush)
+  }
+
+  const handleTreeSelect = (id: string, action: ObjectTreeAction) => {
+    setTreeNodeId(id)
+    setTool(action.tool)
+    if (action.objectName) setObjectName(action.objectName)
+    if (action.overlayId != null) setOverlayId(action.overlayId)
+    if (action.overlayData != null) setOverlayDataValue(action.overlayData)
+    if (action.bridgeKind) setBridgeKind(action.bridgeKind)
+    if (action.brush != null) {
+      const match = FA2_BRUSH_SIZES.find((item) => item.w === action.brush && item.h === action.brush)
+      if (match) applyBrushSize(match.id)
+      else setBrush(action.brush)
+    }
+    const nextTile = resolveTreeTileNum(theaterArt?.index, action.tileGeneral)
+    if (nextTile != null) {
+      setTileNum(nextTile)
+      const set = theaterArt?.index?.sets.find((item) => nextTile >= item.startTileNum && nextTile < item.startTileNum + item.tilesInSet)
+      if (set) setPreviewSetIndex(set.setIndex)
+    }
+    setMobileToolsOpen(false)
+  }
+
+  const openLogic = (tab: LogicTab) => {
+    setLogicTab(tab)
+    setLogicOpen(true)
   }
 
   useEffect(() => {
@@ -529,215 +531,115 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
       data-suppress-studio-context-menu="true"
       onContextMenu={(event) => event.preventDefault()}
     >
-      <header className="flex h-12 flex-shrink-0 items-center gap-2 border-b border-gray-800 bg-gray-900 px-2">
-        <MapIcon size={16} />
-        <div className="min-w-0 flex-1 truncate text-sm">{session.filePath}</div>
-        <button type="button" className="rounded p-2 hover:bg-gray-800" onClick={undo} title={t('mapEditor.undo')} aria-label={t('mapEditor.undo')}><Undo2 size={16} /></button>
-        <button type="button" className="rounded p-2 hover:bg-gray-800" onClick={redo} title={t('mapEditor.redo')} aria-label={t('mapEditor.redo')}><Redo2 size={16} /></button>
-        <button type="button" className="rounded bg-blue-600 px-3 py-1 text-sm disabled:opacity-50" onClick={() => { void onSave() }} disabled={saving}>
-          {saving ? <Loader2 className="inline animate-spin" size={14} /> : <Save className="mr-1 inline" size={14} />}
-          {t('mapEditor.save')}
-        </button>
-        <button type="button" className="rounded p-2 hover:bg-gray-800" onClick={onExit} aria-label={t('mapEditor.exit')}><X size={16} /></button>
-      </header>
+      <MapEditorToolbar
+        filePath={session.filePath}
+        saving={saving}
+        tool={tool}
+        brushSizeId={brushSizeId}
+        marbleMadness={marbleMadness}
+        logicTab={logicTab}
+        logicOpen={logicOpen}
+        onTool={setTool}
+        onBrushSizeId={applyBrushSize}
+        onMarbleMadness={setMarbleMadness}
+        onShowAllTilesets={() => setHideView((prev) => showAllTileSets(prev))}
+        onShowAllFields={() => setHideView((prev) => showAllFields(prev))}
+        onAutoLevel={() => {
+          const index = theaterArt?.index
+          if (!index || !theaterArt) return
+          commitEdit('autoLevel', () => {
+            autoLevel(doc, lookupFromTheater(index, theaterArt.tileShapeMap()), index)
+          })
+        }}
+        onAutoShore={() => {
+          const index = theaterArt?.index
+          if (!index || !theaterArt) return
+          commitEdit('autoShore', () => autoCreateShores(doc, index, theaterArt.shoreCatalog))
+        }}
+        onOpenLogic={openLogic}
+        onUndo={undo}
+        onRedo={redo}
+        onSave={() => { void onSave() }}
+        onExit={onExit}
+        extraOptions={(
+          <>
+            <label className="flex items-center gap-1 text-[11px] text-gray-400">
+              {t('mapEditor.owner')}
+              <select className="rounded bg-gray-800 px-1 py-0.5 text-gray-100" value={owner} onChange={(event) => setOwner(event.target.value)}>
+                {doc.houses.map((house) => <option key={house.name} value={house.name}>{house.name}</option>)}
+              </select>
+            </label>
+            <label className="flex items-center gap-1 text-[11px] text-gray-400">
+              {t('mapEditor.objectName')}
+              <input className="w-20 rounded bg-gray-800 px-1 py-0.5 text-gray-100" list="map-object-names" value={objectName} onChange={(event) => setObjectName(event.target.value)} />
+              <datalist id="map-object-names">
+                {(
+                  tool === 'infantry' ? rulesLists.infantry
+                    : tool === 'unit' ? rulesLists.units
+                      : tool === 'aircraft' ? rulesLists.aircraft
+                        : tool === 'structure' ? rulesLists.structures
+                          : tool === 'terrain' || tool === 'randomTerrain' ? rulesLists.terrain
+                            : tool === 'smudge' ? rulesLists.smudges
+                              : [...rulesLists.infantry, ...rulesLists.units, ...rulesLists.structures]
+                ).map((name) => <option key={name} value={name} />)}
+              </datalist>
+            </label>
+            <label className="flex items-center gap-1 text-[11px] text-gray-400">
+              {t('mapEditor.overlayData')}
+              <input type="number" className="w-16 rounded bg-gray-800 px-1 py-0.5 text-gray-100" value={overlayDataValue} onChange={(event) => setOverlayDataValue(Number(event.target.value))} data-testid="map-overlay-data" />
+            </label>
+            {tool === 'wall' && (
+              <label className="flex items-center gap-1 text-[11px] text-gray-400">
+                {t('mapEditor.toolWall')}
+                <select className="rounded bg-gray-800 px-1 py-0.5" value={overlayId} onChange={(event) => setOverlayId(Number(event.target.value))} data-testid="map-wall-type">
+                  {FA2_WALL_OVERLAYS.map((id) => (
+                    <option key={id} value={id}>{id}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {tool === 'bridge' && (
+              <label className="flex items-center gap-1 text-[11px] text-gray-400">
+                {t('mapEditor.toolBridge')}
+                <select className="rounded bg-gray-800 px-1 py-0.5" value={bridgeKind} onChange={(event) => setBridgeKind(event.target.value as BridgeKind)} data-testid="map-bridge-kind">
+                  <option value="small">{t('mapEditor.bridgeSmall')}</option>
+                  <option value="big">{t('mapEditor.bridgeBig')}</option>
+                  <option value="track">{t('mapEditor.bridgeTrack')}</option>
+                  <option value="concrete">{t('mapEditor.bridgeConcrete')}</option>
+                </select>
+              </label>
+            )}
+            {tool === 'tube' && (
+              <label className="flex items-center gap-1 text-[11px] text-gray-400">
+                <input type="checkbox" checked={tubeBidirectional} onChange={(event) => setTubeBidirectional(event.target.checked)} data-testid="map-tube-bidirectional" />
+                {t('mapEditor.tubeBidirectional')}
+              </label>
+            )}
+            {(tool === 'ore' || tool === 'gems') && (
+              <label className="flex items-center gap-1 text-[11px] text-gray-400">
+                <input type="checkbox" checked={oreRandom} onChange={(event) => setOreRandom(event.target.checked)} data-testid="map-ore-random" />
+                {t('mapEditor.oreRandom')}
+              </label>
+            )}
+            <label className="flex items-center gap-1 text-[11px] text-gray-400">
+              <input type="checkbox" checked={showBuildingOutline} onChange={(event) => setShowBuildingOutline(event.target.checked)} data-testid="map-building-outline" />
+              {t('mapEditor.showBuildingOutline')}
+            </label>
+          </>
+        )}
+      />
 
       <div className="flex min-h-0 flex-1">
-        <aside className="hidden w-56 flex-shrink-0 overflow-y-auto border-r border-gray-800 bg-gray-900 p-2 md:block" data-testid="map-tool-rail">
-          {TOOLS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`mb-1 block w-full rounded px-2 py-2 text-left text-sm ${tool === item.id ? 'bg-blue-600' : 'hover:bg-gray-800'}`}
-              onClick={() => {
-                setTool(item.id)
-                if (item.id === 'wall' && !(FA2_WALL_OVERLAYS as readonly number[]).includes(overlayId)) {
-                  setOverlayId(FA2_WALL_OVERLAYS[0])
-                }
-              }}
-            >
-              {t(item.labelKey as never)}
-            </button>
-          ))}
-          <label className="mt-3 block text-xs text-gray-400">
-            {t('mapEditor.brush')}
-            <input type="range" min={1} max={5} value={brush} onChange={(event) => setBrush(Number(event.target.value))} className="w-full" />
-          </label>
-          <label className="mt-2 block text-xs text-gray-400">
-            {t('mapEditor.owner')}
-            <select className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={owner} onChange={(event) => setOwner(event.target.value)}>
-              {doc.houses.map((house) => <option key={house.name} value={house.name}>{house.name}</option>)}
-            </select>
-          </label>
-          <label className="mt-2 block text-xs text-gray-400">
-            {t('mapEditor.objectName')}
-            <input className="mt-1 w-full rounded bg-gray-800 px-2 py-1" list="map-object-names" value={objectName} onChange={(event) => setObjectName(event.target.value)} />
-            <datalist id="map-object-names">
-              {(
-                tool === 'infantry' ? rulesLists.infantry
-                  : tool === 'unit' ? rulesLists.units
-                    : tool === 'aircraft' ? rulesLists.aircraft
-                      : tool === 'structure' ? rulesLists.structures
-                        : tool === 'terrain' || tool === 'randomTerrain' ? rulesLists.terrain
-                          : tool === 'smudge' ? rulesLists.smudges
-                            : [...rulesLists.infantry, ...rulesLists.units, ...rulesLists.structures]
-              ).map((name) => <option key={name} value={name} />)}
-            </datalist>
-          </label>
-          <label className="mt-2 block text-xs text-gray-400">
-            {t('mapEditor.tileId')}
-            <input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={tileNum} onChange={(event) => setTileNum(Number(event.target.value))} />
-          </label>
-          <label className="mt-2 block text-xs text-gray-400">
-            {t('mapEditor.overlayId')}
-            <input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={overlayId} onChange={(event) => setOverlayId(Number(event.target.value))} />
-            {rulesLists.overlays.length > 0 && (
-              <select className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={overlayId} onChange={(event) => setOverlayId(Number(event.target.value))}>
-                {rulesLists.overlays.map((name, index) => <option key={`${index}-${name}`} value={index}>{index} {name}</option>)}
-              </select>
-            )}
-          </label>
-          <label className="mt-2 block text-xs text-gray-400">
-            {t('mapEditor.overlayData')}
-            <input type="number" className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={overlayDataValue} onChange={(event) => setOverlayDataValue(Number(event.target.value))} data-testid="map-overlay-data" />
-          </label>
-          {tool === 'wall' && (
-            <label className="mt-2 block text-xs text-gray-400">
-              {t('mapEditor.toolWall')}
-              <select className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={overlayId} onChange={(event) => setOverlayId(Number(event.target.value))} data-testid="map-wall-type">
-                {FA2_WALL_OVERLAYS.map((id) => (
-                  <option key={id} value={id}>{id}</option>
-                ))}
-              </select>
-            </label>
-          )}
-          {tool === 'bridge' && (
-            <label className="mt-2 block text-xs text-gray-400">
-              {t('mapEditor.toolBridge')}
-              <select className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={bridgeKind} onChange={(event) => setBridgeKind(event.target.value as BridgeKind)} data-testid="map-bridge-kind">
-                <option value="small">{t('mapEditor.bridgeSmall')}</option>
-                <option value="big">{t('mapEditor.bridgeBig')}</option>
-                <option value="track">{t('mapEditor.bridgeTrack')}</option>
-                <option value="concrete">{t('mapEditor.bridgeConcrete')}</option>
-              </select>
-            </label>
-          )}
-          {tool === 'tube' && (
-            <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
-              <input type="checkbox" checked={tubeBidirectional} onChange={(event) => setTubeBidirectional(event.target.checked)} data-testid="map-tube-bidirectional" />
-              {t('mapEditor.tubeBidirectional')}
-            </label>
-          )}
-          {(tool === 'ore' || tool === 'gems') && (
-            <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
-              <input type="checkbox" checked={oreRandom} onChange={(event) => setOreRandom(event.target.checked)} data-testid="map-ore-random" />
-              {t('mapEditor.oreRandom')}
-            </label>
-          )}
-          <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
-            <input type="checkbox" checked={autoLat} onChange={(event) => setAutoLat(event.target.checked)} />
-            {t('mapEditor.autoLat')}
-          </label>
-          <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
-            <input type="checkbox" checked={heightRect} onChange={(event) => setHeightRect(event.target.checked)} data-testid="map-height-rect" />
-            {t('mapEditor.heightRect')}
-          </label>
-          <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
-            <input type="checkbox" checked={slopeCorrection} onChange={(event) => setSlopeCorrection(event.target.checked)} data-testid="map-slope-correction" />
-            {t('mapEditor.slopeCorrection')}
-          </label>
-          <button
-            type="button"
-            className="mt-2 w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
-            data-testid="map-auto-shore"
-            onClick={() => {
-              const index = theaterArt?.index
-              if (!index) return
-              commitEdit('autoShore', () => autoCreateShores(doc, index, theaterArt.shoreCatalog))
-            }}
-          >
-            {t('mapEditor.autoCreateShores')}
-          </button>
-          <button
-            type="button"
-            className="mt-2 w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
-            data-testid="map-auto-level"
-            onClick={() => {
-              const index = theaterArt?.index
-              if (!index) return
-              commitEdit('autoLevel', () => {
-                autoLevel(doc, lookupFromTheater(index, theaterArt.tileShapeMap()), index)
-              })
-            }}
-          >
-            {t('mapEditor.autoLevel')}
-          </button>
-          <button
-            type="button"
-            className="mt-2 w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
-            data-testid="map-copy-whole"
-            onClick={() => {
-              clipboardRef.current = copyWholeMap(doc)
-            }}
-          >
-            {t('mapEditor.copyWholeMap')}
-          </button>
-          <button
-            type="button"
-            className="mt-2 w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
-            data-testid="map-paste-whole"
-            onClick={() => {
-              const clip = clipboardRef.current
-              if (!clip) return
-              commitEdit('pasteWhole', () => {
-                pasteWholeMap(doc, clip, selected?.rx, selected?.ry)
-              })
-            }}
-          >
-            {t('mapEditor.pasteWholeMap')}
-          </button>
-          <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
-            <input type="checkbox" checked={marbleMadness} onChange={(event) => setMarbleMadness(event.target.checked)} data-testid="map-marble-toggle" />
-            {t('mapEditor.marbleMadness')}
-          </label>
-          <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
-            <input type="checkbox" checked={showBuildingOutline} onChange={(event) => setShowBuildingOutline(event.target.checked)} data-testid="map-building-outline" />
-            {t('mapEditor.showBuildingOutline')}
-          </label>
-          <button
-            type="button"
-            className="mt-2 w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
-            data-testid="map-show-tilesets"
-            onClick={() => setHideView((prev) => showAllTileSets(prev))}
-          >
-            {t('mapEditor.showAllTilesets')}
-          </button>
-          <button
-            type="button"
-            className="mt-1 w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
-            data-testid="map-show-fields"
-            onClick={() => setHideView((prev) => showAllFields(prev))}
-          >
-            {t('mapEditor.showAllFields')}
-          </button>
-          <div className="mt-3 text-xs text-gray-400">{t('mapEditor.tileSets')}</div>
-          <div className="mt-1 max-h-48 overflow-y-auto rounded border border-gray-800" data-testid="map-tileset-browser">
-            {theaterArt?.index?.sets.map((set) => (
-              <button
-                key={set.setIndex}
-                type="button"
-                className={`block w-full truncate px-2 py-1 text-left text-[11px] ${tileNum >= set.startTileNum && tileNum < set.startTileNum + set.tilesInSet ? 'bg-blue-700' : 'hover:bg-gray-800'} ${hideView.tileSets.has(set.setIndex) ? 'opacity-40' : ''}`}
-                onClick={() => {
-                  setTileNum(set.startTileNum)
-                  setTool('tile')
-                }}
-              >
-                {set.setIndex} {set.setName}
-              </button>
-            ))}
-            {!theaterArt && theaterArtReady && <p className="px-2 py-2 text-[11px] text-gray-500">{t('mapEditor.theaterMissing')}</p>}
-          </div>
+        <aside className={`${mobileToolsOpen ? 'absolute inset-y-0 left-0 z-[80] flex' : 'hidden'} w-56 flex-shrink-0 flex-col border-r border-gray-800 bg-gray-900 md:static md:flex`} data-testid={mobileToolsOpen ? 'map-mobile-tools' : 'map-object-tree'}>
+          <ObjectToolTree
+            theater={theaterArt?.index}
+            rulesLists={rulesLists}
+            selectedId={treeNodeId}
+            onSelect={handleTreeSelect}
+          />
         </aside>
 
+        <div className="flex min-w-0 flex-1 flex-col">
         <div className="relative min-w-0 flex-1" ref={viewRef}>
           <MapViewport
             document={doc}
@@ -799,33 +701,44 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
           <button
             type="button"
             className="absolute bottom-3 right-3 rounded bg-gray-900/90 px-3 py-2 text-sm lg:hidden"
-            onClick={() => setMobileLogicOpen((open) => !open)}
+            onClick={() => setLogicOpen((open) => !open)}
             data-testid="map-mobile-logic-toggle"
           >
             {t('mapEditor.logicPanel')}
           </button>
         </div>
+        <TileSetPreviewBar
+          theaterArt={theaterArt}
+          artRevision={artRevision}
+          tileNum={tileNum}
+          overlayId={overlayId}
+          overlayNames={rulesLists.overlays}
+          selectedSetIndex={previewSetIndex}
+          onSelectedSetIndex={setPreviewSetIndex}
+          onTileNum={(next) => {
+            setTileNum(next)
+            setTool('tile')
+          }}
+          onOverlayId={(next) => {
+            setOverlayId(next)
+            setTool('overlay')
+          }}
+        />
+        </div>
 
         <aside
-          className={`${mobileLogicOpen ? 'fixed inset-y-12 right-0 z-[80] flex w-[min(100%,18rem)]' : 'hidden'} flex-shrink-0 flex-col overflow-y-auto border-l border-gray-800 bg-gray-900 p-2 lg:static lg:z-auto lg:flex lg:w-72`}
+          className={`${logicOpen ? 'fixed inset-y-16 right-0 z-[80] flex w-[min(100%,22rem)] shadow-2xl' : 'hidden'} flex-col overflow-y-auto border-l border-gray-800 bg-gray-900 p-2`}
           data-testid="map-logic-panel"
-          data-open={mobileLogicOpen ? '1' : '0'}
+          data-open={logicOpen ? '1' : '0'}
         >
           <button
             type="button"
-            className="mb-2 self-end rounded bg-gray-800 px-2 py-1 text-xs lg:hidden"
+            className="mb-2 self-end rounded bg-gray-800 px-2 py-1 text-xs"
             data-testid="map-mobile-logic-close"
-            onClick={() => setMobileLogicOpen(false)}
+            onClick={() => setLogicOpen(false)}
           >
             {t('mapEditor.exit')}
           </button>
-          <div className="mb-2 flex flex-wrap gap-1">
-            {(['basic', 'houses', 'triggers', 'teams', 'ai', 'lighting', 'tubes', 'maptools'] as LogicTab[]).map((tab) => (
-              <button key={tab} type="button" className={`rounded px-2 py-1 text-xs ${logicTab === tab ? 'bg-blue-600' : 'bg-gray-800'}`} onClick={() => setLogicTab(tab)}>
-                {t(`mapEditor.tab_${tab}` as never)}
-              </button>
-            ))}
-          </div>
           {logicTab === 'basic' && (
             <div className="space-y-2 text-sm">
               <label className="block">{t('mapEditor.mapName')}<input className="mt-1 w-full rounded bg-gray-800 px-2 py-1" value={doc.basic.name} onChange={(event) => { doc.basic.name = event.target.value; bump(doc) }} /></label>
@@ -1068,6 +981,40 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
           )}
           {logicTab === 'maptools' && (
             <div className="space-y-3 text-sm" data-testid="map-maptools-panel">
+              <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
+                <input type="checkbox" checked={autoLat} onChange={(event) => setAutoLat(event.target.checked)} />
+                {t('mapEditor.autoLat')}
+              </label>
+              <label className="flex items-center gap-2 text-xs text-gray-400">
+                <input type="checkbox" checked={heightRect} onChange={(event) => setHeightRect(event.target.checked)} data-testid="map-height-rect" />
+                {t('mapEditor.heightRect')}
+              </label>
+              <label className="flex items-center gap-2 text-xs text-gray-400">
+                <input type="checkbox" checked={slopeCorrection} onChange={(event) => setSlopeCorrection(event.target.checked)} data-testid="map-slope-correction" />
+                {t('mapEditor.slopeCorrection')}
+              </label>
+              <button
+                type="button"
+                className="w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
+                data-testid="map-copy-whole"
+                onClick={() => { clipboardRef.current = copyWholeMap(doc) }}
+              >
+                {t('mapEditor.copyWholeMap')}
+              </button>
+              <button
+                type="button"
+                className="w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-300"
+                data-testid="map-paste-whole"
+                onClick={() => {
+                  const clip = clipboardRef.current
+                  if (!clip) return
+                  commitEdit('pasteWhole', () => {
+                    pasteWholeMap(doc, clip, selected?.rx, selected?.ry)
+                  })
+                }}
+              >
+                {t('mapEditor.pasteWholeMap')}
+              </button>
               <div className="text-xs font-medium text-gray-300">{t('mapEditor.globals')}</div>
               <div className="space-y-1" data-testid="map-globals-panel">
                 {doc.variables.map((item, index) => (
@@ -1224,57 +1171,6 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
           )}
         </aside>
       </div>
-
-      {mobileToolsOpen && (
-        <div className="max-h-[40vh] overflow-y-auto border-t border-gray-800 bg-gray-900 p-2 md:hidden" data-testid="map-mobile-tools">
-          <div className="flex flex-wrap gap-1">
-            {TOOLS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={`rounded px-2 py-2 text-xs ${tool === item.id ? 'bg-blue-600' : 'bg-gray-800'}`}
-                onClick={() => { setTool(item.id); setMobileToolsOpen(false) }}
-              >
-                {t(item.labelKey as never)}
-              </button>
-            ))}
-            <button
-              type="button"
-              className="rounded bg-gray-800 px-2 py-2 text-xs"
-              onClick={() => {
-                const index = theaterArt?.index
-                if (!index) return
-                commitEdit('autoShore', () => autoCreateShores(doc, index, theaterArt.shoreCatalog))
-                setMobileToolsOpen(false)
-              }}
-            >
-              {t('mapEditor.autoCreateShores')}
-            </button>
-            <button
-              type="button"
-              className="rounded bg-gray-800 px-2 py-2 text-xs"
-              data-testid="map-show-tilesets-mobile"
-              onClick={() => {
-                setHideView((prev) => showAllTileSets(prev))
-                setMobileToolsOpen(false)
-              }}
-            >
-              {t('mapEditor.showAllTilesets')}
-            </button>
-            <button
-              type="button"
-              className="rounded bg-gray-800 px-2 py-2 text-xs"
-              data-testid="map-show-fields-mobile"
-              onClick={() => {
-                setHideView((prev) => showAllFields(prev))
-                setMobileToolsOpen(false)
-              }}
-            >
-              {t('mapEditor.showAllFields')}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 
