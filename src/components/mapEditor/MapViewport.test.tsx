@@ -97,4 +97,53 @@ describe('MapViewport touch', () => {
     const next = onScaleChange.mock.calls.at(-1)?.[0] as number
     expect(next).toBeGreaterThan(1)
   })
+
+  it('draws trigger locations as an iso-ground disc with an upright flag', () => {
+    const texts: string[] = []
+    const ellipses: number[][] = []
+    const proto = HTMLCanvasElement.prototype as { getContext: (type: string) => CanvasRenderingContext2D | null }
+    const origGetContext = proto.getContext
+    proto.getContext = function (this: HTMLCanvasElement, type: string) {
+      const ctx = origGetContext.call(this, type) as (CanvasRenderingContext2D & { __triggerSpy?: boolean }) | null
+      if (ctx && !ctx.__triggerSpy) {
+        ctx.__triggerSpy = true
+        const origText = ctx.fillText.bind(ctx)
+        ctx.fillText = (text: string, x: number, y: number, maxWidth?: number) => {
+          texts.push(String(text))
+          return origText(text, x, y, maxWidth)
+        }
+        const origEllipse = ctx.ellipse.bind(ctx)
+        ctx.ellipse = (...args: Parameters<CanvasRenderingContext2D['ellipse']>) => {
+          ellipses.push([args[2], args[3]])
+          return origEllipse(...args)
+        }
+      }
+      return ctx
+    }
+    try {
+      const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE', multiplayer: true })
+      renderWithProviders(
+        <div style={{ width: 2000, height: 2000 }}>
+          <MapViewport
+            document={doc}
+            tool="waypoint"
+            brush={1}
+            panX={0}
+            panY={0}
+            scale={1}
+            onPanChange={vi.fn()}
+            onScaleChange={vi.fn()}
+            onPaint={vi.fn()}
+            onPick={vi.fn()}
+          />
+        </div>,
+      )
+      expect(texts).not.toContain('🚩')
+      expect(texts.some((text) => /^\d+$/.test(text))).toBe(true)
+      expect(ellipses.length).toBeGreaterThan(0)
+      expect(ellipses[0][1]).toBeCloseTo(ellipses[0][0] * 0.5)
+    } finally {
+      proto.getContext = origGetContext
+    }
+  })
 })

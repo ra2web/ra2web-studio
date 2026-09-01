@@ -4,6 +4,7 @@ import { forEachIsoCell, hitTestDiamond, projectCell } from '../../data/map/isoC
 import { objectBlitPosition, overlayBlitPosition, tmpBlitPosition } from '../../data/map/isoDraw'
 import { MapDocument } from '../../data/map/MapDocument'
 import { walkTubeCells } from '../../data/map/fa2Tube'
+import { drawTriggerLocation } from './drawTriggerLocation'
 import type { MapEditorTool } from '../../data/map/mapTools'
 import type { TheaterArt, TilePixels } from '../../data/map/TheaterArt'
 import type { BuildingFoundation } from '../../data/map/rulesObjects'
@@ -317,7 +318,9 @@ const MapViewport: React.FC<MapViewportProps> = ({
     for (const terrain of doc.terrains) mark(terrain.rx, terrain.ry, '#4ade80', terrain.name, terrain.name)
     for (const smudge of doc.smudges) mark(smudge.rx, smudge.ry, '#a8a29e')
     for (const waypoint of doc.waypoints) {
-      mark(waypoint.rx, waypoint.ry, '#facc15', String(waypoint.number))
+      const cell = doc.getCell(waypoint.rx, waypoint.ry)
+      if (isCellHidden(waypoint.rx, waypoint.ry, cell.tileNum, hideView, theaterArt?.index)) continue
+      drawTriggerLocation(wctx, projectCell(waypoint.rx, waypoint.ry, cell.height, doc.isoSize), waypoint.number, scale)
     }
     for (const node of doc.houses.flatMap((house) => house.nodes.map((item) => ({ ...item, house: house.name })))) {
       mark(node.rx, node.ry, '#f97316', node.type)

@@ -68,6 +68,7 @@ import {
   type ContextMenuBuildState,
   type ContextMenuCommandId,
   type ContextMenuTarget,
+  isStudioContextMenuSuppressed,
   resolveContextMenuTarget,
 } from './common/contextMenuModel'
 import {
@@ -3336,6 +3337,50 @@ const MixEditor: React.FC = () => {
     setContextMenuTarget(null)
   }, [])
 
+  const handleContextMenuCapture = useCallback(async (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.shiftKey) {
+      closeContextMenu()
+      return
+    }
+
+    if (isStudioContextMenuSuppressed(event.target)) {
+      event.preventDefault()
+      closeContextMenu()
+      return
+    }
+
+    const target = resolveContextMenuTarget(
+      event.target as HTMLElement | null,
+      {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      },
+      resourceReady ? 'global-shell' : 'import-shell',
+    )
+
+    event.preventDefault()
+
+    if (target.kind === 'file-tree-row' && target.filePath) {
+      const allowed = await selectFileWithGuard(target.filePath)
+      if (!allowed) return
+    }
+
+    if (target.kind === 'editable-text' && target.editableKind === 'input') {
+      target.inputElement?.focus()
+    }
+
+    if (target.kind === 'editable-text' && target.editableKind === 'monaco') {
+      // Let Monaco finish applying any cursor/selection updates from this right click
+      // before we snapshot editor state into the custom menu.
+      requestAnimationFrame(() => {
+        setContextMenuTarget(target)
+      })
+      return
+    }
+
+    setContextMenuTarget(target)
+  }, [closeContextMenu, resourceReady, selectFileWithGuard])
+
   const executeInputContextCommand = useCallback(async (
     commandId: ContextMenuCommandId,
     input: HTMLInputElement | HTMLTextAreaElement,
@@ -3447,43 +3492,6 @@ const MixEditor: React.FC = () => {
     })
   }, [contextMenuBuildState, contextMenuTarget, isMacLikePlatform, t])
 
-  const handleContextMenuCapture = useCallback(async (event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.shiftKey) {
-      closeContextMenu()
-      return
-    }
-
-    const target = resolveContextMenuTarget(
-      event.target as HTMLElement | null,
-      {
-        clientX: event.clientX,
-        clientY: event.clientY,
-      },
-      resourceReady ? 'global-shell' : 'import-shell',
-    )
-
-    event.preventDefault()
-
-    if (target.kind === 'file-tree-row' && target.filePath) {
-      const allowed = await selectFileWithGuard(target.filePath)
-      if (!allowed) return
-    }
-
-    if (target.kind === 'editable-text' && target.editableKind === 'input') {
-      target.inputElement?.focus()
-    }
-
-    if (target.kind === 'editable-text' && target.editableKind === 'monaco') {
-      // Let Monaco finish applying any cursor/selection updates from this right click
-      // before we snapshot editor state into the custom menu.
-      requestAnimationFrame(() => {
-        setContextMenuTarget(target)
-      })
-      return
-    }
-
-    setContextMenuTarget(target)
-  }, [closeContextMenu, resourceReady, selectFileWithGuard])
 
   const handleContextMenuCommand = useCallback((commandId: ContextMenuCommandId) => {
     const target = contextMenuTarget

@@ -102,10 +102,15 @@ class CanvasContextStub {
   moveTo(..._args: any[]) {}
   lineTo(..._args: any[]) {}
   arc(..._args: any[]) {}
+  ellipse(..._args: any[]) {}
+  quadraticCurveTo(..._args: any[]) {}
   fill() {}
   stroke() {}
   strokeRect(..._args: any[]) {}
   fillText(..._args: any[]) {}
+  strokeText(..._args: any[]) {}
+  lineJoin: CanvasLineJoin = 'miter'
+  miterLimit = 10
   font = '10px sans-serif'
   textAlign: CanvasTextAlign = 'start'
   strokeStyle: any = '#000'

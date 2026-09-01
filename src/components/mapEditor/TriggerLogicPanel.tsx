@@ -47,7 +47,7 @@ function optionsForParam(doc: MapDocument, typeId: number): Array<{ value: strin
     case 3: return doc.variables.map((item) => ({ value: String(item.index), label: item.name }))
     case 7: return doc.teams.map((item) => ({ value: item.id, label: item.name }))
     case 14: return doc.triggers.map((item) => ({ value: item.id, label: item.name }))
-    case 30: return doc.waypoints.map((item) => ({ value: String(item.number), label: `WP ${item.number}` }))
+    case 30: return doc.waypoints.map((item) => ({ value: String(item.number), label: `🚩 ${item.number}` }))
     case 38: return doc.tags.map((item) => ({ value: item.id, label: item.name }))
     case 15:
     case 37: return [{ value: '0', label: 'No' }, { value: '1', label: 'Yes' }]
@@ -168,7 +168,7 @@ const TriggerLogicPanel: React.FC<TriggerLogicPanelProps> = ({ doc, owner, bump 
                 ))}
                 {def?.usesWaypoint && (
                   <ParamField
-                    label="Waypoint"
+                    label={t('mapEditor.toolWaypoint')}
                     value={action.params[6] ?? '0'}
                     options={optionsForParam(doc, 30)}
                     onChange={(value) => { action.params[6] = value; bump(doc) }}

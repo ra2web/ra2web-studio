@@ -27,14 +27,14 @@ export function validateMap(doc: MapDocument): MapIssue[] {
   }
   for (const waypoint of doc.waypoints) {
     if (!inMap(waypoint.rx, waypoint.ry)) {
-      issues.push({ level: 'error', code: 'waypoint-bounds', message: `航点 ${waypoint.number} 超出地图` })
+      issues.push({ level: 'error', code: 'waypoint-bounds', message: `触发位置 ${waypoint.number} 超出地图` })
     }
   }
   if (doc.basic.multiplayerOnly && !doc.basic.official) {
     const ids = new Set(doc.waypoints.map((item) => item.number))
     const missing = [0, 1, 2, 3, 4, 5, 6, 7].filter((id) => !ids.has(id))
     if (missing.length > 0) {
-      issues.push({ level: 'warning', code: 'mp-waypoints', message: `多人图缺少航点 ${missing.join(', ')}` })
+      issues.push({ level: 'warning', code: 'mp-waypoints', message: `多人图缺少触发位置 ${missing.join(', ')}` })
     }
   }
   const houseNames = new Set(doc.houses.map((house) => house.name))

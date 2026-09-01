@@ -1,6 +1,7 @@
 import React from 'react'
 import { MapDocument } from '../../data/map/MapDocument'
 import type { MapTechno } from '../../data/map/types'
+import { useLocale } from '../../i18n/LocaleContext'
 
 type ObjectInspectorProps = {
   doc: MapDocument
@@ -93,6 +94,7 @@ function TechnoFields({
 }
 
 const ObjectInspector: React.FC<ObjectInspectorProps> = ({ doc, selected, bump }) => {
+  const { t } = useLocale()
   if (!selected) return <p className="text-xs text-gray-500">选择格子以编辑对象属性。</p>
   const bumpDoc = () => bump(doc)
   const houses = doc.houses.map((house) => house.name)
@@ -118,7 +120,7 @@ const ObjectInspector: React.FC<ObjectInspectorProps> = ({ doc, selected, bump }
         </label>
       )}
       {waypoint && (
-        <label className="block text-xs text-gray-400">Waypoint #
+        <label className="block text-xs text-gray-400">{t('mapEditor.toolWaypoint')} #
           <input type="number" className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={waypoint.number} onChange={(event) => { waypoint.number = Number(event.target.value); bumpDoc() }} />
         </label>
       )}

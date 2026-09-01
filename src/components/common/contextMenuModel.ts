@@ -207,6 +207,11 @@ function parseContainerChain(raw: string | undefined): string[] | undefined {
   return undefined
 }
 
+/** Full-screen editors that own their own context menus (added later). */
+export function isStudioContextMenuSuppressed(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('[data-suppress-studio-context-menu]') != null
+}
+
 export function resolveContextMenuTarget(
   element: HTMLElement | null,
   pointer: Pick<ContextMenuTarget, 'clientX' | 'clientY'>,

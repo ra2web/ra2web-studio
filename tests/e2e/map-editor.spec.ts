@@ -61,6 +61,18 @@ test('can create a new FA2 map and open the editor', async ({ page }) => {
   await expect(page.getByTestId('map-localWidth')).toBeVisible()
 })
 
+test('map editor does not open the studio context menu', async ({ page }) => {
+  await openNewMapEditor(page)
+  const viewport = page.getByTestId('map-viewport')
+  await expect(viewport).toBeVisible()
+
+  await viewport.click({ button: 'right', position: { x: 40, y: 40 } })
+  await expect(page.getByTestId('app-context-menu')).toHaveCount(0)
+
+  await page.getByTestId('map-basic-nextScenario').click({ button: 'right' })
+  await expect(page.getByTestId('app-context-menu')).toHaveCount(0)
+})
+
 test('narrow screen can open tools and logic without covering the canvas permanently', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await openNewMapEditor(page)

@@ -31,6 +31,8 @@ describe('MapEditor', () => {
     renderWithProviders(
       <MapEditor session={makeSession()} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
     )
+    expect(screen.getByTestId('map-editor')).toHaveAttribute('data-suppress-studio-context-menu', 'true')
+    expect(fireEvent.contextMenu(screen.getByTestId('map-editor'))).toBe(false)
     expect(screen.getByTestId('map-theater-missing')).toBeInTheDocument()
     expect(screen.getByText(/抬高地形|Raise ground/)).toBeInTheDocument()
     expect(screen.getByText(/抬高单格|Raise tile/)).toBeInTheDocument()
@@ -49,6 +51,7 @@ describe('MapEditor', () => {
     expect(screen.getByTestId('map-show-tilesets')).toBeInTheDocument()
     expect(screen.getByText(/^宝石$|^Gems$/)).toBeInTheDocument()
     expect(screen.getByText(/矿脉洞|Veinhole/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /触发位置|Trigger location/ })).toBeInTheDocument()
   })
 
   it('exposes FA2 map tools, globals and user scripts', () => {
@@ -60,6 +63,7 @@ describe('MapEditor', () => {
     expect(screen.getByTestId('map-globals-panel')).toBeInTheDocument()
     expect(screen.getByTestId('map-user-script')).toBeInTheDocument()
     expect(screen.getByTestId('map-search-waypoint')).toBeInTheDocument()
+    expect(screen.getByText(/搜索触发位置|Search trigger location/)).toBeInTheDocument()
     expect(screen.getByTestId('map-height-rect')).toBeInTheDocument()
     expect(screen.getByTestId('map-auto-shore')).toBeInTheDocument()
     expect(screen.getByTestId('map-auto-level')).toBeInTheDocument()

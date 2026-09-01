@@ -2,6 +2,7 @@ import {
   buildContextMenuItems,
   computeContextMenuPosition,
   getCommandIds,
+  isStudioContextMenuSuppressed,
   resolveContextMenuTarget,
   type ContextMenuBuildState,
 } from './contextMenuModel'
@@ -61,6 +62,15 @@ describe('contextMenuModel', () => {
     expect(target.kind).toBe('editable-text')
     expect(target.editableKind).toBe('input')
     expect(target.inputElement).toBe(input)
+  })
+
+  it('suppresses the studio context menu inside map editor surfaces', () => {
+    const editor = document.createElement('div')
+    editor.dataset.suppressStudioContextMenu = 'true'
+    const child = document.createElement('canvas')
+    editor.appendChild(child)
+    expect(isStudioContextMenuSuppressed(child)).toBe(true)
+    expect(isStudioContextMenuSuppressed(document.createElement('div'))).toBe(false)
   })
 
   it('builds base-mode file menu entries for mix-like rows', () => {

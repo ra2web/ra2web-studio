@@ -523,7 +523,12 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   }, [doc, selected, t, revision])
 
   const editor = (
-    <div className="fixed inset-0 z-[70] flex flex-col bg-gray-950 text-gray-100" data-testid="map-editor">
+    <div
+      className="fixed inset-0 z-[70] flex flex-col bg-gray-950 text-gray-100"
+      data-testid="map-editor"
+      data-suppress-studio-context-menu="true"
+      onContextMenu={(event) => event.preventDefault()}
+    >
       <header className="flex h-12 flex-shrink-0 items-center gap-2 border-b border-gray-800 bg-gray-900 px-2">
         <MapIcon size={16} />
         <div className="min-w-0 flex-1 truncate text-sm">{session.filePath}</div>
