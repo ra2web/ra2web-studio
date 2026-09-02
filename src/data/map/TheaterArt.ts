@@ -8,16 +8,17 @@ import { PaletteParser } from '../../services/palette/PaletteParser'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { RA2_ISO_TILE_HEIGHT, RA2_ISO_TILE_WIDTH, type MapTheater } from './constants'
 import { artShpCandidates, artVxlCandidates, BUILDING_SUBGRAPHIC_KEYS, readArtImage, resolveRulesImage } from './imageFinder'
+import { fa2OverlayGraphicPalette, fa2UnitGraphicPalette, type Fa2ShpPaletteKind } from './fa2ShpPalette'
 import { MapIni } from './MapIni'
-import { blitIndexedToRgba, compositeShpFrame, emptyRgba, overlayBuildingSubgraphic, overlayRgbaAt, pickShpFrame, rgbaHasOpaque, type IndexedRgba } from './shpBlit'
-import { blitTmpToRgba, type TmpRadarRgb, type TmpRgba } from './tmpBlit'
-import { blitVoxelsToRgba, applyHvaToVoxels, quantizedFacing } from './vxlBlit'
-import { fa2InfantryShpFrame, fa2UnitShpFrame, type ObjectSpriteKind } from './fa2Facing'
+import { blitIndexedToRgba, compositeShpFrame, emptyRgba, overlayBuildingSubgraphic, overlayRgbaAt, overlayRgbaAtExpand, pickOverlayShpFrame, pickShpFrame, rgbaHasOpaque, type IndexedRgba } from './shpBlit'
+import { blitTmpToRgba, composeTmpFilePreview, type TmpFilePreviewImage, type TmpRadarRgb, type TmpRgba } from './tmpBlit'
+import { blitVoxelsToRgba, blitFa2VxlSections, applyHvaToVoxels, quantizedFacing } from './vxlBlit'
+import { fa2InfantryDirIndex, fa2InfantryShpFrame, fa2UnitShpFrame, fa2VehicleVxlDirIndex, type ObjectSpriteKind } from './fa2Facing'
 import { houseRemapPalette, parseHouseColors, type HouseColorTable, type HouseRgb } from './fa2HouseColor'
-import { fa2BuildingTurretShpFrame, readBuildingTurret } from './fa2BuildingTurret'
+import { artTurretModelOffset, fa2BuildingTurretShpFrame, readBuildingTurret, rulesHasTurret, vehicleVoxelTurretOffset } from './fa2BuildingTurret'
 import { parseBuildingFoundations, type BuildingFoundation } from './rulesObjects'
 import { TILE_TO_LAT, type SmoothTerrainLookup } from './fa2Smooth'
-import { shorePieceFromShape, shapeFromTmp, type TmpTileShape } from './tmpCatalog'
+import { fa2CblocksForSet, shorePieceFromShape, shapeFromTmp, type TmpTileShape } from './tmpCatalog'
 import type { ShorePiece } from './fa2Shore'
 import {
   THEATER_ASSETS,
@@ -68,6 +69,7 @@ export class TheaterArt {
   private readonly tileShapes = new Map<number, TmpTileShape>()
   private readonly inflight = new Set<string>()
   private readonly variantFiles = new Map<string, TmpFile[]>()
+  private notifyScheduled = false
 
   constructor(
     private readonly openFile: OpenFile,
@@ -114,6 +116,15 @@ export class TheaterArt {
     return this.pixels.get(this.tileKey(tileNum, subTile, variant))
   }
 
+  /** FA2 `RenderTile` 整块 TMP 预览；1×1 与 `peek(tileNum, 0)` 相同。 */
+  peekTilePreview(tileNum: number): TilePixels | null | undefined {
+    return this.pixels.get(this.previewKey(tileNum))
+  }
+
+  requestTilePreview(tileNum: number): void {
+    this.queue(this.previewKey(tileNum), () => this.loadTilePreview(tileNum))
+  }
+
   /** TMP header radar color without waiting for RGBA blit when the mix is already cached. */
   peekRadar(tileNum: number, subTile: number): TmpRadarRgb | null | undefined {
     const pixels = this.peek(tileNum, subTile, 0)
@@ -151,6 +162,10 @@ export class TheaterArt {
     return `tile:${tileNum}:${subTile}:${variant}`
   }
 
+  private previewKey(tileNum: number): string {
+    return `preview:file:${tileNum}`
+  }
+
   private baseTmpName(tileNum: number): string | null {
     if (!this.index) return null
     const set = tileNumToSet(this.index, tileNum)
@@ -180,7 +195,7 @@ export class TheaterArt {
       this.pixels.set(`ovl:${id}:${frame}`, null)
       return
     }
-    this.queue(`ovl:${id}:${frame}`, () => this.loadArtShp(name, frame, this.overlayPalette))
+    this.queue(`ovl:${id}:${frame}`, () => this.loadArtShp(name, frame, this.overlayPalette, 0, undefined, undefined, 'overlay'))
   }
 
   peekObject(name: string, frame = 0, facing = 0, house?: HouseRgb, kind?: ObjectSpriteKind): TilePixels | null | undefined {
@@ -199,6 +214,13 @@ export class TheaterArt {
 
   tileShape(tileNum: number): TmpTileShape | undefined {
     return this.tileShapes.get(tileNum)
+  }
+
+  private rememberTileShape(tileNum: number, tmp: TmpFile, setIndex: number): TmpTileShape {
+    const cliffSet = this.index ? new TheaterRules(this.index).getGeneralValue('CliffSet') : -1
+    const shape = shapeFromTmp(tmp, fa2CblocksForSet(setIndex, cliffSet))
+    this.tileShapes.set(tileNum, shape)
+    return shape
   }
 
   tileShapeMap(): Map<number, TmpTileShape> {
@@ -231,17 +253,19 @@ export class TheaterArt {
     return `obj:${name}:${frame}:${quantizedFacing(facing)}:${houseKey}:${kind ?? ''}`
   }
 
-  /** 预载 ShorePieces / CliffSet / LAT 相关集的 TMP，供 CreateShore、崖块 z、SmoothAt its!=iss。 */
+  /** 预载 ShorePieces / CliffSet / BridgeSet / LAT 相关集的 TMP，供 CreateShore、崖块 z、高架坡道 PlaceTile、SmoothAt its!=iss。 */
   async loadEditorCatalogs(): Promise<void> {
     if (!this.index) return
     const rules = new TheaterRules(this.index)
     const ext = THEATER_ASSETS[this.theater].ext
     const shoreNum = rules.getGeneralValue('ShorePieces')
+    const bridgeNum = rules.getGeneralValue('BridgeSet')
+    const cliffNum = rules.getGeneralValue('CliffSet')
     const loadSet = async (setNum: number) => {
       const set = this.index?.sets[setNum]
       if (!set || set.tilesInSet <= 0) return undefined
       const shapes: Array<TmpTileShape | undefined> = []
-      const fa2Cblocks = setNum === shoreNum
+      const fa2Cblocks = fa2CblocksForSet(setNum, cliffNum)
       for (let i = 0; i < set.tilesInSet; i++) {
         const tmp = await this.loadTmp(tmpFileName(set, i, ext))
         if (!tmp) continue
@@ -253,13 +277,12 @@ export class TheaterArt {
       return { set, shapes }
     }
 
-    const cliffNum = rules.getGeneralValue('CliffSet')
     const waterNum = rules.getGeneralValue('WaterSet')
     const extra = TILE_TO_LAT.flatMap(([smooth, lat, target]) => (
       [smooth, lat, target].map((key) => rules.getGeneralValue(key)).filter((setNum) => setNum >= 0)
     ))
     const unique = [...new Set([
-      shoreNum, cliffNum, waterNum,
+      shoreNum, cliffNum, waterNum, bridgeNum,
       rules.getGeneralValue('ClearTile'),
       rules.getGeneralValue('RampBase'),
       rules.getGeneralValue('RampSmooth'),
@@ -280,7 +303,18 @@ export class TheaterArt {
         if (shape) this.cliffShapes.set(offset, shape)
       })
     }
-    this.onUpdate?.()
+    this.notify()
+  }
+
+  private notify() {
+    if (this.notifyScheduled) return
+    this.notifyScheduled = true
+    const flush = () => {
+      this.notifyScheduled = false
+      this.onUpdate?.()
+    }
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush)
+    else queueMicrotask(flush)
   }
 
   private queue(key: string, loader: () => Promise<TilePixels | null>): void {
@@ -289,10 +323,11 @@ export class TheaterArt {
     void loader().then((pixels) => {
       this.pixels.set(key, pixels)
       this.inflight.delete(key)
-      this.onUpdate?.()
+      this.notify()
     }).catch(() => {
       this.pixels.set(key, null)
       this.inflight.delete(key)
+      this.notify()
     })
   }
 
@@ -305,6 +340,7 @@ export class TheaterArt {
     const files = await this.loadTmpVariants(fileName, set.setName)
     const usable = files.filter((file) => subTile < file.images.length)
     if (!usable.length) return null
+    if (files[0]) this.rememberTileShape(tileNum, files[0], set.setIndex)
     const pick = Math.min(Math.max(0, variant), usable.length - 1)
     let requested: TilePixels | null = null
     for (let index = 0; index < usable.length; index++) {
@@ -321,6 +357,39 @@ export class TheaterArt {
       if (index === pick) requested = pixels
     }
     return requested
+  }
+
+  private async loadTilePreview(tileNum: number): Promise<TilePixels | null> {
+    if (!this.index) return null
+    const set = tileNumToSet(this.index, tileNum)
+    if (!set) return null
+    const ext = THEATER_ASSETS[this.theater].ext
+    const fileName = tmpFileName(set, tileNum - set.startTileNum, ext)
+    const files = await this.loadTmpVariants(fileName, set.setName)
+    const tmp = files[0]
+    if (!tmp) return null
+    this.rememberTileShape(tileNum, tmp, set.setIndex)
+    const parts: TmpFilePreviewImage[] = []
+    for (const image of tmp.images) {
+      if (!image || image.tileData.length === 0) continue
+      const pixels = blitTmpToRgba(
+        image,
+        this.palette,
+        tmp.blockWidth || RA2_ISO_TILE_WIDTH,
+        tmp.blockHeight || RA2_ISO_TILE_HEIGHT,
+      )
+      parts.push({
+        pixels,
+        x: image.x,
+        y: image.y,
+        zHeight: image.height,
+        drawOffsetX: pixels.drawOffsetX,
+        drawOffsetY: pixels.drawOffsetY,
+      })
+    }
+    if (parts.length === 0) return null
+    if (parts.length === 1) return parts[0].pixels
+    return composeTmpFilePreview(parts, tmp.blockHeight || RA2_ISO_TILE_HEIGHT)
   }
 
   /** werhd TileSets: numbered file then a–z until the first miss. Bridges skip letter suffixes. */
@@ -366,6 +435,12 @@ export class TheaterArt {
     return null
   }
 
+  private resolveShpPalette(kind: Fa2ShpPaletteKind, fallback: Uint8Array): Uint8Array {
+    if (kind === 'iso') return this.palette
+    if (kind === 'overlay') return this.overlayPalette
+    return fallback
+  }
+
   private async loadArtShp(
     objectName: string,
     frame: number,
@@ -373,40 +448,72 @@ export class TheaterArt {
     facing = 0,
     house?: HouseRgb,
     kind?: ObjectSpriteKind,
+    usage: 'object' | 'overlay' = 'object',
   ): Promise<TilePixels | null> {
     const rulesImage = resolveRulesImage(this.rulesIni, objectName)
     const info = readArtImage(this.artIni?.getSection(rulesImage), rulesImage)
     const imageName = info.image || rulesImage
-    const pal = house ? houseRemapPalette(info.terrainPalette ? this.palette : palette, house) : (info.terrainPalette ? this.palette : palette)
-    if (info.voxel) {
-      const vxl = await this.loadVxl(imageName, pal, facing)
-      if (vxl) return vxl
-    }
     const assets = THEATER_ASSETS[this.theater]
     const settings = { extension: assets.ext, newTheaterChar: assets.newTheaterChar }
     const names = artShpCandidates(objectName, info, settings)
+    const found = await this.findShpFile(names)
+    const palKind = usage === 'overlay'
+      ? fa2OverlayGraphicPalette(found, info, objectName, this.rulesIni)
+      : fa2UnitGraphicPalette(found, info)
+    const basePal = this.resolveShpPalette(palKind, palette)
+    const pal = house ? houseRemapPalette(info.terrainPalette ? this.palette : basePal, house) : basePal
     const walk = info.walkFrames ?? 1
     const start = info.startWalkFrame ?? 0
-    const shpFrame = kind === 'building'
-      ? 0
-      : kind === 'infantry'
-        ? fa2InfantryShpFrame(facing, walk, start)
-        : kind === 'unit'
-          ? fa2UnitShpFrame(facing, walk, start)
-          : (frame || fa2UnitShpFrame(facing, walk, start))
-    for (const name of names) {
-      const pixels = await this.loadShp(name, shpFrame, pal)
-      if (!pixels) continue
-      if (kind === 'building' || kind === undefined) {
-        return this.compositeBuildingSubs(objectName, rulesImage, imageName, pixels, pal, facing)
+    const still = kind === 'building' || kind === 'terrain' || kind === 'smudge'
+    const shpFrame = usage === 'overlay'
+      ? frame
+      : still
+        ? 0
+        : kind === 'infantry'
+          ? fa2InfantryShpFrame(facing, walk, start)
+          : kind === 'unit'
+            ? fa2UnitShpFrame(facing, walk, start)
+            : (frame || fa2UnitShpFrame(facing, walk, start))
+    if (info.voxel) {
+      const vehicle = kind !== 'building' && kind !== 'terrain' && kind !== 'smudge'
+      const vxl = await this.loadVxl(imageName, pal, facing, vehicle ? 'fa2-vehicle' : 'icon')
+      if (vxl) {
+        if (vehicle) return this.compositeVehicleVxl(objectName, imageName, vxl, pal, facing)
+        return vxl
       }
-      return pixels
     }
-    if (kind === 'building') {
+    if (found) {
+      const pixels = await this.loadShp(found, shpFrame, pal, usage !== 'overlay')
+      if (pixels) {
+        if (usage === 'object' && (kind === 'building' || kind === undefined)) {
+          return this.compositeBuildingSubs(objectName, rulesImage, imageName, pixels, pal, facing)
+        }
+        return pixels
+      }
+    }
+    if (usage === 'object' && kind === 'building') {
       const extras = await this.compositeBuildingSubs(objectName, rulesImage, imageName, emptyRgba(1, 1), pal, facing)
       if (rgbaHasOpaque(extras)) return extras
     }
     if (!info.voxel) return this.loadVxl(imageName, pal, facing)
+    return null
+  }
+
+  private async findShpFile(names: string[]): Promise<string | null> {
+    for (const name of names) {
+      const key = name.toLowerCase()
+      let shp = this.shpCache.get(key)
+      if (shp === undefined) {
+        const file = await this.openFile(name)
+        try {
+          shp = file ? ShpFile.fromVirtualFile(file) : null
+        } catch {
+          shp = null
+        }
+        this.shpCache.set(key, shp)
+      }
+      if (shp) return name
+    }
     return null
   }
 
@@ -447,6 +554,42 @@ export class TheaterArt {
     return this.compositeBuildingTurret(objectName, artSectionName, imageName, result, palette, facing)
   }
 
+  private async compositeVehicleVxl(
+    objectName: string,
+    imageName: string,
+    body: TilePixels & { centerX?: number; centerY?: number },
+    palette: Uint8Array,
+    facing: number,
+  ): Promise<TilePixels> {
+    const hasTurret = rulesHasTurret(this.rulesIni, objectName, imageName)
+    if (!hasTurret) return body
+    const modelX = artTurretModelOffset(this.artIni, imageName)
+    const mover = vehicleVoxelTurretOffset(objectName, imageName)
+    let result: TilePixels & { centerX?: number; centerY?: number } = body
+    const turret = await this.loadVxl(`${imageName}tur`, palette, facing, 'fa2-vehicle', { x: modelX })
+      ?? await this.loadVxl(`${objectName}tur`, palette, facing, 'fa2-vehicle', { x: modelX })
+    if (turret && rgbaHasOpaque(turret)) {
+      const dx = Math.round((body.centerX ?? body.width / 2) - (turret.centerX ?? turret.width / 2) + mover.offsetX)
+      const dy = Math.round((body.centerY ?? body.height / 2) - (turret.centerY ?? turret.height / 2) + mover.offsetY)
+      const next = overlayRgbaAtExpand(result, turret, dx, dy)
+      const shiftX = Math.min(0, dx)
+      const shiftY = Math.min(0, dy)
+      result = {
+        ...next,
+        centerX: (body.centerX ?? 0) - shiftX,
+        centerY: (body.centerY ?? 0) - shiftY,
+      }
+    }
+    const barrel = await this.loadVxl(`${imageName}barl`, palette, facing, 'fa2-vehicle', { x: modelX })
+      ?? await this.loadVxl(`${objectName}barl`, palette, facing, 'fa2-vehicle', { x: modelX })
+    if (barrel && rgbaHasOpaque(barrel)) {
+      const dx = Math.round((result.centerX ?? result.width / 2) - (barrel.centerX ?? barrel.width / 2) + mover.offsetX)
+      const dy = Math.round((result.centerY ?? result.height / 2) - (barrel.centerY ?? barrel.height / 2) + mover.offsetY)
+      result = overlayRgbaAtExpand(result, barrel, dx, dy)
+    }
+    return result
+  }
+
   private async compositeBuildingTurret(
     objectName: string,
     artSectionName: string,
@@ -461,17 +604,17 @@ export class TheaterArt {
     const turretInfo = readArtImage(turretSection, spec.anim)
     if (spec.voxel) {
       let result = base
-      const vxl = await this.loadVxl(turretInfo.image || spec.anim, palette, facing)
+      const vxl = await this.loadVxl(turretInfo.image || spec.anim, palette, facing, 'fa2')
       if (vxl && rgbaHasOpaque(vxl)) {
-        const dx = Math.round(base.width / 2 + spec.x + spec.offsetX - vxl.width / 2)
-        const dy = Math.round(base.height / 2 + spec.y + spec.offsetY - vxl.height / 2)
+        const dx = Math.round(base.width / 2 + spec.x + spec.offsetX - (vxl.centerX ?? vxl.width / 2))
+        const dy = Math.round(base.height / 2 + spec.y + spec.offsetY - (vxl.centerY ?? vxl.height / 2))
         result = overlayRgbaAt(result, vxl, dx, dy)
       }
       for (const barrelName of [`${artSectionName}barl`, `${objectName}barl`, `${imageName}barl`]) {
-        const barrel = await this.loadVxl(barrelName, palette, facing)
+        const barrel = await this.loadVxl(barrelName, palette, facing, 'fa2')
         if (!barrel || !rgbaHasOpaque(barrel)) continue
-        const dx = Math.round(base.width / 2 + spec.x + spec.offsetX - barrel.width / 2)
-        const dy = Math.round(base.height / 2 + spec.y + spec.offsetY - barrel.height / 2)
+        const dx = Math.round(base.width / 2 + spec.x + spec.offsetX - (barrel.centerX ?? barrel.width / 2))
+        const dy = Math.round(base.height / 2 + spec.y + spec.offsetY - (barrel.centerY ?? barrel.height / 2))
         result = overlayRgbaAt(result, barrel, dx, dy)
         break
       }
@@ -483,12 +626,20 @@ export class TheaterArt {
     for (const fileName of artShpCandidates(spec.anim, turretInfo, settings)) {
       const extra = await this.loadShp(fileName, frame, palette)
       if (!extra || !rgbaHasOpaque(extra)) continue
-      return overlayRgbaAt(base, extra, spec.x + spec.offsetX, spec.y + spec.offsetY)
+      const dx = spec.x + spec.offsetX
+      const dy = spec.y + spec.offsetY
+      return overlayRgbaAt(base, extra, dx, dy)
     }
     return base
   }
 
-  private async loadVxl(objectName: string, palette: Uint8Array, facing = 0): Promise<TilePixels | null> {
+  private async loadVxl(
+    objectName: string,
+    palette: Uint8Array,
+    facing = 0,
+    mode: 'icon' | 'fa2' | 'fa2-vehicle' = 'icon',
+    modelOffset: { x?: number; y?: number; z?: number } = {},
+  ): Promise<(TilePixels & { centerX?: number; centerY?: number }) | null> {
     const names = artVxlCandidates(objectName)
     for (const name of names) {
       const file = await this.openFile(name)
@@ -496,6 +647,29 @@ export class TheaterArt {
       try {
         const vxl = new VxlFile(file)
         const hva = await this.loadHva(objectName)
+        const usedEmbedded = vxl.embeddedPalette.length >= 768
+        const pal = new Uint8Array(usedEmbedded ? vxl.embeddedPalette : palette)
+        for (let i = 0x10 * 3; i <= 0x1F * 3 + 2; i++) pal[i] = palette[i] ?? pal[i]
+        if (mode === 'fa2' || mode === 'fa2-vehicle') {
+          const dirIndex = mode === 'fa2-vehicle' ? fa2VehicleVxlDirIndex(facing) : fa2InfantryDirIndex(facing)
+          const pixels = blitFa2VxlSections(
+            vxl.sections.map((section, index) => ({
+              voxels: section.getAllVoxels().voxels,
+              sizeX: section.sizeX,
+              sizeY: section.sizeY,
+              sizeZ: section.sizeZ,
+              minBounds: section.minBounds,
+              maxBounds: section.maxBounds,
+              hvaMultiplier: section.hvaMultiplier || 1,
+              hvaMatrix: hva?.sections[index]?.matrices[0],
+            })),
+            pal,
+            dirIndex,
+            modelOffset,
+          )
+          if (pixels) return pixels
+          continue
+        }
         const voxels = vxl.sections.flatMap((section, index) => {
           const raw = section.getAllVoxels().voxels
           const hvaSection = hva?.sections[index]
@@ -503,7 +677,6 @@ export class TheaterArt {
           return applyHvaToVoxels(raw, matrix, section.hvaMultiplier || 1)
         })
         const first = vxl.sections[0]
-        const pal = vxl.embeddedPalette.length >= 768 ? vxl.embeddedPalette : palette
         const pixels = blitVoxelsToRgba(
           voxels,
           pal,
@@ -542,7 +715,12 @@ export class TheaterArt {
     return null
   }
 
-  private async loadShp(fileName: string, frame: number, palette: Uint8Array): Promise<TilePixels | null> {
+  private async loadShp(
+    fileName: string,
+    frame: number,
+    palette: Uint8Array,
+    fallbackEmptyFrame = true,
+  ): Promise<TilePixels | null> {
     const key = fileName.toLowerCase()
     let shp = this.shpCache.get(key)
     if (shp === undefined) {
@@ -555,7 +733,9 @@ export class TheaterArt {
       this.shpCache.set(key, shp)
     }
     if (!shp) return null
-    const image = pickShpFrame(shp.images, frame)
+    const image = fallbackEmptyFrame
+      ? pickShpFrame(shp.images, frame)
+      : pickOverlayShpFrame(shp.images, frame)
     if (!image) return emptyRgba(shp.width, shp.height)
     const composited = compositeShpFrame({ width: shp.width, height: shp.height }, image)
     return blitIndexedToRgba(composited.indexed, composited.width, composited.height, palette)

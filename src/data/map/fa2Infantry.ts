@@ -46,3 +46,55 @@ export function allocateInfantrySubCell(existing: InfantryPos[]): number | null 
   }
   return null
 }
+
+/** 可放置的 INI pos：0（中上）、2（右）、3（左）。 */
+export const INFANTRY_PLACE_POS = [0, 2, 3] as const
+
+export function infantrySlotTaken(existing: InfantryPos[], subCell: number): boolean {
+  const slot = infantryDrawSlot(subCell)
+  return existing.some((item) => infantryDrawSlot(item.subCell ?? 0) === slot)
+}
+
+/** 优先放到点击的 subcell；已被占则回退 FA2 自动分配。 */
+export function preferInfantrySubCell(existing: InfantryPos[], preferred?: number): number | null {
+  if (existing.length >= INFANTRY_SUBPOS_COUNT) return null
+  if (preferred != null && !infantrySlotTaken(existing, preferred)) return preferred
+  return allocateInfantrySubCell(existing)
+}
+
+/**
+ * 按世界像素到菱形顶点的偏移，选最近的步兵 subcell。
+ * 用于点选 / 放置精度对齐 FA2 一格多人。
+ */
+export function infantrySubCellFromWorld(
+  worldX: number,
+  worldY: number,
+  origin: { px: number; py: number },
+): number {
+  let best = 0
+  let bestDist = Number.POSITIVE_INFINITY
+  for (const pos of INFANTRY_PLACE_POS) {
+    const offset = infantrySubPosOffset(pos)
+    const dx = worldX - (origin.px + offset.x)
+    const dy = worldY - (origin.py + offset.y)
+    const dist = dx * dx + dy * dy
+    if (dist < bestDist) {
+      bestDist = dist
+      best = pos
+    }
+  }
+  return best
+}
+
+export function infantryAtSubCell<T extends InfantryPos & { rx: number; ry: number }>(
+  items: T[],
+  rx: number,
+  ry: number,
+  subCell?: number,
+): T | undefined {
+  const here = items.filter((item) => item.rx === rx && item.ry === ry)
+  if (here.length === 0) return undefined
+  if (subCell == null) return here[0]
+  const slot = infantryDrawSlot(subCell)
+  return here.find((item) => infantryDrawSlot(item.subCell ?? 0) === slot) ?? here[0]
+}

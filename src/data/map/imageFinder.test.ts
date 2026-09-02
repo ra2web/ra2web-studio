@@ -91,6 +91,24 @@ describe('artShpCandidates', () => {
     expect(names[0]).toBe('gold01.tem')
     expect(names).toContain('gold01.shp')
   })
+
+  it('looks up CR1.tem / TREE01.tem like FA2 smudge and terrain Theater=yes', () => {
+    const crater = artShpCandidates('CRATER1', {
+      image: 'CR1',
+      theater: true,
+      voxel: false,
+      terrainPalette: false,
+    }, temperate)
+    expect(crater[0]).toBe('cr1.tem')
+    expect(crater).toContain('cr1.shp')
+    const tree = artShpCandidates('TREE01', {
+      image: 'TREE01',
+      theater: true,
+      voxel: false,
+      terrainPalette: true,
+    }, temperate)
+    expect(tree[0]).toBe('tree01.tem')
+  })
 })
 
 describe('artVxlCandidates', () => {

@@ -14,6 +14,11 @@ export const OVRL_CONCRETE_BRIDGE_START = 0xcd
 
 export type BridgeKind = 'big' | 'small' | 'track' | 'concrete'
 
+/** FA2 `isBigBridge`：高架木桥 / TS 轨桥 / RA2 轨桥。 */
+export function isBigBridgeOverlay(id: number): boolean {
+  return (id >= 0x18 && id <= 0x19) || (id >= 0x3b && id <= 0x3c) || (id >= 0xed && id <= 0xee)
+}
+
 export function isTrackOverlay(id: number): boolean {
   return id >= OVRL_TRACK_BEGIN && id <= OVRL_TRACK_END
 }
@@ -147,6 +152,74 @@ function put(doc: MapDocument, rx: number, ry: number, id: number, data: number)
   doc.setOverlay(rx, ry, id, data)
 }
 
+export type BridgeOverlayCell = { rx: number; ry: number; id: number; value: number }
+
+/**
+ * FA2 连桥会写入的 Overlay 格。不改地图，供笔刷幽灵预览。
+ */
+export function bridgeLineOverlays(
+  doc: MapDocument,
+  from: { rx: number; ry: number },
+  to: { rx: number; ry: number },
+  kind: BridgeKind,
+  pickFrame: (span: number) => number = () => 0,
+): BridgeOverlayCell[] {
+  if (from.rx === to.rx && from.ry === to.ry) return []
+  const { minX, maxX, minY, maxY, alongX } = axisAlign(from, to)
+  const out: BridgeOverlayCell[] = []
+  const add = (rx: number, ry: number, id: number, value: number) => {
+    if (isValidIsoCell(rx, ry, doc.width, doc.height)) out.push({ rx, ry, id, value })
+  }
+
+  if (kind === 'big' || kind === 'track') {
+    const startHeight = bigBridgeStartHeight(doc, minX, maxX, minY, maxY, alongX)
+    const overlay = kind === 'track'
+      ? (alongX ? OVRL_TRACK_BRIDGE_EW : OVRL_TRACK_BRIDGE_NS)
+      : (alongX ? OVRL_BIG_BRIDGE_EW : OVRL_BIG_BRIDGE_NS)
+    const data = alongX ? 0x9 : 0x0
+    if (alongX) {
+      for (let x = minX; x <= maxX; x++) {
+        if (heightAt(doc, x, minY) === startHeight) add(x, minY, overlay, data)
+      }
+    } else {
+      for (let y = minY; y <= maxY; y++) {
+        if (heightAt(doc, minX, y) === startHeight) add(minX, y, overlay, data)
+      }
+    }
+    return out
+  }
+
+  const start = kind === 'concrete' ? OVRL_CONCRETE_BRIDGE_START : OVRL_SMALL_BRIDGE_START
+  if (alongX) {
+    for (let x = minX + 1; x <= maxX - 1; x++) {
+      const frame = start + 9 + (pickFrame(x) & 3)
+      add(x, minY - 1, frame, 0x0)
+      add(x, minY, frame, 0x1)
+      add(x, minY + 1, frame, 0x2)
+    }
+    add(minX, minY - 1, start + 22, 0x0)
+    add(minX, minY, start + 22, 0x1)
+    add(minX, minY + 1, start + 22, 0x2)
+    add(maxX, minY - 1, start + 24, 0x0)
+    add(maxX, minY, start + 24, 0x1)
+    add(maxX, minY + 1, start + 24, 0x2)
+  } else {
+    for (let y = minY + 1; y <= maxY - 1; y++) {
+      const frame = start + (pickFrame(y) & 3)
+      add(minX - 1, y, frame, 0x0)
+      add(minX, y, frame, 0x1)
+      add(minX + 1, y, frame, 0x2)
+    }
+    add(minX - 1, minY, start + 20, 0x0)
+    add(minX, minY, start + 20, 0x1)
+    add(minX + 1, minY, start + 20, 0x2)
+    add(minX - 1, maxY, start + 18, 0x0)
+    add(minX, maxY, start + 18, 0x1)
+    add(minX + 1, maxY, start + 18, 0x2)
+  }
+  return out
+}
+
 /**
  * FA2 `ACTIONMODE_PLACE` type 6 data 5：轴对齐拖线桥。
  * `pickFrame` 对应小桥中段 `rand() * 4`，测试可固定为 0。
@@ -158,53 +231,7 @@ export function placeBridgeLine(
   kind: BridgeKind,
   pickFrame: (span: number) => number = () => 0,
 ): void {
-  if (from.rx === to.rx && from.ry === to.ry) return
-  const { minX, maxX, minY, maxY, alongX } = axisAlign(from, to)
-
-  if (kind === 'big' || kind === 'track') {
-    const startHeight = bigBridgeStartHeight(doc, minX, maxX, minY, maxY, alongX)
-    const overlay = kind === 'track'
-      ? (alongX ? OVRL_TRACK_BRIDGE_EW : OVRL_TRACK_BRIDGE_NS)
-      : (alongX ? OVRL_BIG_BRIDGE_EW : OVRL_BIG_BRIDGE_NS)
-    const data = alongX ? 0x9 : 0x0
-    if (alongX) {
-      for (let x = minX; x <= maxX; x++) {
-        if (heightAt(doc, x, minY) === startHeight) put(doc, x, minY, overlay, data)
-      }
-    } else {
-      for (let y = minY; y <= maxY; y++) {
-        if (heightAt(doc, minX, y) === startHeight) put(doc, minX, y, overlay, data)
-      }
-    }
-    return
-  }
-
-  const start = kind === 'concrete' ? OVRL_CONCRETE_BRIDGE_START : OVRL_SMALL_BRIDGE_START
-  if (alongX) {
-    for (let x = minX + 1; x <= maxX - 1; x++) {
-      const frame = start + 9 + (pickFrame(x) & 3)
-      put(doc, x, minY - 1, frame, 0x0)
-      put(doc, x, minY, frame, 0x1)
-      put(doc, x, minY + 1, frame, 0x2)
-    }
-    put(doc, minX, minY - 1, start + 22, 0x0)
-    put(doc, minX, minY, start + 22, 0x1)
-    put(doc, minX, minY + 1, start + 22, 0x2)
-    put(doc, maxX, minY - 1, start + 24, 0x0)
-    put(doc, maxX, minY, start + 24, 0x1)
-    put(doc, maxX, minY + 1, start + 24, 0x2)
-  } else {
-    for (let y = minY + 1; y <= maxY - 1; y++) {
-      const frame = start + (pickFrame(y) & 3)
-      put(doc, minX - 1, y, frame, 0x0)
-      put(doc, minX, y, frame, 0x1)
-      put(doc, minX + 1, y, frame, 0x2)
-    }
-    put(doc, minX - 1, minY, start + 20, 0x0)
-    put(doc, minX, minY, start + 20, 0x1)
-    put(doc, minX + 1, minY, start + 20, 0x2)
-    put(doc, minX - 1, maxY, start + 18, 0x0)
-    put(doc, minX, maxY, start + 18, 0x1)
-    put(doc, minX + 1, maxY, start + 18, 0x2)
+  for (const cell of bridgeLineOverlays(doc, from, to, kind, pickFrame)) {
+    put(doc, cell.rx, cell.ry, cell.id, cell.value)
   }
 }

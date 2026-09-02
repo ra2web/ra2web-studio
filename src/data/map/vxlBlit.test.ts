@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyHvaToVoxels, blitVoxelsToRgba, facingStep, quantizedFacing } from './vxlBlit'
+import { applyHvaToVoxels, blitFa2VxlSections, blitVoxelsToRgba, facingStep, quantizedFacing } from './vxlBlit'
 
 describe('blitVoxelsToRgba', () => {
   it('projects voxels into an opaque sprite', () => {
@@ -44,5 +44,28 @@ describe('blitVoxelsToRgba', () => {
     expect(applyHvaToVoxels(voxels, identity)[0]).toMatchObject({ x: 6, y: 2, z: 3 })
     const huge = { elements: [100, 0, 0, 0, 0, 100, 0, 0, 0, 0, 100, 0, 0, 0, 0, 1] }
     expect(applyHvaToVoxels(voxels, huge)[0]).toMatchObject({ x: 1, y: 2, z: 3 })
+  })
+
+  it('projects FA2 turret voxels smaller than the editor icon blit', () => {
+    const palette = new Uint8Array(768)
+    palette[3] = 255
+    const voxels = [] as Array<{ x: number; y: number; z: number; colorIndex: number }>
+    for (let x = 0; x < 20; x++) {
+      for (let y = 0; y < 20; y++) voxels.push({ x, y, z: 0, colorIndex: 1 })
+    }
+    const icon = blitVoxelsToRgba(voxels, palette, 20, 20, 1)
+    const fa2 = blitFa2VxlSections([{
+      voxels,
+      sizeX: 20,
+      sizeY: 20,
+      sizeZ: 1,
+      minBounds: { x: -4, y: -4, z: 0 },
+      maxBounds: { x: 4, y: 4, z: 2 },
+    }], palette, 0)
+    expect(fa2).not.toBeNull()
+    expect(icon).not.toBeNull()
+    expect(fa2!.width * fa2!.height).toBeLessThan(icon!.width * icon!.height)
+    expect(Number.isFinite(fa2!.centerX)).toBe(true)
+    expect(Number.isFinite(fa2!.centerY)).toBe(true)
   })
 })

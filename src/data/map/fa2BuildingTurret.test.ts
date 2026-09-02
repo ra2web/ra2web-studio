@@ -4,6 +4,7 @@ import {
   buildingVoxelTurretOffset,
   fa2BuildingTurretShpFrame,
   readBuildingTurret,
+  vehicleVoxelTurretOffset,
 } from './fa2BuildingTurret'
 
 describe('readBuildingTurret', () => {
@@ -52,5 +53,9 @@ describe('fa2BuildingTurretShpFrame', () => {
 describe('buildingVoxelTurretOffset', () => {
   it('uses the last FAData BuildingVoxelTurretsRA2 GTGCAN XY', () => {
     expect(buildingVoxelTurretOffset('GTGCAN')).toEqual({ offsetX: -2, offsetY: 2 })
+  })
+
+  it('reads VehicleVoxelTurretsRA2 offsets when present', () => {
+    expect(vehicleVoxelTurretOffset('MTNK')).toEqual({ offsetX: 0, offsetY: 0 })
   })
 })

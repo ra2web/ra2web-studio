@@ -5,6 +5,14 @@ export type MapRect = {
   height: number
 }
 
+/** 视口选中：格子 + 可选步兵 subcell / 对象 id。 */
+export type MapSelection = {
+  rx: number
+  ry: number
+  subCell?: number
+  objectId?: string
+}
+
 export type MapCell = {
   rx: number
   ry: number

@@ -136,3 +136,132 @@ export function blitVoxelsToRgba(
   void sizeZ
   return { width, height, rgba }
 }
+
+export type Fa2VxlSection = {
+  voxels: VoxelSample[]
+  sizeX: number
+  sizeY: number
+  sizeZ: number
+  minBounds: { x: number; y: number; z: number }
+  maxBounds: { x: number; y: number; z: number }
+  hvaMultiplier?: number
+  hvaMatrix?: MatrixElements
+}
+
+export type Fa2VxlRgba = VxlRgba & { centerX: number; centerY: number }
+
+function rotateX(v: { x: number; y: number; z: number }, a: number) {
+  const l = Math.hypot(v.y, v.z)
+  const da = Math.atan2(v.y, v.z) + a
+  return { x: v.x, y: l * Math.sin(da), z: l * Math.cos(da) }
+}
+
+function rotateY(v: { x: number; y: number; z: number }, a: number) {
+  const l = Math.hypot(v.x, v.z)
+  const da = Math.atan2(v.x, v.z) + a
+  return { x: l * Math.sin(da), y: v.y, z: l * Math.cos(da) }
+}
+
+function rotateZ(v: { x: number; y: number; z: number }, a: number) {
+  const l = Math.hypot(v.x, v.y)
+  const da = Math.atan2(v.x, v.y) + a
+  return { x: l * Math.sin(da), y: l * Math.cos(da), z: v.z }
+}
+
+/** FA2 `rotate_zxy`：先 Z 再 X 再 Y。 */
+export function rotateZxy(
+  v: { x: number; y: number; z: number },
+  rx: number,
+  ry: number,
+  rz: number,
+) {
+  return rotateY(rotateX(rotateZ(v, rz), rx), ry)
+}
+
+/** FA2 建筑 VXL：`r_x=300, r_z=45*dir+90`，dir 与步兵朝向索引相同。 */
+export function fa2BuildingVxlRadians(dirIndex: number): { rx: number; ry: number; rz: number } {
+  const dir = ((dirIndex % 8) + 8) % 8
+  const deg = Math.PI / 180
+  return { rx: 300 * deg, ry: 0, rz: (45 * dir + 90) * deg }
+}
+
+/**
+ * FA2 `LoadVXLImage`：格子坐标映射到 min/max bounds，再乘 HVA*scale，再 rotate_zxy。
+ * 返回画布以及模型原点投影（`turretinfo.x/y`）。
+ */
+export function blitFa2VxlSections(
+  sections: Fa2VxlSection[],
+  palette: Uint8Array,
+  dirIndex = 0,
+  modelOffset: { x?: number; y?: number; z?: number } = {},
+): Fa2VxlRgba | null {
+  const rot = fa2BuildingVxlRadians(dirIndex)
+  const ox = modelOffset.x ?? 0
+  const oy = modelOffset.y ?? 0
+  const oz = modelOffset.z ?? 0
+  const projected: Array<{ px: number; py: number; depth: number; colorIndex: number }> = []
+  for (const section of sections) {
+    const sx = Math.max(1, section.sizeX)
+    const sy = Math.max(1, section.sizeY)
+    const sz = Math.max(1, section.sizeZ)
+    const spanX = (section.maxBounds.x - section.minBounds.x) / sx
+    const spanY = (section.maxBounds.y - section.minBounds.y) / sy
+    const spanZ = (section.maxBounds.z - section.minBounds.z) / sz
+    for (const voxel of section.voxels) {
+      const world = {
+        x: section.minBounds.x + voxel.x * spanX,
+        y: section.minBounds.y + voxel.y * spanY,
+        z: section.minBounds.z + voxel.z * spanZ,
+        colorIndex: voxel.colorIndex,
+      }
+      const [mapped] = applyHvaToVoxels([world], section.hvaMatrix, section.hvaMultiplier ?? 1)
+      const screen = rotateZxy(mapped, rot.rx, rot.ry, rot.rz)
+      projected.push({
+        px: screen.x + ox,
+        py: screen.y + oy,
+        depth: screen.z + oz,
+        colorIndex: mapped.colorIndex,
+      })
+    }
+  }
+  if (projected.length === 0) return null
+  const origin = rotateZxy({ x: 0, y: 0, z: 0 }, rot.rx, rot.ry, rot.rz)
+  origin.x += ox
+  origin.y += oy
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const point of projected) {
+    if (point.px < minX) minX = point.px
+    if (point.py < minY) minY = point.py
+    if (point.px > maxX) maxX = point.px
+    if (point.py > maxY) maxY = point.py
+  }
+  const pad = 1
+  const width = Math.max(1, Math.ceil(maxX - minX + 2) + pad * 2)
+  const height = Math.max(1, Math.ceil(maxY - minY + 2) + pad * 2)
+  const rgba = new Uint8ClampedArray(width * height * 4)
+  const depthBuf = new Float32Array(width * height).fill(-Infinity)
+  for (const voxel of projected) {
+    const x = Math.floor(voxel.px - minX + pad)
+    const y = Math.floor(voxel.py - minY + pad)
+    if (x < 0 || y < 0 || x >= width || y >= height) continue
+    const index = y * width + x
+    if (voxel.depth < depthBuf[index]) continue
+    depthBuf[index] = voxel.depth
+    const [r, g, b] = paletteColor(palette, voxel.colorIndex)
+    const offset = index * 4
+    rgba[offset] = r
+    rgba[offset + 1] = g
+    rgba[offset + 2] = b
+    rgba[offset + 3] = 255
+  }
+  return {
+    width,
+    height,
+    rgba,
+    centerX: origin.x - minX + pad,
+    centerY: origin.y - minY + pad,
+  }
+}

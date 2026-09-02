@@ -4,6 +4,7 @@ import { MixParser } from '../../services/MixParser'
 import { MixArchiveBuilder } from '../../services/mixEdit/MixArchiveBuilder'
 import { ShpEncoder } from '../../services/shp/ShpEncoder'
 import { TheaterArt } from './TheaterArt'
+import { rgbaHasOpaque } from './shpBlit'
 import { VirtualFileSystem } from '../vfs/VirtualFileSystem'
 import { THEATER_ASSETS } from './theaterIndex'
 import { VxlEncoder } from '../VxlEncoder'
@@ -176,12 +177,13 @@ describe('TheaterArt', () => {
     expect(art.peekOverlay(126, 0)).toBeUndefined()
   })
 
-  it('uses the theater overlay palette (temperat.pal) instead of isotem.pal', async () => {
+  it('uses the theater overlay palette (temperat.pal) for Tiberium overlays', async () => {
     expect(THEATER_ASSETS.TEMPERATE.overlayPal).toBe('temperat.pal')
     const art = await loadTheater([
       { filename: 'isotem.pal', bytes: paletteWithIndex(16, 0, 200, 0) },
       { filename: 'temperat.pal', bytes: paletteWithIndex(16, 212, 160, 23) },
       { filename: 'unittem.pal', bytes: paletteWithIndex(1, 255, 0, 0) },
+      { filename: 'rules.ini', bytes: encodeText('[Riparius]\nTiberium=yes\n') },
       { filename: 'art.ini', bytes: encodeText('[Riparius]\nImage=GOLD01\nTheater=yes\n') },
       { filename: 'gold01.tem', bytes: encodeTinyShp(16) },
     ])
@@ -193,6 +195,72 @@ describe('TheaterArt', () => {
     expect(pixels?.rgba[1]).toBe(160)
     expect(pixels?.rgba[2]).toBe(23)
     expect(pixels?.rgba[3]).toBe(255)
+  })
+
+  it('uses iso pal for bridge overlays loaded from .tem', async () => {
+    const art = await loadTheater([
+      { filename: 'isotem.pal', bytes: paletteWithIndex(16, 0, 200, 0) },
+      { filename: 'temperat.pal', bytes: paletteWithIndex(16, 212, 160, 23) },
+      { filename: 'unittem.pal', bytes: paletteWithIndex(1, 255, 0, 0) },
+      { filename: 'art.ini', bytes: encodeText('[BRIDGE1]\nTheater=yes\n') },
+      { filename: 'bridge1.tem', bytes: encodeTinyShp(16) },
+    ])
+    art.overlayNames = Array.from({ length: 25 }, (_, index) => (index === 24 ? 'BRIDGE1' : ''))
+    art.requestOverlay(24, 0)
+    const pixels = await waitPeek(() => art.peekOverlay(24, 0))
+    expect(pixels).not.toBeNull()
+    expect(pixels?.rgba[0]).toBe(0)
+    expect(pixels?.rgba[1]).toBe(200)
+    expect(pixels?.rgba[2]).toBe(0)
+  })
+
+  it('does not blit empty overlay data frames as another SHP frame', async () => {
+    const art = await loadTheater([
+      { filename: 'isotem.pal', bytes: paletteWithIndex(16, 0, 200, 0) },
+      { filename: 'unittem.pal', bytes: paletteWithIndex(1, 255, 0, 0) },
+      { filename: 'art.ini', bytes: encodeText('[LOBRDG23]\nTheater=yes\n') },
+      { filename: 'lobrdg23.tem', bytes: encodeShpFrames([new Uint8Array([0]), new Uint8Array([16]), new Uint8Array([0])]) },
+    ])
+    art.overlayNames = Array.from({ length: 84 }, (_, index) => (index === 83 ? 'LOBRDG23' : ''))
+    art.requestOverlay(83, 0)
+    art.requestOverlay(83, 1)
+    art.requestOverlay(83, 2)
+    const empty0 = await waitPeek(() => art.peekOverlay(83, 0))
+    const filled = await waitPeek(() => art.peekOverlay(83, 1))
+    const empty2 = await waitPeek(() => art.peekOverlay(83, 2))
+    expect(rgbaHasOpaque(empty0)).toBe(false)
+    expect(rgbaHasOpaque(filled)).toBe(true)
+    expect(rgbaHasOpaque(empty2)).toBe(false)
+  })
+
+  it('loads smudge CR1.tem with iso pal even without TerrainPalette', async () => {
+    const art = await loadTheater([
+      { filename: 'isotem.pal', bytes: paletteWithIndex(16, 10, 200, 30) },
+      { filename: 'unittem.pal', bytes: paletteWithIndex(16, 255, 0, 0) },
+      { filename: 'art.ini', bytes: encodeText('[CRATER1]\nImage=CR1\nTheater=yes\n') },
+      { filename: 'cr1.tem', bytes: encodeTinyShp(16) },
+    ])
+    art.requestObject('CRATER1', 0, 0, undefined, 'smudge')
+    const pixels = await waitPeek(() => art.peekObject('CRATER1', 0, 0, undefined, 'smudge'))
+    expect(pixels).not.toBeNull()
+    expect(pixels?.rgba[0]).toBe(10)
+    expect(pixels?.rgba[1]).toBe(200)
+    expect(pixels?.rgba[2]).toBe(30)
+  })
+
+  it('loads TREE01.tem terrain with iso pal', async () => {
+    const art = await loadTheater([
+      { filename: 'isotem.pal', bytes: paletteWithIndex(16, 4, 80, 12) },
+      { filename: 'unittem.pal', bytes: paletteWithIndex(16, 255, 0, 0) },
+      { filename: 'art.ini', bytes: encodeText('[TREE01]\nTheater=yes\nShouldUseCellDrawer=yes\n') },
+      { filename: 'tree01.tem', bytes: encodeTinyShp(16) },
+    ])
+    art.requestObject('TREE01', 0, 0, undefined, 'terrain')
+    const pixels = await waitPeek(() => art.peekObject('TREE01', 0, 0, undefined, 'terrain'))
+    expect(pixels).not.toBeNull()
+    expect(pixels?.rgba[0]).toBe(4)
+    expect(pixels?.rgba[1]).toBe(80)
+    expect(pixels?.rgba[2]).toBe(12)
   })
 
   it('loads infantry SHP via rules Image=CONSCR instead of e1.shp', async () => {
@@ -250,6 +318,41 @@ describe('TheaterArt', () => {
       index % 4 === 0 && value === 240 && pixels?.rgba[index + 1] === 80 && pixels?.rgba[index + 2] === 16
     ))
     expect(seen).toBe(true)
+  })
+
+  it('remaps VXL house colors even when the file embeds a palette', async () => {
+    const art = await loadTheater([
+      { filename: 'isotem.pal', bytes: new Uint8Array(768) },
+      { filename: 'unittem.pal', bytes: new Uint8Array(768) },
+      { filename: 'art.ini', bytes: encodeText('[MTNK]\nVoxel=yes\n') },
+      { filename: 'mtnk.vxl', bytes: encodeTinyVxl(0x10, 255, 0, 0) },
+    ])
+    const house = { r: 240, g: 240, b: 240 }
+    art.requestObject('MTNK', 0, 64, house, 'unit')
+    const pixels = await waitPeek(() => art.peekObject('MTNK', 0, 64, house, 'unit'))
+    expect(pixels).not.toBeNull()
+    const seen = [...(pixels?.rgba ?? [])].some((value, index) => (
+      index % 4 === 0 && value === 240 && pixels?.rgba[index + 1] === 240 && pixels?.rgba[index + 2] === 240
+    ))
+    expect(seen).toBe(true)
+  })
+
+  it('composites a vehicle turret VXL onto the hull like FA2', async () => {
+    const art = await loadTheater([
+      { filename: 'isotem.pal', bytes: new Uint8Array(768) },
+      { filename: 'unittem.pal', bytes: new Uint8Array(768) },
+      { filename: 'rules.ini', bytes: encodeText('[MTNK]\nTurret=yes\n') },
+      { filename: 'art.ini', bytes: encodeText('[MTNK]\nVoxel=yes\n') },
+      { filename: 'mtnk.vxl', bytes: encodeTinyVxl(7, 240, 80, 16) },
+      { filename: 'mtnktur.vxl', bytes: encodeTinyVxl(8, 16, 200, 16) },
+    ])
+    art.requestObject('MTNK', 0, 0, undefined, 'unit')
+    const pixels = await waitPeek(() => art.peekObject('MTNK', 0, 0, undefined, 'unit'))
+    expect(pixels).not.toBeNull()
+    const seenTurret = [...(pixels?.rgba ?? [])].some((value, index) => (
+      index % 4 === 0 && value === 16 && pixels?.rgba[index + 1] === 200
+    ))
+    expect(seenTurret).toBe(true)
   })
 
   it('overlays BibShape onto the building SHP like FA2 LoadBuildingSubGraphic', async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { blitIndexedToRgba, compositeShpFrame, overlayBuildingSubgraphic, overlayRgba, overlayRgbaAt, pickShpFrame, shpFrameHasPixels } from './shpBlit'
+import { blitIndexedToRgba, compositeShpFrame, overlayBuildingSubgraphic, overlayRgba, overlayRgbaAt, pickOverlayShpFrame, pickShpFrame, shpFrameHasPixels } from './shpBlit'
 
 describe('blitIndexedToRgba', () => {
   it('skips color index 0 and writes palette RGB', () => {
@@ -33,6 +33,16 @@ describe('pickShpFrame', () => {
     const filled = { width: 1, height: 1, x: 0, y: 0, imageData: new Uint8Array([4]) }
     expect(shpFrameHasPixels(empty)).toBe(false)
     expect(pickShpFrame([empty, filled], 0)).toBe(filled)
+  })
+})
+
+describe('pickOverlayShpFrame', () => {
+  it('does not fall back an empty overlay data frame to another SHP frame', () => {
+    const empty = { width: 0, height: 0, x: 0, y: 0, imageData: new Uint8Array(0) }
+    const filled = { width: 120, height: 60, x: 30, y: 30, imageData: new Uint8Array([4]) }
+    expect(pickOverlayShpFrame([empty, filled, empty], 0)).toBeNull()
+    expect(pickOverlayShpFrame([empty, filled, empty], 1)).toBe(filled)
+    expect(pickOverlayShpFrame([empty, filled, empty], 2)).toBeNull()
   })
 })
 

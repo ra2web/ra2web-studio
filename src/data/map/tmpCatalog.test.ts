@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { TERRAIN_GROUND, TERRAIN_ROUGH, TERRAIN_WATER } from './fa2Shore'
 import {
   cliffFootprint,
+  fa2CblocksForSet,
   hackTerrainType,
   shapeFromTmp,
   shorePieceFromShape,
@@ -33,6 +34,13 @@ describe('tmpCatalog', () => {
     expect(hackTerrainType(0, true)).toBe(TERRAIN_WATER)
     expect(hackTerrainType(TERRAIN_WATER)).toBe(TERRAIN_WATER)
     expect(hackTerrainType(0x0a)).toBe(TERRAIN_WATER)
+  })
+
+  it('uses FA2 swapped cblocks for every tileset except CliffSet', () => {
+    expect(fa2CblocksForSet(20, 3)).toBe(true)
+    expect(fa2CblocksForSet(2, 3)).toBe(true)
+    expect(fa2CblocksForSet(3, 3)).toBe(false)
+    expect(fa2CblocksForSet(20)).toBe(true)
   })
 
   it('swaps TMP cblocks for FA2 ShorePieces TILEDATA (iTilesX = cblocks_y)', () => {

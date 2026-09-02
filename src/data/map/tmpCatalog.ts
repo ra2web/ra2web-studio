@@ -38,9 +38,17 @@ export function hackTerrainType(terrainType: number, setIsWater = false): number
 }
 
 /**
+ * FA2 `XCC_GetTMPInfo` 对所有地块集都 swap（`iTilesX = cblocks_y`）。
+ * CliffSet 仍用 TMP 头 width/height，避免改 PlaceCliff 表。
+ */
+export function fa2CblocksForSet(setIndex: number, cliffSet = -1): boolean {
+  return cliffSet < 0 || setIndex !== cliffSet
+}
+
+/**
  * 从 TMP 头抽出 TILEDATA 的 cx/cy/tiles[p]。
  * `fa2Cblocks`：对齐 FA2 `XCC_GetTMPInfo`（`iTilesX = cblocks_y`，`iTilesY = cblocks_x`）。
- * CreateShore 必须开；崖/LAT 仍用 TMP 头 width/height，避免改绘制 footprint。
+ * 公路等非正方形 TMP 必须开，否则 PlaceTile 走错等距轴，extra 标线会交错。
  */
 export function shapeFromTmp(tmp: TmpLike, fa2Cblocks = false): TmpTileShape {
   const cx = Math.max(1, fa2Cblocks ? tmp.height : tmp.width)

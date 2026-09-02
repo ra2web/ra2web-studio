@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { overlayBlitPosition, tmpBlitPosition, buildingBlitPosition, objectBlitPosition } from './isoDraw'
+import { overlayBlitPosition, tmpBlitPosition, buildingBlitPosition, objectBlitPosition, smudgeBlitPosition, terrainBlitPosition } from './isoDraw'
 
 describe('tmpBlitPosition', () => {
   it('keeps 60×30 tiles centered on the diamond top like the old blit', () => {
@@ -23,11 +23,23 @@ describe('overlayBlitPosition', () => {
   it('places SHP overlays at FA2 diamond-top offset', () => {
     expect(overlayBlitPosition({ px: 100, py: 40 }, 48, 32)).toEqual({ x: 76, y: 24 })
   })
+
+  it('shifts high-bridge overlays like FA2 isBigBridge', () => {
+    expect(overlayBlitPosition({ px: 100, py: 40 }, 48, 32, 0x19, 0x9)).toEqual({ x: 75, y: 9 })
+    expect(overlayBlitPosition({ px: 100, py: 40 }, 48, 32, 0x18, 0x0)).toEqual({ x: 75, y: 24 })
+  })
 })
 
 describe('buildingBlitPosition', () => {
   it('centers the building SHP on the diamond top like FA2 -h/2', () => {
     expect(buildingBlitPosition({ px: 100, py: 40 }, 48, 32)).toEqual({ x: 76, y: 24 })
     expect(objectBlitPosition({ px: 100, py: 40 }, 48, 32)).toEqual({ x: 76, y: 39 })
+  })
+})
+
+describe('terrain and smudge blit', () => {
+  it('matches FA2 terrain fy/2-3 and smudge -h/2', () => {
+    expect(terrainBlitPosition({ px: 100, py: 40 }, 48, 32)).toEqual({ x: 76, y: 36 })
+    expect(smudgeBlitPosition({ px: 100, py: 40 }, 48, 32)).toEqual({ x: 76, y: 24 })
   })
 })

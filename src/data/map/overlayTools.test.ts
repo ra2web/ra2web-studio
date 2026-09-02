@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { forEachIsoCell, isValidIsoCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
-import { OVRL_TRACK_BEGIN } from './constants'
+import { EMPTY_OVERLAY, OVRL_TRACK_BEGIN } from './constants'
 import {
   FA2_WALL_OVERLAYS,
   OVRL_BIG_BRIDGE_EW,
   OVRL_SMALL_BRIDGE_START,
+  bridgeLineOverlays,
   handleTrail,
+  isBigBridgeOverlay,
   overlayDirection,
   placeBridgeLine,
 } from './overlayTools'
@@ -80,6 +82,21 @@ describe('FA2 overlay bridges', () => {
     expect(doc.getOverlay(from.rx, from.ry).id).toBe(OVRL_SMALL_BRIDGE_START + 22)
     expect(doc.getOverlay(from.rx + 1, from.ry).id).toBe(OVRL_SMALL_BRIDGE_START + 9)
     expect(doc.getOverlay(to.rx, to.ry).id).toBe(OVRL_SMALL_BRIDGE_START + 24)
+  })
+
+  it('treats high and track overlays as FA2 big bridges', () => {
+    expect(isBigBridgeOverlay(OVRL_BIG_BRIDGE_EW)).toBe(true)
+    expect(isBigBridgeOverlay(0xed)).toBe(true)
+    expect(isBigBridgeOverlay(OVRL_SMALL_BRIDGE_START)).toBe(false)
+  })
+
+  it('lists overlay cells without writing the map', () => {
+    const doc = MapDocument.create({ width: 24, height: 24, theater: 'TEMPERATE' })
+    const { from, to } = lineAlongX()
+    const cells = bridgeLineOverlays(doc, from, to, 'big')
+    expect(cells.length).toBeGreaterThan(0)
+    expect(cells[0]).toMatchObject({ rx: from.rx, ry: from.ry, id: OVRL_BIG_BRIDGE_EW })
+    expect(doc.getOverlay(from.rx, from.ry).id).toBe(EMPTY_OVERLAY)
   })
 })
 

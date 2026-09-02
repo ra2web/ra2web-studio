@@ -69,3 +69,8 @@ export function placeRandomTerrain(
 export function isTouchLikeEvent(event: { pointerType?: string }): boolean {
   return event.pointerType === 'touch' || event.pointerType === 'pen'
 }
+
+/** 桥 / 隧道 / 悬崖：按下记起点，松开（或再点）才画整段，中途不落笔。 */
+export function isTwoPointPaintTool(tool: MapEditorTool): boolean {
+  return tool === 'bridge' || tool === 'tube' || tool === 'cliff' || tool === 'cliffFront' || tool === 'cliffBack'
+}

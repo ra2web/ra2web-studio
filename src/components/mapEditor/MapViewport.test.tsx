@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { act, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { MapDocument } from '../../data/map/MapDocument'
 import { projectCell } from '../../data/map/isoCoords'
@@ -63,7 +63,7 @@ describe('MapViewport touch', () => {
     stubCanvas(canvas)
     const origin = projectCell(12, 12, 0, doc.isoSize)
     dispatchPointer(canvas, 'pointerdown', { pointerId: 1, clientX: origin.px, clientY: origin.py + 15 })
-    expect(onPaint).toHaveBeenCalledWith(12, 12)
+    expect(onPaint).toHaveBeenCalledWith(12, 12, expect.objectContaining({ subCell: expect.any(Number) }))
     vi.advanceTimersByTime(500)
     expect(onPick).not.toHaveBeenCalled()
     dispatchPointer(canvas, 'pointerup', { pointerId: 1, clientX: origin.px, clientY: origin.py + 15, buttons: 0 })
@@ -94,8 +94,171 @@ describe('MapViewport touch', () => {
     stubCanvas(canvas)
     const origin = projectCell(12, 12, 0, doc.isoSize)
     dispatchPointer(canvas, 'pointerdown', { pointerId: 1, clientX: origin.px, clientY: origin.py + 15 })
-    expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ rx: 12, ry: 12, longPress: false }))
+    expect(onPick).toHaveBeenCalledWith(expect.objectContaining({
+      rx: 12,
+      ry: 12,
+      longPress: false,
+      subCell: expect.any(Number),
+    }))
     expect(onPaint).not.toHaveBeenCalled()
+  })
+
+  it('picks infantry subtiles inside the same cell', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const onPick = vi.fn()
+    renderWithProviders(
+      <div style={{ width: 2000, height: 2000 }}>
+        <MapViewport
+          document={doc}
+          tool="select"
+          brush={1}
+          panX={0}
+          panY={0}
+          scale={1}
+          onPanChange={vi.fn()}
+          onScaleChange={vi.fn()}
+          onPaint={vi.fn()}
+          onPick={onPick}
+        />
+      </div>,
+    )
+    const canvas = screen.getByTestId('map-viewport') as HTMLCanvasElement
+    stubCanvas(canvas)
+    const origin = projectCell(12, 12, 0, doc.isoSize)
+    dispatchPointer(canvas, 'pointerdown', { pointerId: 1, clientX: origin.px, clientY: origin.py + 2 })
+    expect(onPick).toHaveBeenLastCalledWith(expect.objectContaining({ rx: 12, ry: 12, subCell: 0 }))
+    dispatchPointer(canvas, 'pointerup', { pointerId: 1, clientX: origin.px, clientY: origin.py + 2, buttons: 0 })
+    dispatchPointer(canvas, 'pointerdown', { pointerId: 2, clientX: origin.px + 15, clientY: origin.py + 15 })
+    expect(onPick).toHaveBeenLastCalledWith(expect.objectContaining({ rx: 12, ry: 12, subCell: 2 }))
+    dispatchPointer(canvas, 'pointerup', { pointerId: 2, clientX: origin.px + 15, clientY: origin.py + 15, buttons: 0 })
+    dispatchPointer(canvas, 'pointerdown', { pointerId: 3, clientX: origin.px - 15, clientY: origin.py + 15 })
+    expect(onPick).toHaveBeenLastCalledWith(expect.objectContaining({ rx: 12, ry: 12, subCell: 3 }))
+  })
+
+  it('reports a double-click pick for expanding object properties', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const onPick = vi.fn()
+    renderWithProviders(
+      <div style={{ width: 2000, height: 2000 }}>
+        <MapViewport
+          document={doc}
+          tool="select"
+          brush={1}
+          panX={0}
+          panY={0}
+          scale={1}
+          onPanChange={vi.fn()}
+          onScaleChange={vi.fn()}
+          onPaint={vi.fn()}
+          onPick={onPick}
+        />
+      </div>,
+    )
+    const canvas = screen.getByTestId('map-viewport') as HTMLCanvasElement
+    stubCanvas(canvas)
+    const origin = projectCell(12, 12, 0, doc.isoSize)
+    dispatchPointer(canvas, 'pointerdown', { pointerId: 1, clientX: origin.px, clientY: origin.py + 15 })
+    dispatchPointer(canvas, 'pointerup', { pointerId: 1, clientX: origin.px, clientY: origin.py + 15, buttons: 0 })
+    dispatchPointer(canvas, 'pointerdown', { pointerId: 1, clientX: origin.px, clientY: origin.py + 15 })
+    expect(onPick).toHaveBeenLastCalledWith(expect.objectContaining({ rx: 12, ry: 12, doubleClick: true }))
+  })
+
+  it('drags a unit in select mode to a new cell', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    doc.units.push({
+      id: 'u1',
+      owner: 'Americans',
+      name: 'MTNK',
+      health: 256,
+      rx: 12,
+      ry: 12,
+      direction: 64,
+      mission: 'Guard',
+      tag: 'none',
+      veterancy: 0,
+      group: -1,
+      onBridge: false,
+      recruitable: false,
+      aiRecruitable: false,
+      extra: [],
+    })
+    const onMoveObject = vi.fn()
+    const onPaint = vi.fn()
+    renderWithProviders(
+      <div style={{ width: 2000, height: 2000 }}>
+        <MapViewport
+          document={doc}
+          tool="select"
+          brush={1}
+          panX={0}
+          panY={0}
+          scale={1}
+          onPanChange={vi.fn()}
+          onScaleChange={vi.fn()}
+          onPaint={onPaint}
+          onPick={vi.fn()}
+          onMoveObject={onMoveObject}
+        />
+      </div>,
+    )
+    const canvas = screen.getByTestId('map-viewport') as HTMLCanvasElement
+    stubCanvas(canvas)
+    const from = projectCell(12, 12, 0, doc.isoSize)
+    const to = projectCell(13, 12, 0, doc.isoSize)
+    act(() => {
+      dispatchPointer(canvas, 'pointerdown', { pointerId: 1, clientX: from.px, clientY: from.py + 15 })
+      dispatchPointer(canvas, 'pointermove', { pointerId: 1, clientX: to.px, clientY: to.py + 15 })
+      dispatchPointer(canvas, 'pointerup', { pointerId: 1, clientX: to.px, clientY: to.py + 15, buttons: 0 })
+    })
+    expect(onMoveObject).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'unit',
+      id: 'u1',
+      rx: 12,
+      ry: 12,
+      toRx: 13,
+      toRy: 12,
+      copy: false,
+    }))
+    expect(onPaint).not.toHaveBeenCalled()
+  })
+
+  it('drags a start waypoint in select mode', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const start = doc.waypoints.find((item) => item.number === 0)
+    if (!start) throw new Error('expected start waypoint')
+    const onMoveObject = vi.fn()
+    renderWithProviders(
+      <div style={{ width: 2000, height: 2000 }}>
+        <MapViewport
+          document={doc}
+          tool="select"
+          brush={1}
+          panX={0}
+          panY={0}
+          scale={1}
+          onPanChange={vi.fn()}
+          onScaleChange={vi.fn()}
+          onPaint={vi.fn()}
+          onPick={vi.fn()}
+          onMoveObject={onMoveObject}
+        />
+      </div>,
+    )
+    const canvas = screen.getByTestId('map-viewport') as HTMLCanvasElement
+    stubCanvas(canvas)
+    const from = projectCell(start.rx, start.ry, 0, doc.isoSize)
+    const to = projectCell(12, 12, 0, doc.isoSize)
+    act(() => {
+      dispatchPointer(canvas, 'pointerdown', { pointerId: 1, clientX: from.px, clientY: from.py + 15 })
+      dispatchPointer(canvas, 'pointermove', { pointerId: 1, clientX: to.px, clientY: to.py + 15 })
+      dispatchPointer(canvas, 'pointerup', { pointerId: 1, clientX: to.px, clientY: to.py + 15, buttons: 0 })
+    })
+    expect(onMoveObject).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'waypoint',
+      id: '0',
+      toRx: 12,
+      toRy: 12,
+    }))
   })
 
   it('pinches with two pointers around the finger midpoint', () => {
@@ -293,7 +456,92 @@ describe('MapViewport touch', () => {
     stubCanvas(canvas)
     const origin = projectCell(12, 12, 0, doc.isoSize)
     dispatchPointer(canvas, 'pointermove', { pointerId: 1, clientX: origin.px, clientY: origin.py + 15, buttons: 0 })
-    expect(onHover).toHaveBeenCalledWith({ rx: 12, ry: 12 })
+    expect(onHover).toHaveBeenCalledWith(expect.objectContaining({ rx: 12, ry: 12, subCell: expect.any(Number) }))
     expect(onPaint).not.toHaveBeenCalled()
+  })
+
+  it('finishes a bridge on pointer up after a drag, without painting in between', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const onPaint = vi.fn()
+    renderWithProviders(
+      <div style={{ width: 2000, height: 2000 }}>
+        <MapViewport
+          document={doc}
+          tool="bridge"
+          brush={1}
+          panX={0}
+          panY={0}
+          scale={1}
+          onPanChange={vi.fn()}
+          onScaleChange={vi.fn()}
+          onPaint={onPaint}
+          onPick={vi.fn()}
+        />
+      </div>,
+    )
+    const canvas = screen.getByTestId('map-viewport') as HTMLCanvasElement
+    stubCanvas(canvas)
+    const start = projectCell(12, 12, 0, doc.isoSize)
+    const end = projectCell(14, 12, 0, doc.isoSize)
+    dispatchPointer(canvas, 'pointerdown', { pointerId: 1, clientX: start.px, clientY: start.py + 15 })
+    expect(onPaint).toHaveBeenCalledTimes(1)
+    expect(onPaint).toHaveBeenCalledWith(12, 12, expect.objectContaining({ subCell: expect.any(Number) }))
+    dispatchPointer(canvas, 'pointermove', { pointerId: 1, clientX: end.px, clientY: end.py + 15, buttons: 1 })
+    expect(onPaint).toHaveBeenCalledTimes(1)
+    dispatchPointer(canvas, 'pointerup', { pointerId: 1, clientX: end.px, clientY: end.py + 15, buttons: 0 })
+    expect(onPaint).toHaveBeenCalledTimes(2)
+    expect(onPaint).toHaveBeenLastCalledWith(14, 12, expect.objectContaining({ subCell: expect.any(Number) }))
+  })
+
+  it('requests theater art for brush ghosts so the next stamp is visible', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const peek = vi.fn(() => undefined)
+    const request = vi.fn()
+    const peekOverlay = vi.fn(() => undefined)
+    const requestOverlay = vi.fn()
+    const peekObject = vi.fn(() => undefined)
+    const requestObject = vi.fn()
+    renderWithProviders(
+      <div style={{ width: 2000, height: 2000 }}>
+        <MapViewport
+          document={doc}
+          tool="tile"
+          brush={1}
+          panX={0}
+          panY={0}
+          scale={1}
+          brushGhosts={[
+            { kind: 'tile', rx: 12, ry: 12, tileNum: 7, subTile: 0, height: 0 },
+            { kind: 'overlay', rx: 12, ry: 12, overlayId: 102, overlayValue: 0 },
+            {
+              kind: 'object',
+              rx: 12,
+              ry: 12,
+              name: 'E1',
+              objectKind: 'infantry',
+              facing: 128,
+              owner: 'Neutral',
+              subCell: 0,
+            },
+          ]}
+          theaterArt={{
+            peek,
+            request,
+            peekOverlay,
+            requestOverlay,
+            peekObject,
+            requestObject,
+            cellVariant: () => 0,
+          } as never}
+          onPanChange={vi.fn()}
+          onScaleChange={vi.fn()}
+          onPaint={vi.fn()}
+          onPick={vi.fn()}
+        />
+      </div>,
+    )
+    expect(request).toHaveBeenCalledWith(7, 0, 0)
+    expect(requestOverlay).toHaveBeenCalledWith(102, 0)
+    expect(requestObject).toHaveBeenCalled()
   })
 })

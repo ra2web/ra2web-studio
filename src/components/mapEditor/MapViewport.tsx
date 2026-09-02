@@ -1,14 +1,19 @@
-import React, { useRef } from 'react'
+import React, { useRef, useState } from 'react'
 import { RA2_ISO_TILE_HEIGHT, RA2_ISO_TILE_WIDTH, EMPTY_OVERLAY } from '../../data/map/constants'
 import { forEachIsoCell, hitTestDiamond, isValidIsoCell, projectCell } from '../../data/map/isoCoords'
-import { buildingBlitPosition, objectBlitPosition, overlayBlitPosition, tmpBlitPosition } from '../../data/map/isoDraw'
+import { buildingBlitPosition, objectBlitPosition, overlayBlitPosition, smudgeBlitPosition, terrainBlitPosition, tmpBlitPosition } from '../../data/map/isoDraw'
+import { rgbaHasOpaque } from '../../data/map/shpBlit'
+import { pickFa2DragTarget, type Fa2DragMove, type Fa2DragTarget } from '../../data/map/fa2DragObject'
 import { houseRgbFromColorName } from '../../data/map/fa2HouseColor'
-import { infantrySubPosOffset } from '../../data/map/fa2Infantry'
+import { infantrySubCellFromWorld, infantrySubPosOffset } from '../../data/map/fa2Infantry'
+import type { MapSelection } from '../../data/map/types'
 import { MapDocument } from '../../data/map/MapDocument'
 import { walkTubeCells } from '../../data/map/fa2Tube'
 import { outerDiamondEdges } from '../../data/map/fa2Brush'
+import type { BrushGhost } from '../../data/map/fa2BrushPreview'
+import { structureSize } from '../../data/map/fa2Occupy'
 import { drawTriggerLocation } from './drawTriggerLocation'
-import type { MapEditorTool } from '../../data/map/mapTools'
+import { isTwoPointPaintTool, type MapEditorTool } from '../../data/map/mapTools'
 import type { TheaterArt, TilePixels } from '../../data/map/TheaterArt'
 import type { ObjectSpriteKind } from '../../data/map/fa2Facing'
 import type { BuildingFoundation } from '../../data/map/rulesObjects'
@@ -22,6 +27,8 @@ export type MapViewportPick = {
   clientX: number
   clientY: number
   longPress: boolean
+  doubleClick?: boolean
+  subCell?: number
 }
 
 type PointerState = {
@@ -37,8 +44,10 @@ type MapViewportProps = {
   panX: number
   panY: number
   scale: number
-  selected?: { rx: number; ry: number } | null
+  selected?: MapSelection | null
+  objectLabel?: (name: string, kind: ObjectSpriteKind, missing: boolean) => string
   brushCells?: Array<{ rx: number; ry: number }>
+  brushGhosts?: BrushGhost[]
   selectionRect?: { minRx: number; minRy: number; maxRx: number; maxRy: number } | null
   marbleMadness?: boolean
   showBuildingOutline?: boolean
@@ -48,9 +57,10 @@ type MapViewportProps = {
   hideView?: MapHideView
   onPanChange: (panX: number, panY: number) => void
   onScaleChange: (scale: number) => void
-  onPaint: (rx: number, ry: number) => void
+  onPaint: (rx: number, ry: number, extra?: { subCell?: number }) => void
   onPick: (pick: MapViewportPick) => void
-  onHover?: (cell: { rx: number; ry: number } | null) => void
+  onMoveObject?: (move: Fa2DragMove) => void
+  onHover?: (cell: { rx: number; ry: number; subCell?: number } | null) => void
   onStrokeStart?: () => void
   onStrokeEnd?: () => void
   revision?: number
@@ -85,6 +95,11 @@ function pinchMidpoint(pointers: Iterable<PointerState>, canvas: HTMLCanvasEleme
   const midX = (points[0].x + points[1].x) / 2
   const midY = (points[0].y + points[1].y) / 2
   return canvasLocal(canvas, midX, midY)
+}
+
+function cellSubCell(doc: MapDocument, rx: number, ry: number, worldX: number, worldY: number): number {
+  const origin = projectCell(rx, ry, doc.getCell(rx, ry).height, doc.isoSize)
+  return infantrySubCellFromWorld(worldX, worldY, origin)
 }
 
 function pickCell(doc: MapDocument, worldX: number, worldY: number): { rx: number; ry: number } | null {
@@ -143,6 +158,7 @@ function strokeBrushOutline(
   cells: Array<{ rx: number; ry: number }>,
   doc: MapDocument,
   scale: number,
+  heightAt?: (rx: number, ry: number) => number,
 ) {
   if (cells.length === 0) return
   ctx.strokeStyle = '#38bdf8'
@@ -151,7 +167,8 @@ function strokeBrushOutline(
   ctx.beginPath()
   for (const item of outerDiamondEdges(cells)) {
     if (!isValidIsoCell(item.rx, item.ry, doc.width, doc.height)) continue
-    const origin = projectCell(item.rx, item.ry, doc.getCell(item.rx, item.ry).height, doc.isoSize)
+    const z = heightAt?.(item.rx, item.ry) ?? doc.getCell(item.rx, item.ry).height
+    const origin = projectCell(item.rx, item.ry, z, doc.isoSize)
     const verts = diamondVerts(origin)
     const a = verts[item.edge]
     const b = verts[(item.edge + 1) % 4]
@@ -159,6 +176,118 @@ function strokeBrushOutline(
     ctx.lineTo(b.x, b.y)
   }
   ctx.stroke()
+}
+
+function objectBlitOf(kind: ObjectSpriteKind) {
+  if (kind === 'smudge') return smudgeBlitPosition
+  if (kind === 'building') return buildingBlitPosition
+  if (kind === 'terrain') return terrainBlitPosition
+  return objectBlitPosition
+}
+
+function tileGhostHeight(ghosts: BrushGhost[], rx: number, ry: number): number | undefined {
+  for (const ghost of ghosts) {
+    if (ghost.kind === 'tile' && ghost.rx === rx && ghost.ry === ry) return ghost.height
+  }
+  return undefined
+}
+
+function drawBrushGhosts(
+  ctx: CanvasRenderingContext2D,
+  ghosts: BrushGhost[],
+  doc: MapDocument,
+  scale: number,
+  theaterArt: TheaterArt | null | undefined,
+  tileCache: Map<string, HTMLCanvasElement>,
+  objectLabel: MapViewportProps['objectLabel'],
+  foundations: Record<string, BuildingFoundation>,
+) {
+  if (ghosts.length === 0) return
+  const houseRgbOf = (owner?: string) => {
+    if (!owner) return undefined
+    const house = doc.houses.find((item) => item.name === owner)
+    return houseRgbFromColorName(house?.color, theaterArt?.houseColors)
+  }
+  ctx.save()
+  ctx.globalAlpha = 0.7
+  for (const ghost of ghosts) {
+    if (!isValidIsoCell(ghost.rx, ghost.ry, doc.width, doc.height)) continue
+    const cellZ = ghost.kind === 'tile' ? ghost.height : doc.getCell(ghost.rx, ghost.ry).height
+    let origin = projectCell(ghost.rx, ghost.ry, cellZ, doc.isoSize)
+    if (ghost.kind === 'tile') {
+      const variant = theaterArt?.cellVariant(ghost.rx, ghost.ry, ghost.tileNum, ghost.subTile) ?? 0
+      const pixels = theaterArt?.peek(ghost.tileNum, ghost.subTile, variant)
+      if (pixels === undefined) theaterArt?.request(ghost.tileNum, ghost.subTile, variant)
+      if (pixels) {
+        const sprite = tileCanvas(tileCache, `ghost:${ghost.tileNum}:${ghost.subTile}:${variant}`, pixels)
+        const pos = tmpBlitPosition(origin, pixels)
+        ctx.drawImage(sprite, pos.x, pos.y)
+      } else {
+        pathDiamond(ctx, origin)
+        ctx.fillStyle = 'rgba(56,189,248,0.45)'
+        ctx.fill()
+      }
+      continue
+    }
+    if (ghost.kind === 'overlay') {
+      const ovl = theaterArt?.peekOverlay(ghost.overlayId, ghost.overlayValue)
+      if (ovl === undefined) theaterArt?.requestOverlay(ghost.overlayId, ghost.overlayValue)
+      if (ovl && rgbaHasOpaque(ovl)) {
+        const sprite = tileCanvas(tileCache, `ghost-ovl:${ghost.overlayId}:${ghost.overlayValue}`, ovl)
+        const pos = overlayBlitPosition(origin, ovl.width, ovl.height, ghost.overlayId, ghost.overlayValue)
+        ctx.drawImage(sprite, pos.x, pos.y)
+      } else if (ovl === null) {
+        pathDiamond(ctx, origin)
+        ctx.fillStyle = ghost.overlayId >= 102 && ghost.overlayId <= 166
+          ? 'rgba(212,160,23,0.55)'
+          : 'rgba(56,189,248,0.45)'
+        ctx.fill()
+      }
+      continue
+    }
+    if (ghost.kind === 'waypoint') {
+      drawTriggerLocation(ctx, origin, nextWaypointGhostNumber(doc), scale)
+      continue
+    }
+    if (ghost.objectKind === 'infantry') {
+      const offset = infantrySubPosOffset(ghost.subCell ?? 0)
+      origin = { px: origin.px + offset.x, py: origin.py + offset.y }
+    }
+    if (ghost.objectKind === 'building') {
+      const size = structureSize(ghost.name, foundations)
+      drawBuildingOutline(ctx, ghost.rx, ghost.ry, cellZ, doc.isoSize, size.w, size.h, scale)
+    }
+    const house = houseRgbOf(ghost.owner)
+    const sprite = theaterArt?.peekObject(ghost.name, 0, ghost.facing, house, ghost.objectKind)
+    if (sprite === undefined) theaterArt?.requestObject(ghost.name, 0, ghost.facing, house, ghost.objectKind)
+    if (sprite) {
+      const canvasSprite = tileCanvas(
+        tileCache,
+        `ghost-obj:${ghost.name}:${ghost.facing}:${house?.r ?? ''},${house?.g ?? ''},${house?.b ?? ''}:${ghost.subCell ?? 0}:${ghost.objectKind}`,
+        sprite,
+      )
+      const pos = objectBlitOf(ghost.objectKind)(origin, sprite.width, sprite.height)
+      ctx.drawImage(canvasSprite, pos.x, pos.y)
+      continue
+    }
+    pathDiamond(ctx, origin)
+    ctx.fillStyle = 'rgba(56,189,248,0.4)'
+    ctx.fill()
+    const caption = objectLabel?.(ghost.name, ghost.objectKind, sprite === null) ?? ghost.name
+    ctx.fillStyle = '#f8fafc'
+    ctx.font = `${12 / scale}px sans-serif`
+    ctx.textAlign = 'center'
+    ctx.fillText(caption, origin.px, origin.py + 4)
+  }
+  ctx.restore()
+}
+
+function nextWaypointGhostNumber(doc: MapDocument): number {
+  let max = -1
+  for (const waypoint of doc.waypoints) {
+    if (waypoint.number > max) max = waypoint.number
+  }
+  return max + 1
 }
 
 function drawBuildingOutline(
@@ -192,7 +321,9 @@ const MapViewport: React.FC<MapViewportProps> = ({
   panY,
   scale,
   selected,
+  objectLabel,
   brushCells = [],
+  brushGhosts = [],
   selectionRect,
   marbleMadness = false,
   showBuildingOutline = true,
@@ -204,6 +335,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
   onScaleChange,
   onPaint,
   onPick,
+  onMoveObject,
   onHover,
   onStrokeStart,
   onStrokeEnd,
@@ -211,6 +343,9 @@ const MapViewport: React.FC<MapViewportProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const pointersRef = useRef<Map<number, PointerState>>(new Map())
+  const dragRef = useRef<{ target: Fa2DragTarget; toRx: number; toRy: number; moved: boolean } | null>(null)
+  const lastPickRef = useRef<{ t: number; rx: number; ry: number } | null>(null)
+  const [dragPreview, setDragPreview] = useState<{ fromRx: number; fromRy: number; toRx: number; toRy: number } | null>(null)
   const pinchRef = useRef<{
     distance: number
     scale: number
@@ -221,6 +356,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
   transformRef.current = { panX, panY, scale }
   const paintingRef = useRef(false)
   const lastPaintRef = useRef<string | null>(null)
+  const twoPointDownRef = useRef<{ rx: number; ry: number } | null>(null)
   const hoverKeyRef = useRef<string | null>(null)
   const tileCacheRef = useRef(new Map<string, HTMLCanvasElement>())
   const worldBufRef = useRef<HTMLCanvasElement | null>(null)
@@ -311,11 +447,11 @@ const MapViewport: React.FC<MapViewportProps> = ({
       if (item.overlayId === EMPTY_OVERLAY) continue
       const ovl = theaterArt?.peekOverlay(item.overlayId, item.overlayValue)
       if (ovl === undefined) theaterArt?.requestOverlay(item.overlayId, item.overlayValue)
-      if (ovl) {
+      if (ovl && rgbaHasOpaque(ovl)) {
         const sprite = tileCanvas(tileCacheRef.current, `ovl:${item.overlayId}:${item.overlayValue}`, ovl)
-        const pos = overlayBlitPosition(item.origin, ovl.width, ovl.height, item.overlayId)
+        const pos = overlayBlitPosition(item.origin, ovl.width, ovl.height, item.overlayId, item.overlayValue)
         wctx.drawImage(sprite, pos.x, pos.y)
-      } else if (theaterArt?.peek(item.tileNum, item.subTile, theaterArt.cellVariant(item.rx, item.ry, item.tileNum, item.subTile))) {
+      } else if (ovl === null && theaterArt?.peek(item.tileNum, item.subTile, theaterArt.cellVariant(item.rx, item.ry, item.tileNum, item.subTile))) {
         wctx.fillStyle = item.overlayId >= 102 && item.overlayId <= 166 ? 'rgba(212,160,23,0.45)' : 'rgba(100,116,139,0.45)'
         pathDiamond(wctx, item.origin)
         wctx.fill()
@@ -339,6 +475,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
       owner?: string,
       subCell = 0,
     ) => {
+      let caption = label
       const cell = doc.getCell(rx, ry)
       if (isCellHidden(rx, ry, cell.tileNum, hideView, theaterArt?.index)) return
       let origin = projectCell(rx, ry, cell.height, doc.isoSize)
@@ -356,22 +493,28 @@ const MapViewport: React.FC<MapViewportProps> = ({
             `obj:${objectName}:${facing}:${house?.r ?? ''},${house?.g ?? ''},${house?.b ?? ''}:${subCell}:${kind}`,
             sprite,
           )
-          const pos = kind === 'building'
-            ? buildingBlitPosition(origin, sprite.width, sprite.height)
-            : objectBlitPosition(origin, sprite.width, sprite.height)
+          const blit = kind === 'smudge'
+            ? smudgeBlitPosition
+            : kind === 'building'
+              ? buildingBlitPosition
+              : kind === 'terrain'
+                ? terrainBlitPosition
+                : objectBlitPosition
+          const pos = blit(origin, sprite.width, sprite.height)
           wctx.drawImage(canvasSprite, pos.x, pos.y)
           return
         }
+        caption = objectLabel?.(objectName, kind, sprite === null) ?? objectName
       }
       wctx.fillStyle = color
       wctx.beginPath()
       wctx.arc(origin.px, origin.py + 10, 5, 0, Math.PI * 2)
       wctx.fill()
-      if (label) {
+      if (caption) {
         wctx.fillStyle = '#f8fafc'
         wctx.font = `${12 / scale}px sans-serif`
         wctx.textAlign = 'center'
-        wctx.fillText(label, origin.px, origin.py + 4)
+        wctx.fillText(caption, origin.px, origin.py + 4)
       }
     }
 
@@ -385,8 +528,8 @@ const MapViewport: React.FC<MapViewportProps> = ({
       }
       mark(building.rx, building.ry, '#fb7185', building.name, building.name, building.direction, 'building', building.owner)
     }
-    for (const terrain of doc.terrains) mark(terrain.rx, terrain.ry, '#4ade80', terrain.name, terrain.name)
-    for (const smudge of doc.smudges) mark(smudge.rx, smudge.ry, '#a8a29e')
+    for (const terrain of doc.terrains) mark(terrain.rx, terrain.ry, '#4ade80', terrain.name, terrain.name, 0, 'terrain')
+    for (const smudge of doc.smudges) mark(smudge.rx, smudge.ry, '#a8a29e', smudge.name, smudge.name, 0, 'smudge')
     for (const waypoint of doc.waypoints) {
       const cell = doc.getCell(waypoint.rx, waypoint.ry)
       if (isCellHidden(waypoint.rx, waypoint.ry, cell.tileNum, hideView, theaterArt?.index)) continue
@@ -413,7 +556,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
 
     wctx.restore()
     worldBlitRef.current = { bufX, bufY, bufW, bufH }
-  }, [artRevision, doc, foundations, hideView, marbleMadness, panX, panY, revision, scale, showBuildingOutline, theaterArt])
+  }, [artRevision, doc, foundations, hideView, marbleMadness, objectLabel, panX, panY, revision, scale, showBuildingOutline, theaterArt])
 
   const paintFrame = React.useCallback(() => {
     const canvas = canvasRef.current
@@ -440,12 +583,38 @@ const MapViewport: React.FC<MapViewportProps> = ({
     ctx.save()
     ctx.translate(panX, panY)
     ctx.scale(scale, scale)
-    strokeBrushOutline(ctx, brushCells, doc, scale)
+    drawBrushGhosts(ctx, brushGhosts, doc, scale, theaterArt, tileCacheRef.current, objectLabel, foundations)
+    strokeBrushOutline(ctx, brushCells, doc, scale, (rx, ry) => (
+      tileGhostHeight(brushGhosts, rx, ry) ?? doc.getCell(rx, ry).height
+    ))
     if (selected && !brushCells.some((cell) => cell.rx === selected.rx && cell.ry === selected.ry)) {
-      pathDiamond(ctx, projectCell(selected.rx, selected.ry, doc.getCell(selected.rx, selected.ry).height, doc.isoSize))
+      const origin = projectCell(selected.rx, selected.ry, doc.getCell(selected.rx, selected.ry).height, doc.isoSize)
+      pathDiamond(ctx, origin)
       ctx.strokeStyle = '#38bdf8'
       ctx.lineWidth = 2 / scale
       ctx.stroke()
+      if (selected.subCell != null) {
+        const offset = infantrySubPosOffset(selected.subCell)
+        ctx.beginPath()
+        ctx.arc(origin.px + offset.x, origin.py + offset.y + 10, 7, 0, Math.PI * 2)
+        ctx.strokeStyle = '#fbbf24'
+        ctx.lineWidth = 1.5 / scale
+        ctx.stroke()
+      }
+    }
+    if (dragPreview) {
+      const fromH = doc.getCell(dragPreview.fromRx, dragPreview.fromRy).height
+      const toH = doc.getCell(dragPreview.toRx, dragPreview.toRy).height
+      const from = projectCell(dragPreview.fromRx, dragPreview.fromRy, fromH, doc.isoSize)
+      const to = projectCell(dragPreview.toRx, dragPreview.toRy, toH, doc.isoSize)
+      ctx.strokeStyle = 'rgba(248,250,252,0.9)'
+      ctx.lineWidth = 1.5 / scale
+      ctx.setLineDash([6 / scale, 4 / scale])
+      ctx.beginPath()
+      ctx.moveTo(from.px, from.py + RA2_ISO_TILE_HEIGHT / 2)
+      ctx.lineTo(to.px, to.py + RA2_ISO_TILE_HEIGHT / 2)
+      ctx.stroke()
+      ctx.setLineDash([])
     }
     if (selectionRect) {
       const rectCells: Array<{ rx: number; ry: number }> = []
@@ -468,7 +637,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
       ctx.stroke()
     }
     ctx.restore()
-  }, [brushCells, doc, panX, panY, scale, selected, selectionRect])
+  }, [artRevision, brushCells, brushGhosts, doc, dragPreview, foundations, objectLabel, panX, panY, scale, selected, selectionRect, theaterArt])
 
   React.useEffect(() => {
     paintWorld()
@@ -507,27 +676,60 @@ const MapViewport: React.FC<MapViewportProps> = ({
       const world = worldFromCanvasClient(mid.x, mid.y, view.panX, view.panY, view.scale)
       pinchRef.current = { distance, scale: view.scale, worldX: world.x, worldY: world.y }
       paintingRef.current = false
+      twoPointDownRef.current = null
+      dragRef.current = null
+      setDragPreview(null)
       return
     }
     const world = worldFromClient(canvas, event.clientX, event.clientY, panX, panY, scale)
     const cell = pickCell(doc, world.x, world.y)
     if (cell) {
-      const hoverKey = `${cell.rx},${cell.ry}`
+      const subCell = cellSubCell(doc, cell.rx, cell.ry, world.x, world.y)
+      const hoverKey = `${cell.rx},${cell.ry},${subCell}`
       if (hoverKeyRef.current !== hoverKey) {
         hoverKeyRef.current = hoverKey
-        onHover?.(cell)
+        onHover?.({ ...cell, subCell })
       }
     }
     if (tool === 'pan' || event.button === 1 || event.button === 2) return
     if (tool === 'select' && cell) {
-      onPick({ rx: cell.rx, ry: cell.ry, clientX: event.clientX, clientY: event.clientY, longPress: false })
+      const subCell = cellSubCell(doc, cell.rx, cell.ry, world.x, world.y)
+      const last = lastPickRef.current
+      const now = Date.now()
+      const doubleClick = event.detail === 2
+        || Boolean(last && now - last.t < 400 && last.rx === cell.rx && last.ry === cell.ry)
+      lastPickRef.current = { t: now, rx: cell.rx, ry: cell.ry }
+      onPick({
+        rx: cell.rx,
+        ry: cell.ry,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        longPress: false,
+        doubleClick,
+        subCell,
+      })
+      if (doubleClick) {
+        dragRef.current = null
+        return
+      }
+      const target = pickFa2DragTarget(doc, cell.rx, cell.ry, foundations, subCell)
+      if (target) {
+        dragRef.current = { target, toRx: target.rx, toRy: target.ry, moved: false }
+      }
+      return
+    }
+    if (cell && isTwoPointPaintTool(tool)) {
+      twoPointDownRef.current = { rx: cell.rx, ry: cell.ry }
+      lastPaintRef.current = `${cell.rx},${cell.ry}`
+      onStrokeStart?.()
+      onPaint(cell.rx, cell.ry, { subCell: cellSubCell(doc, cell.rx, cell.ry, world.x, world.y) })
       return
     }
     if (cell) {
       paintingRef.current = true
       lastPaintRef.current = `${cell.rx},${cell.ry}`
       onStrokeStart?.()
-      onPaint(cell.rx, cell.ry)
+      onPaint(cell.rx, cell.ry, { subCell: cellSubCell(doc, cell.rx, cell.ry, world.x, world.y) })
     }
   }
 
@@ -565,24 +767,67 @@ const MapViewport: React.FC<MapViewportProps> = ({
     }
     const world = worldFromClient(canvas, event.clientX, event.clientY, panX, panY, scale)
     const cell = pickCell(doc, world.x, world.y)
-    const hoverKey = cell ? `${cell.rx},${cell.ry}` : ''
+    const subCell = cell ? cellSubCell(doc, cell.rx, cell.ry, world.x, world.y) : 0
+    const hoverKey = cell ? `${cell.rx},${cell.ry},${subCell}` : ''
     if (hoverKeyRef.current !== hoverKey) {
       hoverKeyRef.current = hoverKey
-      onHover?.(cell)
+      onHover?.(cell ? { ...cell, subCell } : null)
+    }
+    const drag = dragRef.current
+    if (drag && (event.buttons & 1) && cell) {
+      if (cell.rx !== drag.toRx || cell.ry !== drag.toRy) {
+        drag.toRx = cell.rx
+        drag.toRy = cell.ry
+        drag.moved = cell.rx !== drag.target.rx || cell.ry !== drag.target.ry
+        setDragPreview({
+          fromRx: drag.target.rx,
+          fromRy: drag.target.ry,
+          toRx: cell.rx,
+          toRy: cell.ry,
+        })
+      }
+      return
     }
     if (!paintingRef.current) return
     if (!cell) return
     const key = `${cell.rx},${cell.ry}`
     if (lastPaintRef.current === key) return
     lastPaintRef.current = key
-    onPaint(cell.rx, cell.ry)
+    onPaint(cell.rx, cell.ry, { subCell: cellSubCell(doc, cell.rx, cell.ry, world.x, world.y) })
   }
 
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
     pointersRef.current.delete(event.pointerId)
     if (pointersRef.current.size < 2) pinchRef.current = null
+    const drag = dragRef.current
+    if (drag && pointersRef.current.size === 0) {
+      dragRef.current = null
+      setDragPreview(null)
+      if (drag.moved) {
+        onMoveObject?.({
+          ...drag.target,
+          toRx: drag.toRx,
+          toRy: drag.toRy,
+          copy: event.shiftKey,
+        })
+      }
+    }
     if (paintingRef.current && pointersRef.current.size === 0) {
       paintingRef.current = false
+      lastPaintRef.current = null
+      onStrokeEnd?.()
+    }
+    if (twoPointDownRef.current && pointersRef.current.size === 0) {
+      const down = twoPointDownRef.current
+      twoPointDownRef.current = null
+      const canvas = canvasRef.current
+      if (canvas && isTwoPointPaintTool(tool)) {
+        const world = worldFromClient(canvas, event.clientX, event.clientY, panX, panY, scale)
+        const cell = pickCell(doc, world.x, world.y)
+        if (cell && (cell.rx !== down.rx || cell.ry !== down.ry)) {
+          onPaint(cell.rx, cell.ry, { subCell: cellSubCell(doc, cell.rx, cell.ry, world.x, world.y) })
+        }
+      }
       lastPaintRef.current = null
       onStrokeEnd?.()
     }

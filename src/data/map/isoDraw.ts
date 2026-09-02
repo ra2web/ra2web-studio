@@ -4,6 +4,7 @@ import {
   RA2_ISO_TILE_HEIGHT,
   RA2_ISO_TILE_WIDTH,
 } from './constants'
+import { isBigBridgeOverlay } from './overlayTools'
 
 export type ScreenOrigin = { px: number; py: number }
 
@@ -39,13 +40,18 @@ export function overlayBlitPosition(
   width: number,
   height: number,
   overlayId = EMPTY_OVERLAY,
+  overlayValue = 0,
 ): { x: number; y: number } {
+  let x = origin.px - width / 2
   let y = origin.py - height / 2
   if (overlayId === OVRL_VEINHOLE) y -= (RA2_ISO_TILE_HEIGHT * 3) / 2
-  else if ((overlayId >= 0x4a && overlayId <= 0x65) || (overlayId >= 0xcd && overlayId <= 0xec)) {
+  else if (isBigBridgeOverlay(overlayId)) {
+    if (overlayValue >= 0x09 && overlayValue <= 0x11) y -= RA2_ISO_TILE_HEIGHT / 2
+    x -= 1
+  } else if ((overlayId >= 0x4a && overlayId <= 0x65) || (overlayId >= 0xcd && overlayId <= 0xec)) {
     y += RA2_ISO_TILE_HEIGHT / 2
   }
-  return { x: origin.px - width / 2, y }
+  return { x, y }
 }
 
 /** FA2 unit SHP: `(f_x/2 - w/2, f_y/2 - h/2)` from bbox top-left. */
@@ -64,6 +70,19 @@ export function buildingBlitPosition(origin: ScreenOrigin, width: number, height
   return {
     x: origin.px - width / 2,
     y: origin.py - height / 2,
+  }
+}
+
+/** FA2 污渍：与建筑相同，`(f_x/2 - w/2, -h/2)`。 */
+export function smudgeBlitPosition(origin: ScreenOrigin, width: number, height: number): { x: number; y: number } {
+  return buildingBlitPosition(origin, width, height)
+}
+
+/** FA2 地形物：`(f_x/2 - w/2, f_y/2 - 3 - h/2)`。 */
+export function terrainBlitPosition(origin: ScreenOrigin, width: number, height: number): { x: number; y: number } {
+  return {
+    x: origin.px - width / 2,
+    y: origin.py + RA2_ISO_TILE_HEIGHT / 2 - 3 - height / 2,
   }
 }
 

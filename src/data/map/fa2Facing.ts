@@ -4,9 +4,17 @@ export function fa2InfantryDirIndex(direction: number): number {
   return ((7 - step) % 8 + 8) % 8
 }
 
-/** FA2 unit/aircraft SHP index: `direction / 32`. */
+/** FA2 unit/aircraft SHP 存盘下标：`direction / 32`。 */
 export function fa2UnitDirIndex(direction: number): number {
   return ((Math.trunc(Number(direction) / 32) % 8) + 8) % 8
+}
+
+/**
+ * FA2 VXL 载具：循环 `i` 用 `r_z=45*i+90`，存成 `image+(7-i)`，
+ * 绘制取 `direction/32`，因此渲染索引与步兵相同。
+ */
+export function fa2VehicleVxlDirIndex(direction: number): number {
+  return fa2InfantryDirIndex(direction)
 }
 
 /**
@@ -29,6 +37,10 @@ export function fa2UnitShpFrame(direction: number, walkFrames = 1, startWalkFram
   return dir * step + start
 }
 
-export const FA2_DEFAULT_FACING = 64
+/**
+ * 新放置默认朝向：南 = 128，等距画面左下（地图 +X）。
+ * FA2 Add* 写入的是 64（东/右下）；此处按目视左下使用 128。
+ */
+export const FA2_DEFAULT_FACING = 128
 
-export type ObjectSpriteKind = 'infantry' | 'unit' | 'building'
+export type ObjectSpriteKind = 'infantry' | 'unit' | 'building' | 'terrain' | 'smudge'

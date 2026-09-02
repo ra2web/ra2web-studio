@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom'
 import { EMPTY_OVERLAY } from '../../data/map/constants'
 import { applyShoreAt, placeCliffLine } from '../../data/map/cliffShore'
 import { copyRegion, copyWholeMap, normalizeCopyRect, pasteRegion, pasteWholeMap, type MapClipboard, type MapCopyRect } from '../../data/map/copyPaste'
-import { fa2CenteredRectOffsets, fa2PaintRectOffsets, manhattanDiamondOffsets } from '../../data/map/fa2Brush'
+import { manhattanDiamondOffsets } from '../../data/map/fa2Brush'
+import { buildBrushGhosts, brushGhostCells, heightBrushCells } from '../../data/map/fa2BrushPreview'
 import { autoCreateShores } from '../../data/map/fa2Shore'
 import { createSlopesAround, changeMapHeight } from '../../data/map/fa2Slopes'
 import { autoLevel, heightenGround, lookupFromTheater, lowerGround } from '../../data/map/fa2Height'
@@ -13,14 +14,21 @@ import { runUserScript, createBrowserUserScriptUi } from '../../data/map/fa2User
 import { emptyHideView, hideFieldAt, hideTileSetAt, showAllFields, showAllTileSets } from '../../data/map/fa2Hide'
 import { applyLatAt } from '../../data/map/lat'
 import { addMapHouse, deleteMapHouse } from '../../data/map/fa2Houses'
-import { allocateInfantrySubCell } from '../../data/map/fa2Infantry'
+import { preferInfantrySubCell } from '../../data/map/fa2Infantry'
+import { collectRulesObjectNames, emptyObjectNameLookup, formatObjectLabel, type ObjectNameLookup } from '../../data/map/fa2ObjectLabel'
+import { CsfFile } from '../../data/CsfFile'
+import { MapIni } from '../../data/map/MapIni'
+import type { MapSelection } from '../../data/map/types'
+import type { ObjectSpriteKind } from '../../data/map/fa2Facing'
 import { canPlaceStructure, structureAt } from '../../data/map/fa2Occupy'
 import { FA2_DEFAULT_FACING } from '../../data/map/fa2Facing'
 import { deleteWaypointAt, placeFa2Waypoint } from '../../data/map/fa2Waypoint'
+import { applyFa2Drag, pickFa2DragTarget, type Fa2DragMove } from '../../data/map/fa2DragObject'
 import { MapCommandStack, flattenHeight, paintHeight, paintTile } from '../../data/map/MapCommandStack'
 import { MapDocument, createMapObjectId } from '../../data/map/MapDocument'
 import { applyOreBrush, clearOverlay, OBJECT_TOOLS, placeRandomTerrain, placeVeinhole, placeVeins, type MapEditorTool } from '../../data/map/mapTools'
 import { FA2_WALL_OVERLAYS, handleTrail, placeBridgeLine, refreshTrailsAround, type BridgeKind } from '../../data/map/overlayTools'
+import { placeFa2Tile, usesFa2PlaceTile } from '../../data/map/fa2PlaceTile'
 import { validateMap } from '../../data/map/mapValidate'
 import { resizeMap } from '../../data/map/resizeMap'
 import { emptyRulesObjectLists, parseBuildingFoundations, parseRulesObjectLists, type BuildingFoundation, type RulesObjectLists } from '../../data/map/rulesObjects'
@@ -38,6 +46,8 @@ import TeamsLogicPanel from './TeamsLogicPanel'
 import TileSetPreviewBar from './TileSetPreviewBar'
 import TriggerLogicPanel from './TriggerLogicPanel'
 import {
+  BRIDGE_TOOLBAR_HINT_I18N,
+  bridgeToolbarHintKey,
   brushSizeFromId,
   FA2_BRUSH_SIZES,
   resolveTreeTileNum,
@@ -76,14 +86,15 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [tileNum, setTileNum] = useState(0)
   const [overlayId, setOverlayId] = useState(102)
   const [overlayDataValue, setOverlayDataValue] = useState(0)
-  const [owner, setOwner] = useState('Americans')
+  const [owner, setOwner] = useState('Neutral')
   const [objectName, setObjectName] = useState('E1')
   const [panX, setPanX] = useState(80)
   const [panY, setPanY] = useState(40)
   const [scale, setScale] = useState(0.45)
-  const [selected, setSelected] = useState<{ rx: number; ry: number } | null>(null)
-  const [objectPropsCollapsed, setObjectPropsCollapsed] = useState(false)
-  const [hover, setHover] = useState<{ rx: number; ry: number } | null>(null)
+  const [selected, setSelected] = useState<MapSelection | null>(null)
+  const [objectPropsCollapsed, setObjectPropsCollapsed] = useState(true)
+  const [objectNames, setObjectNames] = useState<ObjectNameLookup>(emptyObjectNameLookup)
+  const [hover, setHover] = useState<{ rx: number; ry: number; subCell?: number } | null>(null)
   const [logicTab, setLogicTab] = useState<LogicTab>('basic')
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false)
   const [revision, setRevision] = useState(0)
@@ -120,11 +131,13 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const tubeStartRef = useRef<{ rx: number; ry: number } | null>(null)
   const cliffStartRef = useRef<{ rx: number; ry: number } | null>(null)
   const bridgeStartRef = useRef<{ rx: number; ry: number } | null>(null)
+  const [bridgeStart, setBridgeStart] = useState<{ rx: number; ry: number } | null>(null)
   const copyRangeRef = useRef<{ start: { rx: number; ry: number }; end: { rx: number; ry: number } } | null>(null)
   const clipboardRef = useRef<MapClipboard | null>(null)
   const pasteOnceRef = useRef(false)
   const waypointNumberRef = useRef<number | null>(null)
   const waypointEraseRef = useRef(false)
+  const [waypointErase, setWaypointErase] = useState(false)
   const doc = session.document
 
   const bump = useCallback((next: MapDocument) => {
@@ -151,6 +164,12 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     setPanY(viewSize.h / 2 - origin.py * scale)
     setSelected({ rx, ry })
   }, [doc.isoSize, scale, viewSize.h, viewSize.w])
+
+  useEffect(() => {
+    const names = doc.houses.map((house) => house.name)
+    const next = names.includes('Neutral') ? 'Neutral' : (names[0] ?? 'Neutral')
+    setOwner(next)
+  }, [session.filePath])
 
   useEffect(() => {
     let cancelled = false
@@ -185,6 +204,19 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         ?? await resourceContext.resolveFileFromOverlay('art.ini')
       setRulesLists(parseRulesObjectLists(text))
       setFoundations(parseBuildingFoundations(text, artFile?.readAsString()))
+      const hints = collectRulesObjectNames(MapIni.parse(text))
+      let csf: Record<string, string> = {}
+      for (const name of ['ra2md.csf', 'ra2.csf']) {
+        const csfFile = await resourceContext.resolveFileFromOverlay(name)
+        if (!csfFile) continue
+        try {
+          csf = CsfFile.fromVirtualFile(csfFile).data
+          break
+        } catch {
+          /* 坏 CSF 时退回 rules Name */
+        }
+      }
+      if (!cancelled) setObjectNames({ csf, ...hints })
     })()
     return () => { cancelled = true }
   }, [resourceContext])
@@ -206,25 +238,57 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     return () => observer.disconnect()
   }, [])
 
+  useEffect(() => {
+    if (tool === 'bridge') return
+    bridgeStartRef.current = null
+    setBridgeStart(null)
+  }, [tool])
+
   const brushSize = brushSizeFromId(brushSizeId)
   const brushW = brushSize.w
   const brushH = brushSize.h
   const brush = brushSize.brush
+  const brushGhosts = useMemo(() => buildBrushGhosts({
+    tool,
+    origin: hover ?? selected,
+    doc,
+    tileNum,
+    overlayId,
+    overlayData: overlayDataValue,
+    objectName,
+    owner,
+    brushW,
+    brushH,
+    brush,
+    oreRandom,
+    bridgeKind,
+    bridgeStart,
+    waypointErase,
+    theater: theaterArt?.index,
+    tileShape: theaterArt?.tileShape(tileNum),
+    shapeOf: (num) => theaterArt?.tileShape(num),
+    terrainPool: rulesLists.terrain,
+  }), [
+    artRevision, bridgeKind, bridgeStart, brush, brushH, brushW, doc, foundations, hover, objectName,
+    oreRandom, overlayDataValue, overlayId, owner, revision, rulesLists.terrain, selected,
+    theaterArt, tileNum, tool, waypointErase,
+  ])
   const brushPreviewCells = useMemo(() => {
     const origin = hover ?? selected
     if (!origin || tool === 'pan') return []
-    const paintRect = tool === 'tile' || tool === 'ore' || tool === 'gems' || tool === 'veins'
-    const offsets = paintRect
-      ? fa2PaintRectOffsets(brushW, brushH)
-      : (heightRect || tool === 'raiseTile' || tool === 'lowerTile')
-        ? fa2CenteredRectOffsets(brushW, brushH)
-        : toolUsesBrush(tool)
-          ? manhattanDiamondOffsets(brush)
-          : [{ dx: 0, dy: 0 }]
+    if (tool === 'structure' || tool === 'basenode' || brushGhosts.length > 0) {
+      return brushGhostCells(brushGhosts, tool, origin, foundations, objectName)
+    }
+    if (tool === 'raise' || tool === 'lower' || tool === 'flatten' || tool === 'raiseTile' || tool === 'lowerTile') {
+      return heightBrushCells(origin, tool, brushW, brushH, brush, heightRect)
+    }
+    const offsets = toolUsesBrush(tool)
+      ? manhattanDiamondOffsets(brush)
+      : [{ dx: 0, dy: 0 }]
     return offsets.map(({ dx, dy }) => ({ rx: origin.rx + dx, ry: origin.ry + dy }))
-  }, [hover, selected, tool, brushW, brushH, brush, heightRect])
+  }, [brush, brushGhosts, brushH, brushW, foundations, heightRect, hover, objectName, selected, tool])
 
-  const handlePaint = useCallback((rx: number, ry: number) => {
+  const handlePaint = useCallback((rx: number, ry: number, extra?: { subCell?: number }) => {
     const working = doc
     switch (tool) {
       case 'raise':
@@ -261,12 +325,22 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         flattenHeight(working, rx, ry, brush)
         if (slopeCorrection && theaterArt?.index) createSlopesAround(working, rx, ry, theaterArt.index, brush)
         break
-      case 'tile':
-        paintTile(working, rx, ry, tileNum, { w: brushW, h: brushH })
+      case 'tile': {
+        const shape = theaterArt?.tileShape(tileNum)
+        if (usesFa2PlaceTile(shape, tileNum, theaterArt?.index) && shape) {
+          placeFa2Tile(working, rx, ry, tileNum, shape, {
+            brushW,
+            brushH,
+            shapeOf: (num) => theaterArt?.tileShape(num),
+          })
+        } else {
+          paintTile(working, rx, ry, tileNum, { w: brushW, h: brushH })
+        }
         if (autoLat && theaterArt?.index) {
           applyLatAt(working, rx, ry, theaterArt.index, Math.max(brushW, brushH) + 1, theaterArt.smoothLookup((cx, cy) => working.getCell(cx, cy)))
         }
         break
+      }
       case 'ore':
         applyOreBrush(working, rx, ry, {
           kind: 'riparius',
@@ -302,14 +376,18 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         break
       case 'infantry': {
         const here = working.infantry.filter((item) => item.rx === rx && item.ry === ry)
-        const subCell = allocateInfantrySubCell(here)
+        const subCell = preferInfantrySubCell(here, extra?.subCell)
         if (subCell == null) break
+        const id = createMapObjectId()
         working.infantry.push({
-          id: createMapObjectId(), owner, name: objectName, health: 256, rx, ry,
+          id, owner, name: objectName, health: 256, rx, ry,
           direction: FA2_DEFAULT_FACING, mission: 'Guard', tag: 'none', veterancy: 0, group: -1,
           onBridge: false, recruitable: false, aiRecruitable: false, subCell, extra: [],
         })
-        break
+        setSelected({ rx, ry, subCell, objectId: id })
+        setObjectPropsCollapsed(true)
+        bump(working)
+        return
       }
       case 'unit':
         if (working.units.some((item) => item.rx === rx && item.ry === ry)) break
@@ -391,11 +469,15 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         break
       case 'bridge':
         if (!bridgeStartRef.current) {
-          bridgeStartRef.current = { rx, ry }
-        } else {
-          placeBridgeLine(working, bridgeStartRef.current, { rx, ry }, bridgeKind)
-          bridgeStartRef.current = null
+          const start = { rx, ry }
+          bridgeStartRef.current = start
+          setBridgeStart(start)
+          setSelected({ rx, ry, subCell: extra?.subCell })
+          return
         }
+        placeBridgeLine(working, bridgeStartRef.current, { rx, ry }, bridgeKind)
+        bridgeStartRef.current = null
+        setBridgeStart(null)
         break
       case 'cliff':
       case 'cliffFront':
@@ -451,7 +533,8 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
       default:
         break
     }
-    setSelected({ rx, ry })
+    setObjectPropsCollapsed(true)
+    setSelected({ rx, ry, subCell: extra?.subCell })
     bump(working)
   }, [autoLat, bridgeKind, brush, brushH, brushW, bump, doc, foundations, heightRect, objectName, oreRandom, overlayDataValue, overlayId, owner, rulesLists.terrain, slopeCorrection, theaterArt, tileNum, tool, tubeBidirectional])
 
@@ -478,6 +561,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
       strokeRef.current = {
         commit: () => {
           const after = doc.toIniString()
+          if (after === before) return
           stackRef.current.push({
             label: tool,
             apply: (target) => target.copyFrom(MapDocument.parse(after)),
@@ -498,8 +582,30 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
 
   const handlePick = useCallback((pick: MapViewportPick) => {
     if (pick.longPress) return
-    setSelected({ rx: pick.rx, ry: pick.ry })
-  }, [])
+    const target = pickFa2DragTarget(doc, pick.rx, pick.ry, foundations, pick.subCell)
+    setSelected({
+      rx: pick.rx,
+      ry: pick.ry,
+      subCell: pick.subCell,
+      objectId: target?.id,
+    })
+    if (pick.doubleClick) setObjectPropsCollapsed(false)
+  }, [doc, foundations])
+
+  const handleMoveObject = useCallback((move: Fa2DragMove) => {
+    const before = doc.toIniString()
+    if (!applyFa2Drag(doc, move)) return
+    const after = doc.toIniString()
+    if (before === after) return
+    stackRef.current.push({
+      label: 'drag',
+      apply: (target) => target.copyFrom(MapDocument.parse(after)),
+      revert: (target) => target.copyFrom(MapDocument.parse(before)),
+    })
+    setSelected({ rx: move.toRx, ry: move.toRy })
+    doc.rebuildPreview()
+    bump(doc)
+  }, [bump, doc])
 
   const iniSections = useMemo(
     () => (logicTab === 'maptools' ? listIniSections(doc) : []),
@@ -521,10 +627,11 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     setBrushSizeId(id)
   }
 
-  const handleTreeSelect = (id: string, action: ObjectTreeAction) => {
+  const handleTreeSelect = useCallback((id: string, action: ObjectTreeAction) => {
     setTreeNodeId(id)
     setTool(action.tool)
     waypointEraseRef.current = action.tool === 'waypoint' && Boolean(action.waypointErase)
+    setWaypointErase(waypointEraseRef.current)
     waypointNumberRef.current = action.tool === 'waypoint' && action.waypointNumber != null && !action.waypointErase
       ? action.waypointNumber
       : null
@@ -544,7 +651,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
       if (set) setPreviewSetIndex(set.setIndex)
     }
     setMobileToolsOpen(false)
-  }
+  }, [theaterArt])
 
   const openLogic = (tab: LogicTab) => {
     setLogicTab(tab)
@@ -574,6 +681,15 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     return `${selected.rx},${selected.ry}  h=${cell.height}  tile=${cell.tileNum}  ov=${overlay.id === EMPTY_OVERLAY ? '-' : overlay.id}`
   }, [doc, selected, t, revision])
 
+  const bridgeHintKey = useMemo(() => bridgeToolbarHintKey({
+    tool,
+    treeNodeId,
+    previewSetIndex,
+    bridgeSetIndex: theaterArt?.index?.general.BridgeSet,
+    bridgeKind,
+    hasStart: Boolean(bridgeStart),
+  }), [bridgeKind, bridgeStart, previewSetIndex, theaterArt, tool, treeNodeId])
+
   const selectedHasObject = useMemo(() => {
     if (!selected) return false
     if (doc.units.some((item) => item.rx === selected.rx && item.ry === selected.ry)) return true
@@ -585,9 +701,9 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     return Boolean(structureAt(doc, selected.rx, selected.ry, foundations))
   }, [doc, foundations, selected, revision])
 
-  useEffect(() => {
-    setObjectPropsCollapsed(false)
-  }, [selected?.rx, selected?.ry])
+  const formatPlacedName = useCallback((name: string, _kind: ObjectSpriteKind, missing: boolean) => (
+    formatObjectLabel(name, objectNames, { missingArt: missing, missingText: t('mapEditor.missingArt') })
+  ), [objectNames, t])
 
   const editor = (
     <div
@@ -663,16 +779,21 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                 </select>
               </label>
             )}
-            {tool === 'bridge' && (
-              <label className="flex items-center gap-1 text-[11px] text-gray-400">
-                {t('mapEditor.toolBridge')}
-                <select className="rounded bg-gray-800 px-1 py-0.5" value={bridgeKind} onChange={(event) => setBridgeKind(event.target.value as BridgeKind)} data-testid="map-bridge-kind">
-                  <option value="small">{t('mapEditor.bridgeSmall')}</option>
-                  <option value="big">{t('mapEditor.bridgeBig')}</option>
-                  <option value="track">{t('mapEditor.bridgeTrack')}</option>
-                  <option value="concrete">{t('mapEditor.bridgeConcrete')}</option>
-                </select>
-              </label>
+            {bridgeHintKey && (
+              <span className="flex flex-wrap items-center gap-1 text-[11px] text-amber-200" data-testid="map-bridge-connect-hint">
+                {tool === 'bridge' && (
+                  <label className="flex items-center gap-1 text-gray-400">
+                    {t('mapEditor.toolBridge')}
+                    <select className="rounded bg-gray-800 px-1 py-0.5 text-gray-100" value={bridgeKind} onChange={(event) => setBridgeKind(event.target.value as BridgeKind)} data-testid="map-bridge-kind">
+                      <option value="small">{t('mapEditor.bridgeSmall')}</option>
+                      <option value="big">{t('mapEditor.bridgeBig')}</option>
+                      <option value="track">{t('mapEditor.bridgeTrack')}</option>
+                      <option value="concrete">{t('mapEditor.bridgeConcrete')}</option>
+                    </select>
+                  </label>
+                )}
+                {t(BRIDGE_TOOLBAR_HINT_I18N[bridgeHintKey])}
+              </span>
             )}
             {tool === 'tube' && (
               <label className="flex items-center gap-1 text-[11px] text-gray-400">
@@ -698,24 +819,30 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         <aside className={`${mobileToolsOpen ? 'absolute inset-y-0 left-0 z-[80] flex' : 'hidden'} w-56 flex-shrink-0 flex-col border-r border-gray-800 bg-gray-900 md:static md:flex`} data-testid={mobileToolsOpen ? 'map-mobile-tools' : 'map-object-tree'}>
           <ObjectToolTree
             theater={theaterArt?.index}
+            theaterName={doc.theater}
+            theaterArt={theaterArt}
+            artRevision={artRevision}
             rulesLists={rulesLists}
+            objectNames={objectNames}
             selectedId={treeNodeId}
             multiplayerOnly={doc.basic.multiplayerOnly}
             onSelect={handleTreeSelect}
           />
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col">
-        <div className="relative min-w-0 flex-1" ref={viewRef}>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="relative min-h-0 min-w-0 flex-1" ref={viewRef}>
           <MapViewport
             document={doc}
             tool={tool}
             brush={brush}
             brushCells={brushPreviewCells}
+            brushGhosts={brushGhosts}
             panX={panX}
             panY={panY}
             scale={scale}
             selected={selected}
+            objectLabel={formatPlacedName}
             selectionRect={selectionRect}
             marbleMadness={marbleMadness}
             showBuildingOutline={showBuildingOutline}
@@ -731,6 +858,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             onScaleChange={setScale}
             onPaint={handlePaint}
             onPick={handlePick}
+            onMoveObject={handleMoveObject}
             onHover={setHover}
             onStrokeStart={handleStrokeStart}
             onStrokeEnd={handleStrokeEnd}
@@ -775,7 +903,14 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                 </button>
               </div>
               {!objectPropsCollapsed && (
-                <ObjectInspector doc={doc} selected={selected} bump={bump} foundations={foundations} />
+                <ObjectInspector
+                  doc={doc}
+                  selected={selected}
+                  bump={bump}
+                  foundations={foundations}
+                  objectNames={objectNames}
+                  theaterArt={theaterArt}
+                />
               )}
             </div>
           )}
@@ -919,7 +1054,14 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                 {validateMap(doc).map((issue) => <li key={`${issue.code}-${issue.message}`}>{issue.message}</li>)}
               </ul>
               <div className="text-xs font-medium text-gray-300">{t('mapEditor.objectProps')}</div>
-              <ObjectInspector doc={doc} selected={selected} bump={bump} foundations={foundations} />
+              <ObjectInspector
+                doc={doc}
+                selected={selected}
+                bump={bump}
+                foundations={foundations}
+                objectNames={objectNames}
+                theaterArt={theaterArt}
+              />
               <div className="pt-2 text-xs font-medium text-gray-300">Basic flags</div>
               {([
                 'multiplayerOnly', 'official', 'skipScore', 'oneTimeOnly', 'skipMapSelect', 'endOfGame',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fa2InfantryShpFrame, fa2UnitShpFrame } from './fa2Facing'
+import { fa2InfantryShpFrame, fa2UnitShpFrame, fa2VehicleVxlDirIndex } from './fa2Facing'
 
 describe('fa2 facing', () => {
   it('inverts infantry SHP frames like FA2 (7 - direction/32)', () => {
@@ -17,5 +17,10 @@ describe('fa2 facing', () => {
     expect(fa2UnitShpFrame(64)).toBe(2)
     expect(fa2UnitShpFrame(0)).toBe(0)
     expect(fa2UnitShpFrame(64, 8, 0)).toBe(24)
+  })
+
+  it('uses FA2 7-i storage so VXL vehicles face like infantry', () => {
+    expect(fa2VehicleVxlDirIndex(64)).toBe(5)
+    expect(fa2VehicleVxlDirIndex(0)).toBe(7)
   })
 })

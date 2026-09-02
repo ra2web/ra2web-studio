@@ -3,6 +3,7 @@ import { parseTheaterIni } from '../../data/map/theaterIndex'
 import {
   buildObjectToolTree,
   brushSizeFromId,
+  bridgeToolbarHintKey,
   FA2_BRUSH_SIZES,
   resolveTreeTileNum,
   toolUsesBrush,
@@ -40,6 +41,7 @@ TilesInSet=1
 `)
     const tree = buildObjectToolTree({
       theater,
+      theaterName: 'TEMPERATE',
       infantry: ['E1'],
       units: ['MTNK'],
       aircraft: ['ORCA'],
@@ -52,6 +54,12 @@ TilesInSet=1
     const overlay = tree.find((node) => node.id === 'overlay')
     const labels = overlay?.children?.map((child) => child.id)
     expect(labels).toEqual(expect.arrayContaining(['ore', 'gems', 'veinhole', 'bridges', 'wall']))
+    const bridges = overlay?.children?.find((child) => child.id === 'bridges')
+    expect(bridges?.children?.map((child) => child.id)).toEqual([
+      'bridge-small', 'bridge-concrete', 'bridge-ends', 'bridge-big', 'bridge-track', 'bridge-hut',
+    ])
+    expect(bridges?.children?.[2]).toMatchObject({ action: { tool: 'tile', tileGeneral: 'BridgeSet' } })
+    expect(bridges?.children?.[5]).toMatchObject({ action: { tool: 'structure', objectName: 'CAARMR' } })
     expect(resolveTreeTileNum(theater, 'ClearTile')).toBe(0)
     expect(resolveTreeTileNum(theater, 'SandTile')).toBe(1)
     const startpoints = tree.find((node) => node.id === 'startpoints')
@@ -84,5 +92,61 @@ TilesInSet=1
       label: '1',
       action: { tool: 'waypoint', waypointNumber: 0 },
     })
+  })
+
+  it('omits high-bridge connect tools on lunar maps', () => {
+    const tree = buildObjectToolTree({
+      theaterName: 'LUNAR',
+      infantry: [],
+      units: [],
+      aircraft: [],
+      structures: ['CAARMR'],
+      terrain: [],
+      smudges: [],
+      overlays: [],
+    })
+    const bridges = tree.find((node) => node.id === 'overlay')?.children?.find((child) => child.id === 'bridges')
+    expect(bridges?.children?.map((child) => child.id)).toEqual(['bridge-ends', 'bridge-hut'])
+  })
+
+  it('lists only ground connect tools on desert maps, then high ramps', () => {
+    const tree = buildObjectToolTree({
+      theaterName: 'DESERT',
+      infantry: [],
+      units: [],
+      aircraft: [],
+      structures: ['CAARMR'],
+      terrain: [],
+      smudges: [],
+      overlays: [],
+    })
+    const bridges = tree.find((node) => node.id === 'overlay')?.children?.find((child) => child.id === 'bridges')
+    expect(bridges?.children?.map((child) => child.id)).toEqual([
+      'bridge-small', 'bridge-concrete', 'bridge-ends', 'bridge-hut',
+    ])
+  })
+
+  it('picks toolbar hint by ground vs elevated vs Bridges tileset', () => {
+    expect(bridgeToolbarHintKey({
+      tool: 'tile', treeNodeId: 'bridge-ends', bridgeKind: 'small', hasStart: false,
+    })).toBe('bridgeRampHint')
+    expect(bridgeToolbarHintKey({
+      tool: 'tile', previewSetIndex: 80, bridgeSetIndex: 80, bridgeKind: 'big', hasStart: false,
+    })).toBe('bridgeRampHint')
+    expect(bridgeToolbarHintKey({
+      tool: 'bridge', bridgeKind: 'small', hasStart: false,
+    })).toBe('bridgeConnectLowStart')
+    expect(bridgeToolbarHintKey({
+      tool: 'bridge', bridgeKind: 'concrete', hasStart: false,
+    })).toBe('bridgeConnectLowStart')
+    expect(bridgeToolbarHintKey({
+      tool: 'bridge', bridgeKind: 'big', hasStart: false,
+    })).toBe('bridgeConnectHighStart')
+    expect(bridgeToolbarHintKey({
+      tool: 'bridge', bridgeKind: 'track', hasStart: true,
+    })).toBe('bridgeConnectDragEnd')
+    expect(bridgeToolbarHintKey({
+      tool: 'select', bridgeKind: 'small', hasStart: false,
+    })).toBeNull()
   })
 })

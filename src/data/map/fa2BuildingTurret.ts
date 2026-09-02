@@ -74,6 +74,31 @@ export function readBuildingTurret(
   return { anim, voxel, x, y, offsetX, offsetY }
 }
 
+/** FA2 `VehicleVoxelTurretsRA2`：载具炮塔 2D 微调（多数为 0）。 */
+export function vehicleVoxelTurretOffset(
+  objectName: string,
+  rulesImage = objectName,
+): { offsetX: number; offsetY: number } {
+  const section = turretOffsetIni.getSection('VehicleVoxelTurretsRA2')
+  for (const type of [objectName, rulesImage]) {
+    if (!type) continue
+    const offsetX = lastInt(section, `${type}X`)
+    const offsetY = lastInt(section, `${type}Y`)
+    if (offsetX !== 0 || offsetY !== 0) return { offsetX, offsetY }
+  }
+  return { offsetX: 0, offsetY: 0 }
+}
+
+export function rulesHasTurret(rulesIni: MapIni | null | undefined, objectName: string, rulesImage = objectName): boolean {
+  return isTrue(rulesVal(rulesIni, [objectName, rulesImage], 'Turret'))
+}
+
+export function artTurretModelOffset(artIni: MapIni | null | undefined, imageName: string): number {
+  const raw = artIni?.getValue(imageName, 'TurretOffset')?.trim()
+  const value = Number.parseInt(raw ?? '', 10)
+  return Number.isFinite(value) ? value / 6 : 0
+}
+
 /** FA2 炮台 SHP：每向 4 帧，朝向与建筑相同 `(7 - dir/32) % 8`。 */
 export function fa2BuildingTurretShpFrame(direction: number): number {
   return fa2InfantryDirIndex(direction) * 4

@@ -1,6 +1,8 @@
 import type { MapEditorTool } from '../../data/map/mapTools'
+import type { MapTheater } from '../../data/map/constants'
 import type { TheaterIndex } from '../../data/map/theaterIndex'
 import type { BridgeKind } from '../../data/map/overlayTools'
+import { fa2BridgeConnectKinds, resolveBridgeRepairHut } from '../../data/map/fa2Bridge'
 
 export const FA2_BRUSH_SIZES = [
   { id: '1x1', label: '1x1', w: 1, h: 1, brush: 1 },
@@ -81,7 +83,13 @@ export function resolveTreeTileNum(
   generalKey: string | undefined,
 ): number | undefined {
   if (!generalKey) return undefined
-  return setStartTile(theater, generalKey)
+  const fromGeneral = setStartTile(theater, generalKey)
+  if (fromGeneral != null) return fromGeneral
+  if (generalKey === 'BridgeSet' && theater) {
+    const named = theater.sets.find((set) => set.setName.toLowerCase() === 'bridges')
+    return named?.startTileNum
+  }
+  return undefined
 }
 
 function namedLeaves(
@@ -98,8 +106,71 @@ function namedLeaves(
   }))
 }
 
+const BRIDGE_KIND_LABEL: Record<BridgeKind, 'bridgeSmall' | 'bridgeBig' | 'bridgeTrack' | 'bridgeConcrete'> = {
+  small: 'bridgeSmall',
+  big: 'bridgeBig',
+  track: 'bridgeTrack',
+  concrete: 'bridgeConcrete',
+}
+
+const GROUND_BRIDGE_KINDS: BridgeKind[] = ['small', 'concrete']
+const HIGH_BRIDGE_KINDS: BridgeKind[] = ['big', 'track']
+
+function bridgeKindLeaf(kind: BridgeKind): ObjectTreeNode {
+  return {
+    id: `bridge-${kind}`,
+    labelKey: BRIDGE_KIND_LABEL[kind],
+    action: { tool: 'bridge', bridgeKind: kind },
+  }
+}
+
+export const BRIDGE_TOOLBAR_HINT_I18N = {
+  bridgeRampHint: 'mapEditor.bridgeRampHint',
+  bridgeConnectDragEnd: 'mapEditor.bridgeConnectDragEnd',
+  bridgeConnectLowStart: 'mapEditor.bridgeConnectLowStart',
+  bridgeConnectHighStart: 'mapEditor.bridgeConnectHighStart',
+} as const
+
+/** Overlay→桥：地面拖线、高架坡道地块、空中拖线、维修小屋。 */
+export function buildBridgeTreeChildren(
+  theaterName?: MapTheater | null,
+  structures: string[] = [],
+): ObjectTreeNode[] {
+  const kinds = fa2BridgeConnectKinds(theaterName)
+  return [
+    ...GROUND_BRIDGE_KINDS.filter((kind) => kinds.includes(kind)).map(bridgeKindLeaf),
+    { id: 'bridge-ends', labelKey: 'bridgeEnds', action: { tool: 'tile', tileGeneral: 'BridgeSet' } },
+    ...HIGH_BRIDGE_KINDS.filter((kind) => kinds.includes(kind)).map(bridgeKindLeaf),
+    {
+      id: 'bridge-hut',
+      labelKey: 'bridgeRepairHut',
+      action: { tool: 'structure', objectName: resolveBridgeRepairHut(structures) },
+    },
+  ]
+}
+
+export function bridgeToolbarHintKey(args: {
+  tool: MapEditorTool
+  treeNodeId?: string | null
+  previewSetIndex?: number
+  bridgeSetIndex?: number
+  bridgeKind: BridgeKind
+  hasStart: boolean
+}): keyof typeof BRIDGE_TOOLBAR_HINT_I18N | null {
+  const onHighRamp = args.tool === 'tile' && (
+    args.treeNodeId === 'bridge-ends'
+    || (args.bridgeSetIndex != null && args.bridgeSetIndex >= 0 && args.previewSetIndex === args.bridgeSetIndex)
+  )
+  if (onHighRamp) return 'bridgeRampHint'
+  if (args.tool !== 'bridge') return null
+  if (args.hasStart) return 'bridgeConnectDragEnd'
+  if (args.bridgeKind === 'small' || args.bridgeKind === 'concrete') return 'bridgeConnectLowStart'
+  return 'bridgeConnectHighStart'
+}
+
 export function buildObjectToolTree(args: {
   theater?: TheaterIndex | null
+  theaterName?: MapTheater | null
   infantry: string[]
   units: string[]
   aircraft: string[]
@@ -204,12 +275,7 @@ export function buildObjectToolTree(args: {
         {
           id: 'bridges',
           labelKey: 'toolBridge',
-          children: [
-            { id: 'bridge-small', labelKey: 'bridgeSmall', action: { tool: 'bridge', bridgeKind: 'small' } },
-            { id: 'bridge-big', labelKey: 'bridgeBig', action: { tool: 'bridge', bridgeKind: 'big' } },
-            { id: 'bridge-track', labelKey: 'bridgeTrack', action: { tool: 'bridge', bridgeKind: 'track' } },
-            { id: 'bridge-concrete', labelKey: 'bridgeConcrete', action: { tool: 'bridge', bridgeKind: 'concrete' } },
-          ],
+          children: buildBridgeTreeChildren(args.theaterName, args.structures),
         },
         { id: 'wall', labelKey: 'toolWall', action: { tool: 'wall' } },
         { id: 'overlay-manual', labelKey: 'toolOverlay', action: { tool: 'overlay' } },

@@ -26,6 +26,12 @@ export function pickShpFrame<T extends ShpBlitFrame>(images: T[], frame: number)
   return images.find((image) => shpFrameHasPixels(image)) ?? null
 }
 
+/** FA2 `GetOverlayPic(ovrl, ovrldata)`：该 data 帧为空就不画，不回退到其它帧。 */
+export function pickOverlayShpFrame<T extends ShpBlitFrame>(images: T[], frame: number): T | null {
+  const preferred = images[frame]
+  return shpFrameHasPixels(preferred) ? preferred : null
+}
+
 /** FA2 用 SHP `wMaxWidth/wMaxHeight` 画布，把帧放在 (x,y)。 */
 export function compositeShpFrame(shpSize: { width: number; height: number }, image: ShpBlitFrame): {
   indexed: Uint8Array
@@ -136,6 +142,20 @@ export function overlayRgbaAt(base: IndexedRgba, extra: IndexedRgba, dx: number,
     }
   }
   return { width: base.width, height: base.height, rgba }
+}
+
+/** 载具炮塔可能超出车身 AABB；撑开画布并保持相对锚点。 */
+export function overlayRgbaAtExpand(base: IndexedRgba, extra: IndexedRgba, dx: number, dy: number): IndexedRgba {
+  const minX = Math.min(0, dx)
+  const minY = Math.min(0, dy)
+  const width = Math.max(base.width, dx + extra.width) - minX
+  const height = Math.max(base.height, dy + extra.height) - minY
+  if (minX === 0 && minY === 0 && width === base.width && height === base.height) {
+    return overlayRgbaAt(base, extra, dx, dy)
+  }
+  const canvas = emptyRgba(width, height)
+  const shifted = overlayRgbaAt(canvas, base, -minX, -minY)
+  return overlayRgbaAt(shifted, extra, dx - minX, dy - minY)
 }
 
 /**

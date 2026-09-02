@@ -8,14 +8,24 @@ import MapEditor, { type MapEditorSession } from './MapEditor'
 import NewMapDialog from './NewMapDialog'
 
 vi.mock('./MapViewport', () => ({
-  default: ({ onPaint, onPick }: {
-    onPaint: (rx: number, ry: number) => void
-    onPick: (pick: { rx: number; ry: number; clientX: number; clientY: number; longPress: boolean }) => void
+  default: ({ onPaint, onPick, onMoveObject }: {
+    onPaint: (rx: number, ry: number, extra?: { subCell?: number }) => void
+    onPick: (pick: { rx: number; ry: number; clientX: number; clientY: number; longPress: boolean; doubleClick?: boolean; subCell?: number }) => void
+    onMoveObject?: (move: { kind: string; id: string; rx: number; ry: number; toRx: number; toRy: number; copy: boolean }) => void
   }) => (
     <div>
       <button type="button" data-testid="map-viewport" onClick={() => onPaint(12, 12)}>viewport</button>
-      <button type="button" data-testid="map-viewport-pick" onClick={() => onPick({ rx: 12, ry: 12, clientX: 0, clientY: 0, longPress: false })}>pick</button>
+      <button type="button" data-testid="map-viewport-end" onClick={() => onPaint(18, 12)}>end</button>
+      <button type="button" data-testid="map-viewport-pick" onClick={() => onPick({ rx: 12, ry: 12, clientX: 0, clientY: 0, longPress: false, subCell: 0 })}>pick</button>
+      <button type="button" data-testid="map-viewport-dblclick" onClick={() => onPick({ rx: 12, ry: 12, clientX: 0, clientY: 0, longPress: false, doubleClick: true, subCell: 0 })}>dblclick</button>
       <button type="button" data-testid="map-viewport-longpress" onClick={() => onPick({ rx: 12, ry: 12, clientX: 0, clientY: 0, longPress: true })}>longpress</button>
+      <button
+        type="button"
+        data-testid="map-viewport-drag"
+        onClick={() => onMoveObject?.({ kind: 'unit', id: 'u1', rx: 8, ry: 8, toRx: 9, toRy: 10, copy: false })}
+      >
+        drag
+      </button>
     </div>
   ),
 }))
@@ -121,6 +131,29 @@ describe('MapEditor', () => {
     expect(onChange).toHaveBeenCalled()
     const overlay = session.document.getOverlay(12, 12)
     expect(overlay.id).not.toBe(255)
+  })
+
+  it('exposes FA2 bridge ends, connect, and repair hut as separate actions', () => {
+    const session = makeSession()
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByText(/^桥$|^Bridge$/))
+    fireEvent.click(screen.getByRole('button', { name: /高架坡道|High ramps/ }))
+    expect(screen.getByTestId('map-tileset-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('map-tileset-resize')).toBeInTheDocument()
+    expect(screen.getByTestId('map-bridge-connect-hint').textContent).toMatch(/底部|facing|browser|rotate|朝向/)
+    fireEvent.click(screen.getByRole('button', { name: /小桥|Small bridge/ }))
+    expect(screen.getByTestId('map-bridge-kind')).toHaveValue('small')
+    expect(screen.getByTestId('map-bridge-connect-hint').textContent).toMatch(/Overlay/)
+    fireEvent.click(screen.getByRole('button', { name: /大桥|Big bridge/ }))
+    expect(screen.getByTestId('map-bridge-connect-hint').textContent).toMatch(/高架|High ramps/)
+    fireEvent.click(screen.getByTestId('map-viewport'))
+    fireEvent.click(screen.getByTestId('map-viewport-end'))
+    expect(session.document.getOverlay(12, 12).id).not.toBe(255)
+    fireEvent.click(screen.getByRole('button', { name: /桥梁维修小屋|Bridge repair hut/ }))
+    fireEvent.click(screen.getByTestId('map-viewport'))
+    expect(session.document.structures.some((item) => item.name === 'CAARMR')).toBe(true)
   })
 
   it('writes Basic.Name through the INI editor', () => {
@@ -237,7 +270,7 @@ describe('MapEditor', () => {
     expect(screen.queryByTestId('map-object-props')).not.toBeInTheDocument()
   })
 
-  it('shows infantry properties on a cell click so owner and facing can change', () => {
+  it('keeps object properties collapsed until a double-click', () => {
     const session = makeSession()
     session.document.infantry.push({
       id: '1', owner: 'Americans', name: 'E1', health: 256, rx: 12, ry: 12,
@@ -249,6 +282,8 @@ describe('MapEditor', () => {
     )
     fireEvent.click(screen.getByTestId('map-viewport-pick'))
     expect(screen.getByTestId('map-object-props')).toBeInTheDocument()
+    expect(screen.getByTestId('map-object-props').querySelector('[data-testid="map-object-inspector"]')).toBeNull()
+    fireEvent.click(screen.getByTestId('map-viewport-dblclick'))
     expect(screen.getByTestId('map-logic-panel')).toHaveAttribute('data-open', '0')
     const owner = screen.getByTestId('map-object-props').querySelector('select')
     expect(owner).toBeTruthy()
@@ -273,13 +308,15 @@ describe('MapEditor', () => {
     )
     fireEvent.click(await screen.findByRole('button', { name: 'E1' }))
     fireEvent.click(screen.getByTestId('map-viewport'))
+    expect(screen.getByTestId('map-object-props').querySelector('[data-testid="map-object-inspector"]')).toBeNull()
     fireEvent.click(screen.getByTestId('map-viewport'))
     fireEvent.click(screen.getByTestId('map-viewport'))
     fireEvent.click(screen.getByTestId('map-viewport'))
     const here = session.document.infantry.filter((item) => item.rx === 12 && item.ry === 12)
     expect(here).toHaveLength(3)
     expect(new Set(here.map((item) => item.subCell)).size).toBe(3)
-    expect(here.every((item) => item.direction === 64)).toBe(true)
+    expect(here.every((item) => item.direction === 128)).toBe(true)
+    expect(here.every((item) => item.owner === 'Neutral')).toBe(true)
   })
 
   it('rejects overlapping building foundations', async () => {
@@ -290,7 +327,10 @@ describe('MapEditor', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'GAPOWR' }))
     fireEvent.click(screen.getByTestId('map-viewport'))
     fireEvent.click(screen.getByTestId('map-viewport'))
-    expect(session.document.structures.filter((item) => item.name === 'GAPOWR')).toHaveLength(1)
+    const placed = session.document.structures.filter((item) => item.name === 'GAPOWR')
+    expect(placed).toHaveLength(1)
+    expect(placed[0].owner).toBe('Neutral')
+    expect(placed[0].direction).toBe(128)
   })
 
   it('creates a FA2 teamtype with Whiner/Autocreate and TMissions', () => {
@@ -385,6 +425,34 @@ describe('MapEditor', () => {
     fireEvent.click(screen.getByTestId('map-viewport'))
     expect(session.document.waypoints.some((item) => item.number === 3)).toBe(false)
     expect(session.document.infantry).toHaveLength(1)
+  })
+
+  it('moves a unit when the select tool finishes a drag', () => {
+    const session = makeSession()
+    session.document.units.push({
+      id: 'u1',
+      owner: 'Americans',
+      name: 'MTNK',
+      health: 256,
+      rx: 8,
+      ry: 8,
+      direction: 64,
+      mission: 'Guard',
+      tag: 'none',
+      veterancy: 0,
+      group: -1,
+      onBridge: false,
+      recruitable: false,
+      aiRecruitable: false,
+      extra: [],
+    })
+    const onChange = vi.fn()
+    renderWithProviders(
+      <MapEditor session={session} onChange={onChange} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByTestId('map-viewport-drag'))
+    expect(session.document.units[0]).toMatchObject({ id: 'u1', rx: 9, ry: 10 })
+    expect(onChange).toHaveBeenCalled()
   })
 })
 
