@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useCallback, useEffect, useRef } from 'react'
 import { forEachIsoCell, projectCell, unprojectCell } from '../../data/map/isoCoords'
 import { miniMapIso, unprojectMiniMapIso } from '../../data/map/isoDraw'
 import { cellMiniMapColor, rgbCss } from '../../data/map/miniMapColor'
@@ -18,7 +18,7 @@ type MapMiniMapProps = {
   onPanChange: (panX: number, panY: number) => void
 }
 
-type MiniFit = {
+export type MiniFit = {
   minX: number
   minY: number
   fit: number
@@ -59,6 +59,39 @@ function toCanvas(fit: MiniFit, x: number, y: number): { x: number; y: number } 
   }
 }
 
+/** FA2 MiniMap：指针位置对应的格作为视口中心，左键按下或拖动都会 SetScroll。 */
+export function panFromMiniMapPointer(args: {
+  canvasX: number
+  canvasY: number
+  canvasWidth: number
+  canvasHeight: number
+  fit: MiniFit | null
+  isoSize: number
+  mapWidth: number
+  mapHeight: number
+  viewWidth: number
+  viewHeight: number
+  scale: number
+}): { panX: number; panY: number } {
+  let rx: number
+  let ry: number
+  if (args.fit && args.fit.fit > 0) {
+    const isoX = (args.canvasX - args.fit.ox) / args.fit.fit + args.fit.minX
+    const isoY = (args.canvasY - args.fit.oy) / args.fit.fit + args.fit.minY
+    const cell = unprojectMiniMapIso(isoX, isoY, args.isoSize)
+    rx = cell.rx
+    ry = cell.ry
+  } else {
+    rx = 1 + (args.canvasX / args.canvasWidth) * args.mapWidth
+    ry = 1 + (args.canvasY / args.canvasHeight) * args.mapHeight
+  }
+  const origin = projectCell(Math.floor(rx), Math.floor(ry), 0, args.isoSize)
+  return {
+    panX: args.viewWidth / 2 - origin.px * args.scale,
+    panY: args.viewHeight / 2 - origin.py * args.scale,
+  }
+}
+
 const MapMiniMap: React.FC<MapMiniMapProps> = ({
   document: doc,
   revision,
@@ -73,6 +106,7 @@ const MapMiniMap: React.FC<MapMiniMapProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const fitRef = useRef<MiniFit | null>(null)
+  const draggingRef = useRef(false)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -129,27 +163,55 @@ const MapMiniMap: React.FC<MapMiniMapProps> = ({
     ctx.stroke()
   }, [artRevision, doc, panX, panY, revision, scale, theaterArt, viewHeight, viewWidth])
 
-  const handlePointer = (event: React.PointerEvent<HTMLCanvasElement>) => {
+  const jumpToPointer = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const fit = fitRef.current
     const rect = canvas.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) return
     const canvasX = ((event.clientX - rect.left) / rect.width) * canvas.width
     const canvasY = ((event.clientY - rect.top) / rect.height) * canvas.height
-    let rx: number
-    let ry: number
-    if (fit && fit.fit > 0) {
-      const isoX = (canvasX - fit.ox) / fit.fit + fit.minX
-      const isoY = (canvasY - fit.oy) / fit.fit + fit.minY
-      const cell = unprojectMiniMapIso(isoX, isoY, doc.isoSize)
-      rx = cell.rx
-      ry = cell.ry
-    } else {
-      rx = 1 + (canvasX / canvas.width) * doc.width
-      ry = 1 + (canvasY / canvas.height) * doc.height
+    const next = panFromMiniMapPointer({
+      canvasX,
+      canvasY,
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+      fit: fitRef.current,
+      isoSize: doc.isoSize,
+      mapWidth: doc.width,
+      mapHeight: doc.height,
+      viewWidth,
+      viewHeight,
+      scale,
+    })
+    onPanChange(next.panX, next.panY)
+  }, [doc.height, doc.isoSize, doc.width, onPanChange, scale, viewHeight, viewWidth])
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (event.button !== 0) return
+    draggingRef.current = true
+    const canvas = canvasRef.current
+    try {
+      canvas?.setPointerCapture(event.pointerId)
+    } catch {
+      /* jsdom / non-pointer hosts */
     }
-    const origin = projectCell(Math.floor(rx), Math.floor(ry), 0, doc.isoSize)
-    onPanChange(viewWidth / 2 - origin.px * scale, viewHeight / 2 - origin.py * scale)
+    jumpToPointer(event)
+  }
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!draggingRef.current && event.buttons !== 1) return
+    draggingRef.current = true
+    jumpToPointer(event)
+  }
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    draggingRef.current = false
+    const canvas = canvasRef.current
+    try {
+      canvas?.releasePointerCapture(event.pointerId)
+    } catch {
+      /* jsdom / non-pointer hosts */
+    }
   }
 
   return (
@@ -158,8 +220,11 @@ const MapMiniMap: React.FC<MapMiniMapProps> = ({
       width={160}
       height={160}
       data-testid="map-minimap"
-      className="absolute right-2 top-2 h-28 w-28 cursor-pointer rounded border border-cyan-700/80 bg-slate-950 shadow-lg sm:h-40 sm:w-40"
-      onPointerDown={handlePointer}
+      className="absolute right-2 top-2 h-28 w-28 touch-none cursor-grab rounded border border-cyan-700/80 bg-slate-950 shadow-lg active:cursor-grabbing sm:h-40 sm:w-40"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
     />
   )
 }

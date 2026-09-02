@@ -1,15 +1,19 @@
 import React, { useRef } from 'react'
 import { RA2_ISO_TILE_HEIGHT, RA2_ISO_TILE_WIDTH, EMPTY_OVERLAY } from '../../data/map/constants'
 import { forEachIsoCell, hitTestDiamond, isValidIsoCell, projectCell } from '../../data/map/isoCoords'
-import { objectBlitPosition, overlayBlitPosition, tmpBlitPosition } from '../../data/map/isoDraw'
+import { buildingBlitPosition, objectBlitPosition, overlayBlitPosition, tmpBlitPosition } from '../../data/map/isoDraw'
+import { houseRgbFromColorName } from '../../data/map/fa2HouseColor'
+import { infantrySubPosOffset } from '../../data/map/fa2Infantry'
 import { MapDocument } from '../../data/map/MapDocument'
 import { walkTubeCells } from '../../data/map/fa2Tube'
 import { outerDiamondEdges } from '../../data/map/fa2Brush'
 import { drawTriggerLocation } from './drawTriggerLocation'
 import type { MapEditorTool } from '../../data/map/mapTools'
 import type { TheaterArt, TilePixels } from '../../data/map/TheaterArt'
+import type { ObjectSpriteKind } from '../../data/map/fa2Facing'
 import type { BuildingFoundation } from '../../data/map/rulesObjects'
 import { emptyHideView, isCellHidden, type MapHideView } from '../../data/map/fa2Hide'
+import { followWorldAtClient, worldFromCanvasClient, zoomAroundClient } from '../../data/map/viewportZoom'
 
 export type MapViewportPick = {
   rx: number
@@ -51,6 +55,18 @@ type MapViewportProps = {
   revision?: number
 }
 
+function canvasLocal(
+  canvas: HTMLCanvasElement,
+  clientX: number,
+  clientY: number,
+): { x: number; y: number } {
+  const rect = canvas.getBoundingClientRect()
+  return {
+    x: clientX - rect.left,
+    y: clientY - rect.top,
+  }
+}
+
 function worldFromClient(
   canvas: HTMLCanvasElement,
   clientX: number,
@@ -59,11 +75,15 @@ function worldFromClient(
   panY: number,
   scale: number,
 ): { x: number; y: number } {
-  const rect = canvas.getBoundingClientRect()
-  return {
-    x: (clientX - rect.left - panX) / scale,
-    y: (clientY - rect.top - panY) / scale,
-  }
+  const local = canvasLocal(canvas, clientX, clientY)
+  return worldFromCanvasClient(local.x, local.y, panX, panY, scale)
+}
+
+function pinchMidpoint(pointers: Iterable<PointerState>, canvas: HTMLCanvasElement): { x: number; y: number } {
+  const points = [...pointers]
+  const midX = (points[0].x + points[1].x) / 2
+  const midY = (points[0].y + points[1].y) / 2
+  return canvasLocal(canvas, midX, midY)
 }
 
 function pickCell(doc: MapDocument, worldX: number, worldY: number): { rx: number; ry: number } | null {
@@ -190,8 +210,14 @@ const MapViewport: React.FC<MapViewportProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const pointersRef = useRef<Map<number, PointerState>>(new Map())
-  const pinchRef = useRef<{ distance: number; scale: number } | null>(null)
-  const longPressRef = useRef<number | null>(null)
+  const pinchRef = useRef<{
+    distance: number
+    scale: number
+    worldX: number
+    worldY: number
+  } | null>(null)
+  const transformRef = useRef({ panX, panY, scale })
+  transformRef.current = { panX, panY, scale }
   const paintingRef = useRef(false)
   const lastPaintRef = useRef<string | null>(null)
   const hoverKeyRef = useRef<string | null>(null)
@@ -295,16 +321,43 @@ const MapViewport: React.FC<MapViewportProps> = ({
       }
     }
 
-    const mark = (rx: number, ry: number, color: string, label?: string, objectName?: string, facing = 0) => {
+    const houseRgbOf = (owner?: string) => {
+      if (!owner) return undefined
+      const house = doc.houses.find((item) => item.name === owner)
+      return houseRgbFromColorName(house?.color, theaterArt?.houseColors)
+    }
+
+    const mark = (
+      rx: number,
+      ry: number,
+      color: string,
+      label?: string,
+      objectName?: string,
+      facing = 0,
+      kind: ObjectSpriteKind = 'unit',
+      owner?: string,
+      subCell = 0,
+    ) => {
       const cell = doc.getCell(rx, ry)
       if (isCellHidden(rx, ry, cell.tileNum, hideView, theaterArt?.index)) return
-      const origin = projectCell(rx, ry, cell.height, doc.isoSize)
+      let origin = projectCell(rx, ry, cell.height, doc.isoSize)
+      if (kind === 'infantry') {
+        const offset = infantrySubPosOffset(subCell)
+        origin = { px: origin.px + offset.x, py: origin.py + offset.y }
+      }
       if (objectName) {
-        const sprite = theaterArt?.peekObject(objectName, 0, facing)
-        if (sprite === undefined) theaterArt?.requestObject(objectName, 0, facing)
+        const house = houseRgbOf(owner)
+        const sprite = theaterArt?.peekObject(objectName, 0, facing, house, kind)
+        if (sprite === undefined) theaterArt?.requestObject(objectName, 0, facing, house, kind)
         if (sprite) {
-          const canvasSprite = tileCanvas(tileCacheRef.current, `obj:${objectName}:${facing}`, sprite)
-          const pos = objectBlitPosition(origin, sprite.width, sprite.height)
+          const canvasSprite = tileCanvas(
+            tileCacheRef.current,
+            `obj:${objectName}:${facing}:${house?.r ?? ''},${house?.g ?? ''},${house?.b ?? ''}:${subCell}:${kind}`,
+            sprite,
+          )
+          const pos = kind === 'building'
+            ? buildingBlitPosition(origin, sprite.width, sprite.height)
+            : objectBlitPosition(origin, sprite.width, sprite.height)
           wctx.drawImage(canvasSprite, pos.x, pos.y)
           return
         }
@@ -321,15 +374,15 @@ const MapViewport: React.FC<MapViewportProps> = ({
       }
     }
 
-    for (const unit of doc.units) mark(unit.rx, unit.ry, '#60a5fa', unit.name, unit.name, unit.direction)
-    for (const inf of doc.infantry) mark(inf.rx, inf.ry, '#34d399', inf.name, inf.name, inf.direction)
-    for (const air of doc.aircraft) mark(air.rx, air.ry, '#c084fc', air.name, air.name, air.direction)
+    for (const unit of doc.units) mark(unit.rx, unit.ry, '#60a5fa', unit.name, unit.name, unit.direction, 'unit', unit.owner)
+    for (const inf of doc.infantry) mark(inf.rx, inf.ry, '#34d399', inf.name, inf.name, inf.direction, 'infantry', inf.owner, inf.subCell ?? 0)
+    for (const air of doc.aircraft) mark(air.rx, air.ry, '#c084fc', air.name, air.name, air.direction, 'unit', air.owner)
     for (const building of doc.structures) {
-      mark(building.rx, building.ry, '#fb7185', building.name, building.name, building.direction)
       if (showBuildingOutline) {
         const size = foundations[building.name] ?? { w: 1, h: 1 }
         drawBuildingOutline(wctx, building.rx, building.ry, doc.getCell(building.rx, building.ry).height, doc.isoSize, size.w, size.h, scale)
       }
+      mark(building.rx, building.ry, '#fb7185', building.name, building.name, building.direction, 'building', building.owner)
     }
     for (const terrain of doc.terrains) mark(terrain.rx, terrain.ry, '#4ade80', terrain.name, terrain.name)
     for (const smudge of doc.smudges) mark(smudge.rx, smudge.ry, '#a8a29e')
@@ -434,13 +487,6 @@ const MapViewport: React.FC<MapViewportProps> = ({
     return () => observer.disconnect()
   }, [paintFrame, paintWorld])
 
-  const clearLongPress = () => {
-    if (longPressRef.current != null) {
-      window.clearTimeout(longPressRef.current)
-      longPressRef.current = null
-    }
-  }
-
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -453,9 +499,11 @@ const MapViewport: React.FC<MapViewportProps> = ({
     if (pointersRef.current.size === 2) {
       const [a, b] = [...pointersRef.current.values()]
       const distance = Math.hypot(a.x - b.x, a.y - b.y)
-      pinchRef.current = { distance, scale }
+      const mid = pinchMidpoint(pointersRef.current.values(), canvas)
+      const view = transformRef.current
+      const world = worldFromCanvasClient(mid.x, mid.y, view.panX, view.panY, view.scale)
+      pinchRef.current = { distance, scale: view.scale, worldX: world.x, worldY: world.y }
       paintingRef.current = false
-      clearLongPress()
       return
     }
     const world = worldFromClient(canvas, event.clientX, event.clientY, panX, panY, scale)
@@ -468,17 +516,15 @@ const MapViewport: React.FC<MapViewportProps> = ({
       }
     }
     if (tool === 'pan' || event.button === 1 || event.button === 2) return
-    longPressRef.current = window.setTimeout(() => {
-      if (!cell) return
-      onPick({ rx: cell.rx, ry: cell.ry, clientX: event.clientX, clientY: event.clientY, longPress: true })
-    }, 480)
-    if (tool !== 'select' && cell) {
+    if (tool === 'select' && cell) {
+      onPick({ rx: cell.rx, ry: cell.ry, clientX: event.clientX, clientY: event.clientY, longPress: false })
+      return
+    }
+    if (cell) {
       paintingRef.current = true
       lastPaintRef.current = `${cell.rx},${cell.ry}`
       onStrokeStart?.()
       onPaint(cell.rx, cell.ry)
-    } else if (cell) {
-      onPick({ rx: cell.rx, ry: cell.ry, clientX: event.clientX, clientY: event.clientY, longPress: false })
     }
   }
 
@@ -494,21 +540,25 @@ const MapViewport: React.FC<MapViewportProps> = ({
     if (pointersRef.current.size >= 2) {
       const [a, b] = [...pointersRef.current.values()]
       const distance = Math.hypot(a.x - b.x, a.y - b.y)
-      if (pinchRef.current && pinchRef.current.distance > 0) {
-        const nextScale = Math.min(4, Math.max(0.25, pinchRef.current.scale * (distance / pinchRef.current.distance)))
-        onScaleChange(nextScale)
-      }
-      if (prev) {
-        onPanChange(panX + (event.clientX - prev.x), panY + (event.clientY - prev.y))
+      const pinch = pinchRef.current
+      if (pinch && pinch.distance > 0) {
+        const mid = pinchMidpoint(pointersRef.current.values(), canvas)
+        const next = followWorldAtClient(
+          pinch.worldX,
+          pinch.worldY,
+          pinch.scale * (distance / pinch.distance),
+          mid.x,
+          mid.y,
+        )
+        onScaleChange(next.scale)
+        onPanChange(next.panX, next.panY)
+        transformRef.current = next
       }
       return
     }
     if (tool === 'pan' || event.buttons === 2 || event.buttons === 4) {
       if (prev) onPanChange(panX + (event.clientX - prev.x), panY + (event.clientY - prev.y))
       return
-    }
-    if (Math.hypot((prev?.x ?? event.clientX) - event.clientX, (prev?.y ?? event.clientY) - event.clientY) > 8) {
-      clearLongPress()
     }
     const world = worldFromClient(canvas, event.clientX, event.clientY, panX, panY, scale)
     const cell = pickCell(doc, world.x, world.y)
@@ -528,7 +578,6 @@ const MapViewport: React.FC<MapViewportProps> = ({
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
     pointersRef.current.delete(event.pointerId)
     if (pointersRef.current.size < 2) pinchRef.current = null
-    clearLongPress()
     if (paintingRef.current && pointersRef.current.size === 0) {
       paintingRef.current = false
       lastPaintRef.current = null
@@ -544,8 +593,22 @@ const MapViewport: React.FC<MapViewportProps> = ({
 
   const handleWheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
     event.preventDefault()
-    const next = event.deltaY < 0 ? scale * 1.1 : scale / 1.1
-    onScaleChange(Math.min(4, Math.max(0.25, next)))
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const view = transformRef.current
+    const local = canvasLocal(canvas, event.clientX, event.clientY)
+    const next = zoomAroundClient(
+      view.panX,
+      view.panY,
+      view.scale,
+      event.deltaY < 0 ? view.scale * 1.1 : view.scale / 1.1,
+      local.x,
+      local.y,
+    )
+    if (next.scale === view.scale && next.panX === view.panX && next.panY === view.panY) return
+    onScaleChange(next.scale)
+    onPanChange(next.panX, next.panY)
+    transformRef.current = next
   }
 
   return (

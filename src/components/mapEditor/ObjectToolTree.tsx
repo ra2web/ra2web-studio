@@ -8,6 +8,7 @@ type ObjectToolTreeProps = {
   theater?: TheaterIndex | null
   rulesLists: RulesObjectLists
   selectedId?: string | null
+  multiplayerOnly?: boolean
   onSelect: (id: string, action: ObjectTreeAction) => void
 }
 
@@ -59,7 +60,7 @@ const TreeItems: React.FC<{
   </ul>
 )
 
-const ObjectToolTree: React.FC<ObjectToolTreeProps> = ({ theater, rulesLists, selectedId, onSelect }) => {
+const ObjectToolTree: React.FC<ObjectToolTreeProps> = ({ theater, rulesLists, selectedId, multiplayerOnly, onSelect }) => {
   const { t } = useLocale()
   const nodes = useMemo(
     () => buildObjectToolTree({
@@ -71,8 +72,9 @@ const ObjectToolTree: React.FC<ObjectToolTreeProps> = ({ theater, rulesLists, se
       terrain: rulesLists.terrain,
       smudges: rulesLists.smudges,
       overlays: rulesLists.overlays,
+      multiplayerOnly,
     }),
-    [theater, rulesLists],
+    [theater, rulesLists, multiplayerOnly],
   )
 
   return (

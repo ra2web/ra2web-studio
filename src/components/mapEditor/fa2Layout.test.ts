@@ -54,5 +54,35 @@ TilesInSet=1
     expect(labels).toEqual(expect.arrayContaining(['ore', 'gems', 'veinhole', 'bridges', 'wall']))
     expect(resolveTreeTileNum(theater, 'ClearTile')).toBe(0)
     expect(resolveTreeTileNum(theater, 'SandTile')).toBe(1)
+    const startpoints = tree.find((node) => node.id === 'startpoints')
+    expect(startpoints?.children?.map((child) => child.id)).toEqual([
+      'start-0', 'start-1', 'start-2', 'start-3', 'start-4', 'start-5', 'start-6', 'start-7', 'start-delete',
+    ])
+    expect(startpoints?.children?.[3]).toMatchObject({
+      label: '4',
+      action: { tool: 'waypoint', waypointNumber: 3 },
+    })
+    expect(tree.find((node) => node.id === 'waypoints')?.children?.[1]).toMatchObject({
+      action: { tool: 'waypoint', waypointErase: true },
+    })
+  })
+
+  it('lists a single start player on single-player maps', () => {
+    const tree = buildObjectToolTree({
+      infantry: [],
+      units: [],
+      aircraft: [],
+      structures: [],
+      terrain: [],
+      smudges: [],
+      overlays: [],
+      multiplayerOnly: false,
+    })
+    const startpoints = tree.find((node) => node.id === 'startpoints')
+    expect(startpoints?.children?.map((child) => child.id)).toEqual(['start-0', 'start-delete'])
+    expect(startpoints?.children?.[0]).toMatchObject({
+      label: '1',
+      action: { tool: 'waypoint', waypointNumber: 0 },
+    })
   })
 })

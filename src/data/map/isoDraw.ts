@@ -48,11 +48,22 @@ export function overlayBlitPosition(
   return { x: origin.px - width / 2, y }
 }
 
-/** FA2 unit/building SHP: `(f_x/2 - w/2, f_y/2 - h/2)` from bbox top-left. */
+/** FA2 unit SHP: `(f_x/2 - w/2, f_y/2 - h/2)` from bbox top-left. */
 export function objectBlitPosition(origin: ScreenOrigin, width: number, height: number): { x: number; y: number } {
   return {
     x: origin.px - width / 2,
     y: origin.py + RA2_ISO_TILE_HEIGHT / 2 - height / 2,
+  }
+}
+
+/**
+ * FA2 建筑 SHP：`drawCoords + (f_x/2 - w/2, -h/2)`，相对菱形顶点居中贴顶。
+ * 若误用单位的 `f_y/2` 偏移，精灵会偏下，地基菱形看起来像悬浮在墙面上。
+ */
+export function buildingBlitPosition(origin: ScreenOrigin, width: number, height: number): { x: number; y: number } {
+  return {
+    x: origin.px - width / 2,
+    y: origin.py - height / 2,
   }
 }
 

@@ -1,13 +1,22 @@
 import { fireEvent, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { MapDocument } from '../../data/map/MapDocument'
+import { VirtualFile } from '../../data/vfs/VirtualFile'
+import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { renderWithProviders } from '../../test/render'
 import MapEditor, { type MapEditorSession } from './MapEditor'
 import NewMapDialog from './NewMapDialog'
 
 vi.mock('./MapViewport', () => ({
-  default: ({ onPaint }: { onPaint: (rx: number, ry: number) => void }) => (
-    <button type="button" data-testid="map-viewport" onClick={() => onPaint(12, 12)}>viewport</button>
+  default: ({ onPaint, onPick }: {
+    onPaint: (rx: number, ry: number) => void
+    onPick: (pick: { rx: number; ry: number; clientX: number; clientY: number; longPress: boolean }) => void
+  }) => (
+    <div>
+      <button type="button" data-testid="map-viewport" onClick={() => onPaint(12, 12)}>viewport</button>
+      <button type="button" data-testid="map-viewport-pick" onClick={() => onPick({ rx: 12, ry: 12, clientX: 0, clientY: 0, longPress: false })}>pick</button>
+      <button type="button" data-testid="map-viewport-longpress" onClick={() => onPick({ rx: 12, ry: 12, clientX: 0, clientY: 0, longPress: true })}>longpress</button>
+    </div>
   ),
 }))
 
@@ -24,6 +33,29 @@ function makeSession(): MapEditorSession {
     loading: false,
     error: null,
   }
+}
+
+function rulesContext(): ResourceContext {
+  const text = (value: string, name: string) => VirtualFile.fromBytes(new TextEncoder().encode(value), name)
+  const rules = text(`[InfantryTypes]
+0=E1
+[BuildingTypes]
+0=GAPOWR
+[GAPOWR]
+Image=GAPOWR
+`, 'rules.ini')
+  const art = text(`[GAPOWR]
+Foundation=2x3
+BibShape=GAPOWRB
+`, 'art.ini')
+  return {
+    resolveFileFromOverlay: async (name: string) => {
+      const lower = name.toLowerCase()
+      if (lower.includes('rules')) return rules
+      if (lower.includes('art')) return art
+      return null
+    },
+  } as ResourceContext
 }
 
 describe('MapEditor', () => {
@@ -196,6 +228,71 @@ describe('MapEditor', () => {
     expect(session.document.getCell(12, 12).tileNum).toBe(77)
   })
 
+  it('does not open the map-name panel on brush long-press', () => {
+    renderWithProviders(
+      <MapEditor session={makeSession()} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByTestId('map-viewport-longpress'))
+    expect(screen.getByTestId('map-logic-panel')).toHaveAttribute('data-open', '0')
+    expect(screen.queryByTestId('map-object-props')).not.toBeInTheDocument()
+  })
+
+  it('shows infantry properties on a cell click so owner and facing can change', () => {
+    const session = makeSession()
+    session.document.infantry.push({
+      id: '1', owner: 'Americans', name: 'E1', health: 256, rx: 12, ry: 12,
+      direction: 64, mission: 'Guard', tag: 'none', veterancy: 0, group: -1,
+      onBridge: false, recruitable: false, aiRecruitable: false, subCell: 0, extra: [],
+    })
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByTestId('map-viewport-pick'))
+    expect(screen.getByTestId('map-object-props')).toBeInTheDocument()
+    expect(screen.getByTestId('map-logic-panel')).toHaveAttribute('data-open', '0')
+    const owner = screen.getByTestId('map-object-props').querySelector('select')
+    expect(owner).toBeTruthy()
+    fireEvent.change(owner as HTMLSelectElement, { target: { value: 'Russians' } })
+    expect(session.document.infantry[0].owner).toBe('Russians')
+    const facing = screen.getByTestId('map-object-props').querySelectorAll('select')[1]
+    fireEvent.change(facing, { target: { value: '128' } })
+    expect(session.document.infantry[0].direction).toBe(128)
+    const overlay = screen.getByTestId('map-object-props')
+    fireEvent.click(screen.getByTestId('map-object-props-collapse'))
+    expect(overlay.querySelector('[data-testid="map-object-inspector"]')).toBeNull()
+    fireEvent.click(screen.getByTestId('map-object-props-collapse'))
+    expect(overlay.querySelector('[data-testid="map-object-inspector"]')).not.toBeNull()
+    fireEvent.click(screen.getByTestId('map-object-props-close'))
+    expect(screen.queryByTestId('map-object-props')).not.toBeInTheDocument()
+  })
+
+  it('places three infantry in one cell and rejects a fourth', async () => {
+    const session = makeSession()
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} resourceContext={rulesContext()} />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'E1' }))
+    fireEvent.click(screen.getByTestId('map-viewport'))
+    fireEvent.click(screen.getByTestId('map-viewport'))
+    fireEvent.click(screen.getByTestId('map-viewport'))
+    fireEvent.click(screen.getByTestId('map-viewport'))
+    const here = session.document.infantry.filter((item) => item.rx === 12 && item.ry === 12)
+    expect(here).toHaveLength(3)
+    expect(new Set(here.map((item) => item.subCell)).size).toBe(3)
+    expect(here.every((item) => item.direction === 64)).toBe(true)
+  })
+
+  it('rejects overlapping building foundations', async () => {
+    const session = makeSession()
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} resourceContext={rulesContext()} />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'GAPOWR' }))
+    fireEvent.click(screen.getByTestId('map-viewport'))
+    fireEvent.click(screen.getByTestId('map-viewport'))
+    expect(session.document.structures.filter((item) => item.name === 'GAPOWR')).toHaveLength(1)
+  })
+
   it('creates a FA2 teamtype with Whiner/Autocreate and TMissions', () => {
     const session = makeSession()
     renderWithProviders(
@@ -244,6 +341,50 @@ describe('MapEditor', () => {
     expect(screen.getByTestId('map-logic-panel')).toHaveAttribute('data-open', '0')
     fireEvent.click(screen.getByTestId('map-mobile-logic-toggle'))
     expect(screen.getByTestId('map-logic-panel')).toHaveAttribute('data-open', '1')
+  })
+
+  it('moves FA2 start waypoint 0-7 instead of appending a trigger location', () => {
+    const session = makeSession()
+    const before = session.document.waypoints.find((item) => item.number === 3)
+    expect(before).toBeTruthy()
+    expect(before?.rx).not.toBe(12)
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /玩家 4|Player 4/ }))
+    fireEvent.click(screen.getByTestId('map-viewport'))
+    expect(session.document.waypoints).toHaveLength(8)
+    expect(session.document.waypoints.filter((item) => item.number === 3)).toHaveLength(1)
+    expect(session.document.waypoints.find((item) => item.number === 3)).toMatchObject({ rx: 12, ry: 12 })
+    expect(session.document.waypoints.some((item) => item.number === 8)).toBe(false)
+  })
+
+  it('creates the next free waypoint from the waypoint tool', () => {
+    const session = makeSession()
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /触发位置|Trigger location/ }))
+    fireEvent.click(screen.getByTestId('map-viewport'))
+    expect(session.document.waypoints.some((item) => item.number === 8 && item.rx === 12 && item.ry === 12)).toBe(true)
+  })
+
+  it('deletes only the waypoint when using start-point erase', () => {
+    const session = makeSession()
+    session.document.waypoints.find((item) => item.number === 3)!.rx = 12
+    session.document.waypoints.find((item) => item.number === 3)!.ry = 12
+    session.document.infantry.push({
+      id: 'i1', owner: 'Americans', name: 'E1', health: 256, rx: 12, ry: 12,
+      direction: 64, mission: 'Guard', tag: 'none', veterancy: 0, group: -1,
+      onBridge: false, recruitable: false, aiRecruitable: false, subCell: 0, extra: [],
+    })
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /删除出生点|Delete start point/ }))
+    fireEvent.click(screen.getByTestId('map-viewport'))
+    expect(session.document.waypoints.some((item) => item.number === 3)).toBe(false)
+    expect(session.document.infantry).toHaveLength(1)
   })
 })
 

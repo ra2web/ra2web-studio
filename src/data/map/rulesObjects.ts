@@ -1,4 +1,5 @@
 import { MapIni } from './MapIni'
+import { resolveRulesImage } from './imageFinder'
 
 export type RulesObjectLists = {
   infantry: string[]
@@ -31,12 +32,20 @@ export function parseRulesObjectLists(text: string): RulesObjectLists {
 
 export type BuildingFoundation = { w: number; h: number }
 
-export function parseBuildingFoundations(text: string): Record<string, BuildingFoundation> {
+export function parseBuildingFoundations(text: string, artText?: string): Record<string, BuildingFoundation> {
   const ini = MapIni.parse(text)
+  const art = artText ? MapIni.parse(artText) : ini
   const names = new Set(sectionValues(ini, 'BuildingTypes'))
   const result: Record<string, BuildingFoundation> = {}
   for (const name of names) {
-    const raw = ini.getValue(name, 'Foundation', '1x1')
+    const lookup = resolveRulesImage(ini, name)
+    const artImage = art.getValue(lookup, 'Image')?.trim()
+    const artSection = artImage && artImage.toLowerCase() !== 'null' ? artImage : lookup
+    const raw = art.getValue(artSection, 'Foundation')
+      || art.getValue(lookup, 'Foundation')
+      || ini.getValue(name, 'Foundation')
+      || art.getValue(name, 'Foundation')
+      || '1x1'
     const match = raw.trim().match(/^(\d+)\s*[xX]\s*(\d+)$/)
     result[name] = match
       ? { w: Math.max(1, Number(match[1]) || 1), h: Math.max(1, Number(match[2]) || 1) }

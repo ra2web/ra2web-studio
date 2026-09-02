@@ -2,13 +2,14 @@ import { pad } from '../../util/string'
 import { MapIni } from './MapIni'
 import type { MapTheater } from './constants'
 
+/** Overlay SHP 用剧院 pal（werhd overlayPaletteName / FA2 矿石 m_hPalTemp），不是 isotem.pal。 */
 export const THEATER_ASSETS: Record<MapTheater, { ini: string; pal: string; ext: string; unitPal: string; overlayPal: string; newTheaterChar: string }> = {
-  TEMPERATE: { ini: 'temperat.ini', pal: 'isotem.pal', ext: '.tem', unitPal: 'unittem.pal', overlayPal: 'isotem.pal', newTheaterChar: 'T' },
-  SNOW: { ini: 'snow.ini', pal: 'isosno.pal', ext: '.sno', unitPal: 'unitsno.pal', overlayPal: 'isosno.pal', newTheaterChar: 'A' },
-  URBAN: { ini: 'urban.ini', pal: 'isourb.pal', ext: '.urb', unitPal: 'uniturb.pal', overlayPal: 'isourb.pal', newTheaterChar: 'U' },
-  NEWURBAN: { ini: 'urbann.ini', pal: 'isoubn.pal', ext: '.ubn', unitPal: 'unitubn.pal', overlayPal: 'isoubn.pal', newTheaterChar: 'N' },
-  LUNAR: { ini: 'lunar.ini', pal: 'isolun.pal', ext: '.lun', unitPal: 'unitlun.pal', overlayPal: 'isolun.pal', newTheaterChar: 'L' },
-  DESERT: { ini: 'desert.ini', pal: 'isodes.pal', ext: '.des', unitPal: 'unitdes.pal', overlayPal: 'isodes.pal', newTheaterChar: 'D' },
+  TEMPERATE: { ini: 'temperat.ini', pal: 'isotem.pal', ext: '.tem', unitPal: 'unittem.pal', overlayPal: 'temperat.pal', newTheaterChar: 'T' },
+  SNOW: { ini: 'snow.ini', pal: 'isosno.pal', ext: '.sno', unitPal: 'unitsno.pal', overlayPal: 'snow.pal', newTheaterChar: 'A' },
+  URBAN: { ini: 'urban.ini', pal: 'isourb.pal', ext: '.urb', unitPal: 'uniturb.pal', overlayPal: 'urban.pal', newTheaterChar: 'U' },
+  NEWURBAN: { ini: 'urbann.ini', pal: 'isoubn.pal', ext: '.ubn', unitPal: 'unitubn.pal', overlayPal: 'urbann.pal', newTheaterChar: 'N' },
+  LUNAR: { ini: 'lunar.ini', pal: 'isolun.pal', ext: '.lun', unitPal: 'unitlun.pal', overlayPal: 'lunar.pal', newTheaterChar: 'L' },
+  DESERT: { ini: 'desert.ini', pal: 'isodes.pal', ext: '.des', unitPal: 'unitdes.pal', overlayPal: 'desert.pal', newTheaterChar: 'D' },
 }
 
 /** YR ships `temperatmd.ini` etc.; fall back to the vanilla theater.ini. */

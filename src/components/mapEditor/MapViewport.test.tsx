@@ -2,6 +2,7 @@ import { screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { MapDocument } from '../../data/map/MapDocument'
 import { projectCell } from '../../data/map/isoCoords'
+import { worldFromCanvasClient } from '../../data/map/viewportZoom'
 import { renderWithProviders } from '../../test/render'
 import { installCanvasStubs } from '../../test/mocks/canvasStub'
 import MapViewport from './MapViewport'
@@ -37,7 +38,7 @@ function dispatchPointer(
 }
 
 describe('MapViewport touch', () => {
-  it('paints on pointer down and reports long-press pick', () => {
+  it('paints on pointer down without a long-press pick', () => {
     vi.useFakeTimers()
     const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
     const onPaint = vi.fn()
@@ -64,14 +65,43 @@ describe('MapViewport touch', () => {
     dispatchPointer(canvas, 'pointerdown', { pointerId: 1, clientX: origin.px, clientY: origin.py + 15 })
     expect(onPaint).toHaveBeenCalledWith(12, 12)
     vi.advanceTimersByTime(500)
-    expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ rx: 12, ry: 12, longPress: true }))
+    expect(onPick).not.toHaveBeenCalled()
     dispatchPointer(canvas, 'pointerup', { pointerId: 1, clientX: origin.px, clientY: origin.py + 15, buttons: 0 })
     vi.useRealTimers()
   })
 
-  it('pinches with two pointers to change scale', () => {
+  it('picks a cell with the select tool so object properties can open', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const onPaint = vi.fn()
+    const onPick = vi.fn()
+    renderWithProviders(
+      <div style={{ width: 2000, height: 2000 }}>
+        <MapViewport
+          document={doc}
+          tool="select"
+          brush={1}
+          panX={0}
+          panY={0}
+          scale={1}
+          onPanChange={vi.fn()}
+          onScaleChange={vi.fn()}
+          onPaint={onPaint}
+          onPick={onPick}
+        />
+      </div>,
+    )
+    const canvas = screen.getByTestId('map-viewport') as HTMLCanvasElement
+    stubCanvas(canvas)
+    const origin = projectCell(12, 12, 0, doc.isoSize)
+    dispatchPointer(canvas, 'pointerdown', { pointerId: 1, clientX: origin.px, clientY: origin.py + 15 })
+    expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ rx: 12, ry: 12, longPress: false }))
+    expect(onPaint).not.toHaveBeenCalled()
+  })
+
+  it('pinches with two pointers around the finger midpoint', () => {
     const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
     const onScaleChange = vi.fn()
+    const onPanChange = vi.fn()
     renderWithProviders(
       <div style={{ width: 2000, height: 2000 }}>
         <MapViewport
@@ -81,7 +111,7 @@ describe('MapViewport touch', () => {
           panX={0}
           panY={0}
           scale={1}
-          onPanChange={vi.fn()}
+          onPanChange={onPanChange}
           onScaleChange={onScaleChange}
           onPaint={vi.fn()}
           onPick={vi.fn()}
@@ -92,10 +122,60 @@ describe('MapViewport touch', () => {
     stubCanvas(canvas)
     dispatchPointer(canvas, 'pointerdown', { pointerId: 1, clientX: 100, clientY: 100 })
     dispatchPointer(canvas, 'pointerdown', { pointerId: 2, clientX: 140, clientY: 100 })
+    const startMid = { x: 120, y: 100 }
+    const before = worldFromCanvasClient(startMid.x, startMid.y, 0, 0, 1)
     dispatchPointer(canvas, 'pointermove', { pointerId: 2, clientX: 180, clientY: 100, buttons: 1 })
     expect(onScaleChange).toHaveBeenCalled()
-    const next = onScaleChange.mock.calls.at(-1)?.[0] as number
-    expect(next).toBeGreaterThan(1)
+    expect(onPanChange).toHaveBeenCalled()
+    const nextScale = onScaleChange.mock.calls.at(-1)?.[0] as number
+    const [nextPanX, nextPanY] = onPanChange.mock.calls.at(-1) as [number, number]
+    expect(nextScale).toBeGreaterThan(1)
+    const after = worldFromCanvasClient(140, 100, nextPanX, nextPanY, nextScale)
+    expect(after.x).toBeCloseTo(before.x)
+    expect(after.y).toBeCloseTo(before.y)
+  })
+
+  it('zooms the wheel around the cursor instead of the top-left', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+    const onScaleChange = vi.fn()
+    const onPanChange = vi.fn()
+    renderWithProviders(
+      <div style={{ width: 2000, height: 2000 }}>
+        <MapViewport
+          document={doc}
+          tool="pan"
+          brush={1}
+          panX={80}
+          panY={40}
+          scale={0.45}
+          onPanChange={onPanChange}
+          onScaleChange={onScaleChange}
+          onPaint={vi.fn()}
+          onPick={vi.fn()}
+        />
+      </div>,
+    )
+    const canvas = screen.getByTestId('map-viewport') as HTMLCanvasElement
+    stubCanvas(canvas)
+    const clientX = 400
+    const clientY = 300
+    const before = worldFromCanvasClient(clientX, clientY, 80, 40, 0.45)
+    canvas.dispatchEvent(new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      clientX,
+      clientY,
+      deltaY: -100,
+    }))
+    expect(onScaleChange).toHaveBeenCalled()
+    expect(onPanChange).toHaveBeenCalled()
+    const nextScale = onScaleChange.mock.calls.at(-1)?.[0] as number
+    const [nextPanX, nextPanY] = onPanChange.mock.calls.at(-1) as [number, number]
+    expect(nextScale).toBeGreaterThan(0.45)
+    expect(nextPanX).not.toBe(80)
+    const after = worldFromCanvasClient(clientX, clientY, nextPanX, nextPanY, nextScale)
+    expect(after.x).toBeCloseTo(before.x)
+    expect(after.y).toBeCloseTo(before.y)
   })
 
   it('draws trigger locations as an iso-ground disc with an upright flag', () => {

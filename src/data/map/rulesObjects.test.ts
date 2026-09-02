@@ -33,4 +33,18 @@ Foundation=1x1
     expect(foundations.GACNST).toEqual({ w: 3, h: 4 })
     expect(foundations.GAPILL).toEqual({ w: 1, h: 1 })
   })
+
+  it('reads Foundation from art.ini Image= chain when rules has no Foundation', () => {
+    const foundations = parseBuildingFoundations(`
+[BuildingTypes]
+0=GAPOWR
+[GAPOWR]
+Image=GAPOWR
+`, `
+[GAPOWR]
+Foundation=2x3
+BibShape=GAPOWRB
+`)
+    expect(foundations.GAPOWR).toEqual({ w: 2, h: 3 })
+  })
 })

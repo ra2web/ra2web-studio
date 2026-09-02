@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { overlayBlitPosition, tmpBlitPosition } from './isoDraw'
+import { overlayBlitPosition, tmpBlitPosition, buildingBlitPosition, objectBlitPosition } from './isoDraw'
 
 describe('tmpBlitPosition', () => {
   it('keeps 60×30 tiles centered on the diamond top like the old blit', () => {
@@ -22,5 +22,12 @@ describe('tmpBlitPosition', () => {
 describe('overlayBlitPosition', () => {
   it('places SHP overlays at FA2 diamond-top offset', () => {
     expect(overlayBlitPosition({ px: 100, py: 40 }, 48, 32)).toEqual({ x: 76, y: 24 })
+  })
+})
+
+describe('buildingBlitPosition', () => {
+  it('centers the building SHP on the diamond top like FA2 -h/2', () => {
+    expect(buildingBlitPosition({ px: 100, py: 40 }, 48, 32)).toEqual({ x: 76, y: 24 })
+    expect(objectBlitPosition({ px: 100, py: 40 }, 48, 32)).toEqual({ x: 76, y: 39 })
   })
 })

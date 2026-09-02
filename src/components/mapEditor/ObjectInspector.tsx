@@ -1,15 +1,19 @@
 import React from 'react'
 import { MapDocument } from '../../data/map/MapDocument'
 import type { MapTechno } from '../../data/map/types'
+import { structureAt } from '../../data/map/fa2Occupy'
+import type { BuildingFoundation } from '../../data/map/rulesObjects'
 import { useLocale } from '../../i18n/LocaleContext'
 
 type ObjectInspectorProps = {
   doc: MapDocument
   selected: { rx: number; ry: number } | null
   bump: (doc: MapDocument) => void
+  foundations?: Record<string, BuildingFoundation>
 }
 
 const MISSIONS = ['Guard', 'Sleep', 'Attack', 'Move', 'Harvest', 'Area Guard', 'Patrol', 'Ambush']
+const FACINGS = [0, 32, 64, 96, 128, 160, 192, 224]
 
 function TechnoFields({
   item,
@@ -34,7 +38,9 @@ function TechnoFields({
         <input type="number" className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={item.health} onChange={(event) => { item.health = Number(event.target.value); bump() }} />
       </label>
       <label className="block text-gray-400">Facing
-        <input type="number" className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={item.direction} onChange={(event) => { item.direction = Number(event.target.value); bump() }} />
+        <select className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={item.direction} onChange={(event) => { item.direction = Number(event.target.value); bump() }}>
+          {[...new Set([...FACINGS, item.direction])].map((facing) => <option key={facing} value={facing}>{facing}</option>)}
+        </select>
       </label>
       <label className="block text-gray-400">Mission
         <select className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={item.mission} onChange={(event) => { item.mission = event.target.value; bump() }}>
@@ -78,6 +84,9 @@ function TechnoFields({
       )}
       {item.upgrade1 !== undefined && (
         <>
+          <label className="block text-gray-400">Spotlight
+            <input className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={item.spotlight ?? '0'} onChange={(event) => { item.spotlight = event.target.value; bump() }} />
+          </label>
           <label className="block text-gray-400">Upgrade 1
             <input className="mt-0.5 w-full rounded bg-gray-800 px-1 py-1" value={item.upgrade1} onChange={(event) => { item.upgrade1 = event.target.value; bump() }} />
           </label>
@@ -93,25 +102,34 @@ function TechnoFields({
   )
 }
 
-const ObjectInspector: React.FC<ObjectInspectorProps> = ({ doc, selected, bump }) => {
+const ObjectInspector: React.FC<ObjectInspectorProps> = ({ doc, selected, bump, foundations = {} }) => {
   const { t } = useLocale()
   if (!selected) return <p className="text-xs text-gray-500">选择格子以编辑对象属性。</p>
   const bumpDoc = () => bump(doc)
-  const houses = doc.houses.map((house) => house.name)
-  const tags = doc.tags.map((tag) => ({ id: tag.id, name: tag.name }))
   const unit = doc.units.find((item) => item.rx === selected.rx && item.ry === selected.ry)
-  const inf = doc.infantry.find((item) => item.rx === selected.rx && item.ry === selected.ry)
+  const infantry = doc.infantry.filter((item) => item.rx === selected.rx && item.ry === selected.ry)
   const air = doc.aircraft.find((item) => item.rx === selected.rx && item.ry === selected.ry)
-  const building = doc.structures.find((item) => item.rx === selected.rx && item.ry === selected.ry)
+  const building = structureAt(doc, selected.rx, selected.ry, foundations)
+    ?? doc.structures.find((item) => item.rx === selected.rx && item.ry === selected.ry)
   const terrain = doc.terrains.find((item) => item.rx === selected.rx && item.ry === selected.ry)
   const waypoint = doc.waypoints.find((item) => item.rx === selected.rx && item.ry === selected.ry)
-  if (!unit && !inf && !air && !building && !terrain && !waypoint) {
-    return <p className="text-xs text-gray-500">此格没有对象。</p>
+  const houses = [...new Set([
+    ...doc.houses.map((house) => house.name),
+    unit?.owner,
+    air?.owner,
+    building?.owner,
+    ...infantry.map((item) => item.owner),
+  ].filter((name): name is string => Boolean(name)))]
+  const tags = doc.tags.map((tag) => ({ id: tag.id, name: tag.name }))
+  if (!unit && infantry.length === 0 && !air && !building && !terrain && !waypoint) {
+    return <p className="text-xs text-gray-500">此格没有对象。用地图树「无」点选步兵或建筑。</p>
   }
   return (
     <div className="space-y-3" data-testid="map-object-inspector">
       {unit && <TechnoFields item={unit} houses={houses} tags={tags} bump={bumpDoc} />}
-      {inf && <TechnoFields item={inf} houses={houses} tags={tags} bump={bumpDoc} />}
+      {infantry.map((item) => (
+        <TechnoFields key={item.id} item={item} houses={houses} tags={tags} bump={bumpDoc} />
+      ))}
       {air && <TechnoFields item={air} houses={houses} tags={tags} bump={bumpDoc} />}
       {building && <TechnoFields item={building} houses={houses} tags={tags} bump={bumpDoc} />}
       {terrain && (

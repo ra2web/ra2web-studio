@@ -12,7 +12,11 @@ import { Fa2Tube, nextTubeId } from '../../data/map/fa2Tube'
 import { runUserScript, createBrowserUserScriptUi } from '../../data/map/fa2UserScript'
 import { emptyHideView, hideFieldAt, hideTileSetAt, showAllFields, showAllTileSets } from '../../data/map/fa2Hide'
 import { applyLatAt } from '../../data/map/lat'
-import { addMapHouse, deleteMapHouse, prepareHouses } from '../../data/map/fa2Houses'
+import { addMapHouse, deleteMapHouse } from '../../data/map/fa2Houses'
+import { allocateInfantrySubCell } from '../../data/map/fa2Infantry'
+import { canPlaceStructure, structureAt } from '../../data/map/fa2Occupy'
+import { FA2_DEFAULT_FACING } from '../../data/map/fa2Facing'
+import { deleteWaypointAt, placeFa2Waypoint } from '../../data/map/fa2Waypoint'
 import { MapCommandStack, flattenHeight, paintHeight, paintTile } from '../../data/map/MapCommandStack'
 import { MapDocument, createMapObjectId } from '../../data/map/MapDocument'
 import { applyOreBrush, clearOverlay, OBJECT_TOOLS, placeRandomTerrain, placeVeinhole, placeVeins, type MapEditorTool } from '../../data/map/mapTools'
@@ -78,6 +82,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [panY, setPanY] = useState(40)
   const [scale, setScale] = useState(0.45)
   const [selected, setSelected] = useState<{ rx: number; ry: number } | null>(null)
+  const [objectPropsCollapsed, setObjectPropsCollapsed] = useState(false)
   const [hover, setHover] = useState<{ rx: number; ry: number } | null>(null)
   const [logicTab, setLogicTab] = useState<LogicTab>('basic')
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false)
@@ -118,6 +123,8 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const copyRangeRef = useRef<{ start: { rx: number; ry: number }; end: { rx: number; ry: number } } | null>(null)
   const clipboardRef = useRef<MapClipboard | null>(null)
   const pasteOnceRef = useRef(false)
+  const waypointNumberRef = useRef<number | null>(null)
+  const waypointEraseRef = useRef(false)
   const doc = session.document
 
   const bump = useCallback((next: MapDocument) => {
@@ -174,8 +181,10 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         ?? await resourceContext.resolveFileFromOverlay('rules.ini')
       if (cancelled || !file) return
       const text = file.readAsString()
+      const artFile = await resourceContext.resolveFileFromOverlay('artmd.ini')
+        ?? await resourceContext.resolveFileFromOverlay('art.ini')
       setRulesLists(parseRulesObjectLists(text))
-      setFoundations(parseBuildingFoundations(text))
+      setFoundations(parseBuildingFoundations(text, artFile?.readAsString()))
     })()
     return () => { cancelled = true }
   }, [resourceContext])
@@ -291,32 +300,40 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         clearOverlay(working, rx, ry, brush)
         refreshTrailsAround(working, rx, ry)
         break
-      case 'infantry':
+      case 'infantry': {
+        const here = working.infantry.filter((item) => item.rx === rx && item.ry === ry)
+        const subCell = allocateInfantrySubCell(here)
+        if (subCell == null) break
         working.infantry.push({
           id: createMapObjectId(), owner, name: objectName, health: 256, rx, ry,
-          direction: 0, mission: 'Guard', tag: 'none', veterancy: 0, group: -1,
-          onBridge: false, recruitable: false, aiRecruitable: false, subCell: 0, extra: [],
+          direction: FA2_DEFAULT_FACING, mission: 'Guard', tag: 'none', veterancy: 0, group: -1,
+          onBridge: false, recruitable: false, aiRecruitable: false, subCell, extra: [],
         })
         break
+      }
       case 'unit':
+        if (working.units.some((item) => item.rx === rx && item.ry === ry)) break
         working.units.push({
           id: createMapObjectId(), owner, name: objectName, health: 256, rx, ry,
-          direction: 64, mission: 'Guard', tag: 'none', veterancy: 0, group: -1,
+          direction: FA2_DEFAULT_FACING, mission: 'Guard', tag: 'none', veterancy: 0, group: -1,
           onBridge: false, recruitable: false, aiRecruitable: false, extra: [],
         })
         break
       case 'aircraft':
+        if (working.aircraft.some((item) => item.rx === rx && item.ry === ry)) break
         working.aircraft.push({
           id: createMapObjectId(), owner, name: objectName, health: 256, rx, ry,
-          direction: 64, mission: 'Guard', tag: 'none', veterancy: 0, group: -1,
+          direction: FA2_DEFAULT_FACING, mission: 'Guard', tag: 'none', veterancy: 0, group: -1,
           onBridge: false, recruitable: false, aiRecruitable: false, extra: [],
         })
         break
       case 'structure':
+        if (!canPlaceStructure(working, rx, ry, objectName, foundations)) break
         working.structures.push({
           id: createMapObjectId(), owner, name: objectName, health: 256, rx, ry,
-          direction: 0, mission: 'Guard', tag: 'none', veterancy: 0, group: -1,
-          onBridge: false, recruitable: false, aiRecruitable: false, poweredOn: true, extra: [],
+          direction: FA2_DEFAULT_FACING, mission: 'Guard', tag: 'none', veterancy: 0, group: -1,
+          onBridge: false, recruitable: false, aiRecruitable: false, poweredOn: true,
+          upgradeCount: 0, spotlight: '0', upgrade1: 'none', upgrade2: 'none', upgrade3: 'none', extra: [],
         })
         break
       case 'terrain':
@@ -329,23 +346,34 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         working.smudges.push({ id: createMapObjectId(), name: objectName, rx, ry, extra: 0 })
         break
       case 'waypoint': {
-        const nextNumber = working.waypoints.reduce((max, item) => Math.max(max, item.number), -1) + 1
-        working.waypoints.push({ number: nextNumber, rx, ry })
+        if (waypointEraseRef.current) {
+          deleteWaypointAt(working, rx, ry)
+          break
+        }
+        const requested = waypointNumberRef.current
+        const result = placeFa2Waypoint(working, rx, ry, requested == null ? {} : { startNumber: requested })
+        if (result.placed && requested != null && result.number != null) {
+          waypointNumberRef.current = result.number
+        }
         break
       }
       case 'celltag':
         if (working.tags[0]) working.cellTags.push({ rx, ry, tagId: working.tags[0].id })
         break
-      case 'eraseObject':
+      case 'eraseObject': {
+        const building = structureAt(working, rx, ry, foundations)
         working.units = working.units.filter((item) => !(item.rx === rx && item.ry === ry))
         working.infantry = working.infantry.filter((item) => !(item.rx === rx && item.ry === ry))
         working.aircraft = working.aircraft.filter((item) => !(item.rx === rx && item.ry === ry))
-        working.structures = working.structures.filter((item) => !(item.rx === rx && item.ry === ry))
+        working.structures = working.structures.filter((item) => (
+          item !== building && !(item.rx === rx && item.ry === ry)
+        ))
         working.terrains = working.terrains.filter((item) => !(item.rx === rx && item.ry === ry))
         working.smudges = working.smudges.filter((item) => !(item.rx === rx && item.ry === ry))
         working.waypoints = working.waypoints.filter((item) => !(item.rx === rx && item.ry === ry))
         working.cellTags = working.cellTags.filter((item) => !(item.rx === rx && item.ry === ry))
         break
+      }
       case 'tube':
         if (!tubeStartRef.current) {
           tubeStartRef.current = { rx, ry }
@@ -425,7 +453,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     }
     setSelected({ rx, ry })
     bump(working)
-  }, [autoLat, bridgeKind, brush, brushH, brushW, bump, doc, heightRect, objectName, oreRandom, overlayDataValue, overlayId, owner, rulesLists.terrain, slopeCorrection, theaterArt, tileNum, tool, tubeBidirectional])
+  }, [autoLat, bridgeKind, brush, brushH, brushW, bump, doc, foundations, heightRect, objectName, oreRandom, overlayDataValue, overlayId, owner, rulesLists.terrain, slopeCorrection, theaterArt, tileNum, tool, tubeBidirectional])
 
   const strokeRef = useRef<{ commit: () => void } | null>(null)
   const handleStrokeStart = useCallback(() => {
@@ -469,11 +497,8 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   }, [bump, doc])
 
   const handlePick = useCallback((pick: MapViewportPick) => {
+    if (pick.longPress) return
     setSelected({ rx: pick.rx, ry: pick.ry })
-    if (pick.longPress) {
-      setLogicTab('basic')
-      setLogicOpen(true)
-    }
   }, [])
 
   const iniSections = useMemo(
@@ -499,6 +524,10 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const handleTreeSelect = (id: string, action: ObjectTreeAction) => {
     setTreeNodeId(id)
     setTool(action.tool)
+    waypointEraseRef.current = action.tool === 'waypoint' && Boolean(action.waypointErase)
+    waypointNumberRef.current = action.tool === 'waypoint' && action.waypointNumber != null && !action.waypointErase
+      ? action.waypointNumber
+      : null
     if (action.objectName) setObjectName(action.objectName)
     if (action.overlayId != null) setOverlayId(action.overlayId)
     if (action.overlayData != null) setOverlayDataValue(action.overlayData)
@@ -544,6 +573,21 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     const overlay = doc.getOverlay(selected.rx, selected.ry)
     return `${selected.rx},${selected.ry}  h=${cell.height}  tile=${cell.tileNum}  ov=${overlay.id === EMPTY_OVERLAY ? '-' : overlay.id}`
   }, [doc, selected, t, revision])
+
+  const selectedHasObject = useMemo(() => {
+    if (!selected) return false
+    if (doc.units.some((item) => item.rx === selected.rx && item.ry === selected.ry)) return true
+    if (doc.infantry.some((item) => item.rx === selected.rx && item.ry === selected.ry)) return true
+    if (doc.aircraft.some((item) => item.rx === selected.rx && item.ry === selected.ry)) return true
+    if (doc.structures.some((item) => item.rx === selected.rx && item.ry === selected.ry)) return true
+    if (doc.terrains.some((item) => item.rx === selected.rx && item.ry === selected.ry)) return true
+    if (doc.waypoints.some((item) => item.rx === selected.rx && item.ry === selected.ry)) return true
+    return Boolean(structureAt(doc, selected.rx, selected.ry, foundations))
+  }, [doc, foundations, selected, revision])
+
+  useEffect(() => {
+    setObjectPropsCollapsed(false)
+  }, [selected?.rx, selected?.ry])
 
   const editor = (
     <div
@@ -656,6 +700,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             theater={theaterArt?.index}
             rulesLists={rulesLists}
             selectedId={treeNodeId}
+            multiplayerOnly={doc.basic.multiplayerOnly}
             onSelect={handleTreeSelect}
           />
         </aside>
@@ -706,6 +751,34 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             }}
           />
           <div className="pointer-events-none absolute left-2 top-2 rounded bg-black/60 px-2 py-1 text-xs">{selectedInfo}</div>
+          {selected && selectedHasObject && (
+            <div className="absolute right-2 top-2 z-20 max-h-[70%] w-56 overflow-y-auto rounded border border-gray-700 bg-gray-900/95 p-2 shadow-lg" data-testid="map-object-props">
+              <div className="mb-1 flex items-center gap-1">
+                <div className="min-w-0 flex-1 text-[11px] font-medium text-gray-300">{t('mapEditor.objectProps')}</div>
+                <button
+                  type="button"
+                  className="rounded px-1.5 py-0.5 text-[11px] text-gray-300 hover:bg-gray-800"
+                  onClick={() => setObjectPropsCollapsed((open) => !open)}
+                  data-testid="map-object-props-collapse"
+                  aria-expanded={!objectPropsCollapsed}
+                >
+                  {objectPropsCollapsed ? t('mapEditor.objectPropsExpand') : t('mapEditor.objectPropsCollapse')}
+                </button>
+                <button
+                  type="button"
+                  className="rounded px-1.5 py-0.5 text-[11px] text-gray-300 hover:bg-gray-800"
+                  onClick={() => setSelected(null)}
+                  data-testid="map-object-props-close"
+                  aria-label={t('mapEditor.objectPropsClose')}
+                >
+                  {t('mapEditor.objectPropsClose')}
+                </button>
+              </div>
+              {!objectPropsCollapsed && (
+                <ObjectInspector doc={doc} selected={selected} bump={bump} foundations={foundations} />
+              )}
+            </div>
+          )}
           {theaterArtReady && !theaterArt && (
             <div
               className="pointer-events-none absolute left-2 top-10 max-w-sm rounded bg-amber-900/80 px-2 py-1 text-xs text-amber-100"
@@ -846,7 +919,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                 {validateMap(doc).map((issue) => <li key={`${issue.code}-${issue.message}`}>{issue.message}</li>)}
               </ul>
               <div className="text-xs font-medium text-gray-300">{t('mapEditor.objectProps')}</div>
-              <ObjectInspector doc={doc} selected={selected} bump={bump} />
+              <ObjectInspector doc={doc} selected={selected} bump={bump} foundations={foundations} />
               <div className="pt-2 text-xs font-medium text-gray-300">Basic flags</div>
               {([
                 'multiplayerOnly', 'official', 'skipScore', 'oneTimeOnly', 'skipMapSelect', 'endOfGame',

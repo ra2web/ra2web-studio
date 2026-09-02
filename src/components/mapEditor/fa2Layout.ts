@@ -56,6 +56,7 @@ export type ObjectTreeAction = {
   overlayData?: number
   objectName?: string
   waypointNumber?: number
+  waypointErase?: boolean
   brush?: number
   bridgeKind?: BridgeKind
 }
@@ -106,6 +107,7 @@ export function buildObjectToolTree(args: {
   terrain: string[]
   smudges: string[]
   overlays: string[]
+  multiplayerOnly?: boolean
 }): ObjectTreeNode[] {
   const groundKeys = [
     ['clear', 'treeGroundClear', 'ClearTile'],
@@ -132,18 +134,21 @@ export function buildObjectToolTree(args: {
       labelKey: 'treeWaypoints',
       children: [
         { id: 'waypoint-create', labelKey: 'toolWaypoint', action: { tool: 'waypoint' } },
-        { id: 'waypoint-delete', labelKey: 'treeDeleteWaypoint', action: { tool: 'eraseObject' } },
+        { id: 'waypoint-delete', labelKey: 'treeDeleteWaypoint', action: { tool: 'waypoint', waypointErase: true } },
       ],
     },
     {
       id: 'startpoints',
       labelKey: 'treeStartpoints',
-      children: Array.from({ length: 8 }, (_, index) => ({
-        id: `start-${index}`,
-        labelKey: 'treeStartPlayer',
-        label: String(index),
-        action: { tool: 'waypoint', waypointNumber: index },
-      })),
+      children: [
+        ...Array.from({ length: args.multiplayerOnly === false ? 1 : 8 }, (_, index) => ({
+          id: `start-${index}`,
+          labelKey: 'treeStartPlayer',
+          label: String(index + 1),
+          action: { tool: 'waypoint' as const, waypointNumber: index },
+        })),
+        { id: 'start-delete', labelKey: 'treeDeleteStartpoint', action: { tool: 'waypoint', waypointErase: true } },
+      ],
     },
     {
       id: 'infantry',
