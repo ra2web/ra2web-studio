@@ -15,6 +15,7 @@ import {
   overlayIndex,
   type MapTheater,
 } from './constants'
+import { createMultiplayerStartWaypoints } from './fa2Waypoint'
 import { forEachIsoCell, isoSizeOf, parseWaypointCell, waypointCell } from './isoCoords'
 import { MapIni, type MapIniEntry } from './MapIni'
 import {
@@ -264,16 +265,7 @@ export class MapDocument {
     ))
     doc.countries = houseNames.slice()
     if (doc.basic.multiplayerOnly) {
-      const centerRx = Math.floor(options.width / 2) + 1
-      const centerRy = Math.floor(options.height / 2) + 1
-      const offsets = [
-        [0, 0], [8, 0], [0, 8], [-8, 0], [0, -8], [8, 8], [-8, 8], [8, -8],
-      ]
-      doc.waypoints = offsets.slice(0, 8).map((offset, index) => ({
-        number: index,
-        rx: Math.max(1, centerRx + offset[0]),
-        ry: Math.max(1, centerRy + offset[1]),
-      }))
+      doc.waypoints = createMultiplayerStartWaypoints(options.width, options.height)
     }
     doc.rebuildPreview()
     return doc

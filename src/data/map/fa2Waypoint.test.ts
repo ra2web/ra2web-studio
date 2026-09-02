@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { MapDocument } from './MapDocument'
+import { isValidIsoCell } from './isoCoords'
 import {
+  createMultiplayerStartWaypoints,
   deleteWaypointAt,
   FA2_SP_HOME_WAYPOINT,
   FA2_SP_HOME_WAYPOINT_NEXT,
@@ -12,6 +14,36 @@ import {
 function mpDoc(): MapDocument {
   return MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE', multiplayer: true })
 }
+
+describe('createMultiplayerStartWaypoints', () => {
+  it('places FA2 4x2 cluster at isoSize/2 and stays on the map', () => {
+    for (const size of [16, 50] as const) {
+      const isoSize = size + size
+      const mid = Math.trunc(isoSize / 2)
+      const waypoints = createMultiplayerStartWaypoints(size, size)
+      expect(waypoints.map((item) => item.number)).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
+      expect(waypoints.map((item) => ({ rx: item.rx, ry: item.ry }))).toEqual([
+        { rx: mid, ry: mid },
+        { rx: mid + 1, ry: mid },
+        { rx: mid + 2, ry: mid },
+        { rx: mid + 3, ry: mid },
+        { rx: mid, ry: mid + 1 },
+        { rx: mid + 1, ry: mid + 1 },
+        { rx: mid + 2, ry: mid + 1 },
+        { rx: mid + 3, ry: mid + 1 },
+      ])
+      expect(waypoints.every((item) => isValidIsoCell(item.rx, item.ry, size, size))).toBe(true)
+      expect(waypoints.some((item) => Math.abs(item.rx - mid) >= 8 || Math.abs(item.ry - mid) >= 8)).toBe(false)
+    }
+  })
+
+  it('clamps an off-diamond cell onto a valid unused tile', () => {
+    const waypoints = createMultiplayerStartWaypoints(16, 24)
+    expect(waypoints).toHaveLength(8)
+    expect(new Set(waypoints.map((item) => `${item.rx},${item.ry}`)).size).toBe(8)
+    expect(waypoints.every((item) => isValidIsoCell(item.rx, item.ry, 16, 24))).toBe(true)
+  })
+})
 
 describe('placeFa2Waypoint', () => {
   it('moves an existing start waypoint instead of appending a new id', () => {

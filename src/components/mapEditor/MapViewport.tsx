@@ -14,6 +14,7 @@ import type { ObjectSpriteKind } from '../../data/map/fa2Facing'
 import type { BuildingFoundation } from '../../data/map/rulesObjects'
 import { emptyHideView, isCellHidden, type MapHideView } from '../../data/map/fa2Hide'
 import { followWorldAtClient, worldFromCanvasClient, zoomAroundClient } from '../../data/map/viewportZoom'
+import { fa2MapBoundRects, strokeFa2MapBounds } from '../../data/map/fa2MapBounds'
 
 export type MapViewportPick = {
   rx: number
@@ -407,6 +408,8 @@ const MapViewport: React.FC<MapViewportProps> = ({
       })
       wctx.stroke()
     }
+
+    strokeFa2MapBounds(wctx, fa2MapBoundRects(doc), scale)
 
     wctx.restore()
     worldBlitRef.current = { bufX, bufY, bufW, bufH }

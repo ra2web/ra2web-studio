@@ -227,6 +227,47 @@ describe('MapViewport touch', () => {
     }
   })
 
+  it('draws FA2 red valid-area and blue visible-area bounds', () => {
+    const colors: string[] = []
+    const proto = HTMLCanvasElement.prototype as { getContext: (type: string) => CanvasRenderingContext2D | null }
+    const origGetContext = proto.getContext
+    proto.getContext = function (this: HTMLCanvasElement, type: string) {
+      const ctx = origGetContext.call(this, type) as (CanvasRenderingContext2D & { __boundSpy?: boolean }) | null
+      if (ctx && !ctx.__boundSpy) {
+        ctx.__boundSpy = true
+        const origStroke = ctx.strokeRect.bind(ctx)
+        ctx.strokeRect = (...args: Parameters<CanvasRenderingContext2D['strokeRect']>) => {
+          colors.push(String(ctx.strokeStyle))
+          return origStroke(...args)
+        }
+      }
+      return ctx
+    }
+    try {
+      const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE', multiplayer: true })
+      renderWithProviders(
+        <div style={{ width: 2000, height: 2000 }}>
+          <MapViewport
+            document={doc}
+            tool="select"
+            brush={1}
+            panX={0}
+            panY={0}
+            scale={1}
+            onPanChange={vi.fn()}
+            onScaleChange={vi.fn()}
+            onPaint={vi.fn()}
+            onPick={vi.fn()}
+          />
+        </div>,
+      )
+      expect(colors).toContain('#ff0000')
+      expect(colors).toContain('#0000ff')
+    } finally {
+      proto.getContext = origGetContext
+    }
+  })
+
   it('reports hover cell on pointer move without painting', () => {
     const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
     const onHover = vi.fn()

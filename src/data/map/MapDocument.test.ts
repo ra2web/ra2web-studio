@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { EMPTY_OVERLAY, THEATERS, validateMapSize } from './constants'
-import { forEachIsoCell, projectCell, unprojectCell } from './isoCoords'
+import { forEachIsoCell, isValidIsoCell, projectCell, unprojectCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
 import { defaultTeamType } from './types'
 import { MapCommandStack, paintHeight, paintTile } from './MapCommandStack'
@@ -42,6 +42,8 @@ describe('MapDocument', () => {
     expect(doc.height).toBe(32)
     expect(doc.basic.multiplayerOnly).toBe(true)
     expect(doc.waypoints.map((item) => item.number).sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
+    expect(doc.waypoints.every((item) => isValidIsoCell(item.rx, item.ry, 32, 32))).toBe(true)
+    expect(doc.waypoints[0]).toMatchObject({ number: 0, rx: 32, ry: 32 })
     expect(doc.houses.some((house) => house.name === 'YuriCountry')).toBe(true)
     expect(THEATERS).toContain(doc.theater)
   })

@@ -1,11 +1,55 @@
 import type { MapDocument } from './MapDocument'
 import type { MapWaypoint } from './types'
+import { isoSizeOf, isValidIsoCell } from './isoCoords'
 
 /** FA2 多人出生点是 `[Waypoints]` 的 0–7；Player 1 = waypoint 0。 */
 export const FA2_START_WAYPOINT_COUNT = 8
 /** FA2 单人图点击出生点写入的 HomeCell。 */
 export const FA2_SP_HOME_WAYPOINT = 98
 export const FA2_SP_HOME_WAYPOINT_NEXT = 99
+
+/**
+ * FA2 新建多人图：`midx = midy = GetIsoSize()/2`，0–7 排成 4×2。
+ * 无效格（极小图/非方图）落到最近的空闲有效格。
+ */
+export function createMultiplayerStartWaypoints(width: number, height: number): MapWaypoint[] {
+  const isoSize = isoSizeOf(width, height)
+  const mid = Math.trunc(isoSize / 2)
+  const used = new Set<string>()
+  const waypoints: MapWaypoint[] = []
+  for (let row = 0; row < 2; row += 1) {
+    for (let col = 0; col < 4; col += 1) {
+      const cell = clampStartCell(mid + col, mid + row, width, height, used)
+      used.add(`${cell.rx},${cell.ry}`)
+      waypoints.push({ number: row * 4 + col, rx: cell.rx, ry: cell.ry })
+    }
+  }
+  return waypoints
+}
+
+function clampStartCell(
+  rx: number,
+  ry: number,
+  width: number,
+  height: number,
+  used: Set<string>,
+): { rx: number; ry: number } {
+  const key = (x: number, y: number) => `${x},${y}`
+  if (isValidIsoCell(rx, ry, width, height) && !used.has(key(rx, ry))) return { rx, ry }
+  const limit = width + height
+  for (let radius = 1; radius <= limit; radius += 1) {
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue
+        const nx = rx + dx
+        const ny = ry + dy
+        if (!isValidIsoCell(nx, ny, width, height) || used.has(key(nx, ny))) continue
+        return { rx: nx, ry: ny }
+      }
+    }
+  }
+  return { rx, ry }
+}
 
 export function nextFreeWaypointNumber(waypoints: MapWaypoint[]): number {
   const used = new Set(waypoints.map((item) => item.number))
