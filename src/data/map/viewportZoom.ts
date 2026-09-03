@@ -1,5 +1,8 @@
+import { projectCell } from './isoCoords'
+
 export const VIEWPORT_SCALE_MIN = 0.25
 export const VIEWPORT_SCALE_MAX = 4
+export const DEFAULT_VIEWPORT_SCALE = 0.45
 
 export function clampViewportScale(scale: number): number {
   return Math.min(VIEWPORT_SCALE_MAX, Math.max(VIEWPORT_SCALE_MIN, scale))
@@ -54,4 +57,29 @@ export function worldFromCanvasClient(
     x: (clientX - panX) / scale,
     y: (clientY - panY) / scale,
   }
+}
+
+export function panToCenterWorld(
+  worldX: number,
+  worldY: number,
+  viewWidth: number,
+  viewHeight: number,
+  scale: number,
+): { panX: number; panY: number } {
+  return {
+    panX: viewWidth / 2 - worldX * scale,
+    panY: viewHeight / 2 - worldY * scale,
+  }
+}
+
+/** FA2 `CIsoView::UpdateDialog(bRepos)`：打开地图时把 `isoSize/2` 格放到视口中心。 */
+export function panToMapCenter(
+  isoSize: number,
+  viewWidth: number,
+  viewHeight: number,
+  scale: number,
+): { panX: number; panY: number } {
+  const mid = Math.trunc(isoSize / 2)
+  const origin = projectCell(mid, mid, 0, isoSize)
+  return panToCenterWorld(origin.px, origin.py, viewWidth, viewHeight, scale)
 }

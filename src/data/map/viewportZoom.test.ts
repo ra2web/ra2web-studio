@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { followWorldAtClient, worldFromCanvasClient, zoomAroundClient } from './viewportZoom'
+import { projectCell } from './isoCoords'
+import { followWorldAtClient, panToMapCenter, worldFromCanvasClient, zoomAroundClient } from './viewportZoom'
 
 describe('zoomAroundClient', () => {
   it('keeps the world point under the cursor after zoom', () => {
@@ -36,5 +37,21 @@ describe('followWorldAtClient', () => {
     const under = worldFromCanvasClient(220, 160, next.panX, next.panY, next.scale)
     expect(under.x).toBeCloseTo(worldX)
     expect(under.y).toBeCloseTo(worldY)
+  })
+})
+
+describe('panToMapCenter', () => {
+  it('puts the isoSize/2 cell at the viewport center', () => {
+    const isoSize = 32
+    const scale = 0.45
+    const viewWidth = 800
+    const viewHeight = 600
+    const pan = panToMapCenter(isoSize, viewWidth, viewHeight, scale)
+    const origin = projectCell(16, 16, 0, isoSize)
+    const world = worldFromCanvasClient(viewWidth / 2, viewHeight / 2, pan.panX, pan.panY, scale)
+    expect(world.x).toBeCloseTo(origin.px)
+    expect(world.y).toBeCloseTo(origin.py)
+    expect(pan.panX).not.toBe(80)
+    expect(pan.panY).not.toBe(40)
   })
 })

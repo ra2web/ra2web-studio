@@ -2644,13 +2644,7 @@ const MixEditor: React.FC = () => {
     if (studioMode !== 'projects' || !activeProjectName) return
     if (projectSelection?.kind !== 'project-file') return
     const path = projectSelection.relativePath
-    setMapEditSession({
-      filePath: path,
-      original: '',
-      document: MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' }),
-      loading: true,
-      error: null,
-    })
+    setMapEditSession(null)
     setMapEditMode(true)
     try {
       const file = await ProjectService.readProjectFile(activeProjectName, path)
@@ -2667,7 +2661,6 @@ const MixEditor: React.FC = () => {
         error: null,
       })
     } catch (error: any) {
-      setMapEditSession((prev) => prev ? { ...prev, loading: false, error: error?.message ?? String(error) } : prev)
       await dialog.alert({
         message: t('mapEditor.loadFailed', { error: error?.message ?? String(error) }),
       })
@@ -4239,8 +4232,14 @@ const MixEditor: React.FC = () => {
         />
       )}
 
+      {mapEditMode && !mapEditSession && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-gray-950 text-sm text-gray-300" data-testid="map-editor-opening">
+          {t('mapEditor.opening')}
+        </div>
+      )}
       {mapEditMode && mapEditSession && (
         <MapEditor
+          key={mapEditSession.filePath}
           session={mapEditSession}
           onChange={(document) => {
             setMapEditSession((prev) => prev ? { ...prev, document } : prev)

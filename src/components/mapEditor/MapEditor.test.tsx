@@ -69,6 +69,11 @@ BibShape=GAPOWRB
 }
 
 describe('MapEditor', () => {
+  beforeAll(() => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 800 })
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 600 })
+  })
+
   it('renders FA2 tools and logic tabs', () => {
     renderWithProviders(
       <MapEditor session={makeSession()} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,

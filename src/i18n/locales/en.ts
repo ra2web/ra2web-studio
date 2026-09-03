@@ -797,6 +797,7 @@ export const en = {
     newMap: 'New map',
     newMapTitle: 'New FA2 map',
     editMap: 'Edit map',
+    opening: 'Opening map…',
     fileName: 'File name',
     mapName: 'Map name',
     width: 'Width',

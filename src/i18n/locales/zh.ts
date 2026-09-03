@@ -809,6 +809,7 @@ export const zh = {
     newMap: '新建地图',
     newMapTitle: '新建 FA2 地图',
     editMap: '编辑地图',
+    opening: '正在打开地图…',
     fileName: '文件名',
     mapName: '地图名称',
     width: '宽度',

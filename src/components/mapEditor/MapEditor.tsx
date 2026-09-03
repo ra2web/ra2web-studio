@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { EMPTY_OVERLAY } from '../../data/map/constants'
 import { applyShoreAt, placeCliffLine } from '../../data/map/cliffShore'
@@ -34,6 +34,7 @@ import { resizeMap } from '../../data/map/resizeMap'
 import { emptyRulesObjectLists, parseBuildingFoundations, parseRulesObjectLists, type BuildingFoundation, type RulesObjectLists } from '../../data/map/rulesObjects'
 import { TheaterArt } from '../../data/map/TheaterArt'
 import { projectCell } from '../../data/map/isoCoords'
+import { DEFAULT_VIEWPORT_SCALE, panToCenterWorld, panToMapCenter } from '../../data/map/viewportZoom'
 import type { ResourceContext } from '../../services/gameRes/ResourceContext'
 import { useLocale } from '../../i18n/LocaleContext'
 import AiTriggerPanel from './AiTriggerPanel'
@@ -88,9 +89,10 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [overlayDataValue, setOverlayDataValue] = useState(0)
   const [owner, setOwner] = useState('Neutral')
   const [objectName, setObjectName] = useState('E1')
-  const [panX, setPanX] = useState(80)
-  const [panY, setPanY] = useState(40)
-  const [scale, setScale] = useState(0.45)
+  const [scale, setScale] = useState(DEFAULT_VIEWPORT_SCALE)
+  const [panX, setPanX] = useState(0)
+  const [panY, setPanY] = useState(0)
+  const [viewPlaced, setViewPlaced] = useState(false)
   const [selected, setSelected] = useState<MapSelection | null>(null)
   const [objectPropsCollapsed, setObjectPropsCollapsed] = useState(true)
   const [objectNames, setObjectNames] = useState<ObjectNameLookup>(emptyObjectNameLookup)
@@ -126,7 +128,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [scriptReport, setScriptReport] = useState('')
   const [waypointSearch, setWaypointSearch] = useState('')
   const [selectionRect, setSelectionRect] = useState<MapCopyRect | null>(null)
-  const [viewSize, setViewSize] = useState({ w: 800, h: 600 })
+  const [viewSize, setViewSize] = useState({ w: 0, h: 0 })
   const viewRef = useRef<HTMLDivElement | null>(null)
   const tubeStartRef = useRef<{ rx: number; ry: number } | null>(null)
   const cliffStartRef = useRef<{ rx: number; ry: number } | null>(null)
@@ -160,10 +162,25 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
 
   const jumpToCell = useCallback((rx: number, ry: number) => {
     const origin = projectCell(rx, ry, 0, doc.isoSize)
-    setPanX(viewSize.w / 2 - origin.px * scale)
-    setPanY(viewSize.h / 2 - origin.py * scale)
+    const next = panToCenterWorld(origin.px, origin.py, viewSize.w, viewSize.h, scale)
+    setPanX(next.panX)
+    setPanY(next.panY)
     setSelected({ rx, ry })
   }, [doc.isoSize, scale, viewSize.h, viewSize.w])
+
+  const viewPlacedRef = useRef(false)
+  useLayoutEffect(() => {
+    if (session.loading || viewPlacedRef.current) return
+    const width = viewRef.current?.clientWidth ?? 0
+    const height = viewRef.current?.clientHeight ?? 0
+    if (width < 32 || height < 32) return
+    const next = panToMapCenter(doc.isoSize, width, height, scale)
+    setPanX(next.panX)
+    setPanY(next.panY)
+    setViewSize({ w: width, h: height })
+    viewPlacedRef.current = true
+    setViewPlaced(true)
+  }, [session.loading, viewSize.h, viewSize.w, scale, doc.isoSize])
 
   useEffect(() => {
     const names = doc.houses.map((house) => house.name)
@@ -230,11 +247,15 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   useEffect(() => {
     const el = viewRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
+    const commitSize = (width: number, height: number) => {
+      if (width < 32 || height < 32) return
+      setViewSize((prev) => (prev.w === width && prev.h === height ? prev : { w: width, h: height }))
+    }
     const observer = new ResizeObserver(() => {
-      setViewSize({ w: el.clientWidth, h: el.clientHeight })
+      commitSize(el.clientWidth, el.clientHeight)
     })
     observer.observe(el)
-    setViewSize({ w: el.clientWidth || 800, h: el.clientHeight || 600 })
+    commitSize(el.clientWidth, el.clientHeight)
     return () => observer.disconnect()
   }, [])
 
@@ -832,6 +853,8 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="relative min-h-0 min-w-0 flex-1" ref={viewRef}>
+          {viewPlaced && (
+          <div className="h-full w-full">
           <MapViewport
             document={doc}
             tool={tool}
@@ -878,6 +901,8 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
               setPanY(nextY)
             }}
           />
+          </div>
+          )}
           <div className="pointer-events-none absolute left-2 top-2 rounded bg-black/60 px-2 py-1 text-xs">{selectedInfo}</div>
           {selected && selectedHasObject && (
             <div className="absolute right-2 top-2 z-20 max-h-[70%] w-56 overflow-y-auto rounded border border-gray-700 bg-gray-900/95 p-2 shadow-lg" data-testid="map-object-props">
