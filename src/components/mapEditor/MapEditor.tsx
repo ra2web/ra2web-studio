@@ -115,7 +115,6 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const [bridgeKind, setBridgeKind] = useState<BridgeKind>('small')
   const [tubeBidirectional, setTubeBidirectional] = useState(true)
   const [oreRandom, setOreRandom] = useState(false)
-  const [heightRect, setHeightRect] = useState(false)
   const [slopeCorrection, setSlopeCorrection] = useState(true)
   const [resizeLeft, setResizeLeft] = useState(0)
   const [resizeTop, setResizeTop] = useState(0)
@@ -301,50 +300,66 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
       return brushGhostCells(brushGhosts, tool, origin, foundations, objectName)
     }
     if (tool === 'raise' || tool === 'lower' || tool === 'flatten' || tool === 'raiseTile' || tool === 'lowerTile') {
-      return heightBrushCells(origin, tool, brushW, brushH, brush, heightRect)
+      return heightBrushCells(origin, brushW, brushH)
     }
     const offsets = toolUsesBrush(tool)
       ? manhattanDiamondOffsets(brush)
       : [{ dx: 0, dy: 0 }]
     return offsets.map(({ dx, dy }) => ({ rx: origin.rx + dx, ry: origin.ry + dy }))
-  }, [brush, brushGhosts, brushH, brushW, foundations, heightRect, hover, objectName, selected, tool])
+  }, [brush, brushGhosts, brushH, brushW, foundations, hover, objectName, selected, tool])
 
-  const handlePaint = useCallback((rx: number, ry: number, extra?: { subCell?: number }) => {
+  const handlePaint = useCallback((rx: number, ry: number, extra?: { subCell?: number; ctrl?: boolean }) => {
     const working = doc
+    const lockHeightStroke = () => {
+      if (heightLockRef.current == null) heightLockRef.current = working.getCell(rx, ry).height
+      return heightLockRef.current
+    }
     switch (tool) {
-      case 'raise':
+      case 'raise': {
+        const lockHeight = lockHeightStroke()
         if (theaterArt?.index) {
           heightenGround(working, rx, ry, lookupFromTheater(theaterArt.index, theaterArt.tileShapeMap()), theaterArt.index, {
-            brush,
-            rect: heightRect,
+            brushW,
+            brushH,
             slopeCorrection,
+            lockHeight,
           })
         } else {
-          paintHeight(working, rx, ry, 1, brush, heightRect ? 'rect' : 'diamond')
+          paintHeight(working, rx, ry, 1, { w: brushW, h: brushH }, lockHeight)
         }
         break
-      case 'lower':
+      }
+      case 'lower': {
+        const lockHeight = lockHeightStroke()
         if (theaterArt?.index) {
           lowerGround(working, rx, ry, lookupFromTheater(theaterArt.index, theaterArt.tileShapeMap()), theaterArt.index, {
-            brush,
-            rect: heightRect,
+            brushW,
+            brushH,
             slopeCorrection,
+            lockHeight,
           })
         } else {
-          paintHeight(working, rx, ry, -1, brush, heightRect ? 'rect' : 'diamond')
+          paintHeight(working, rx, ry, -1, { w: brushW, h: brushH }, lockHeight)
         }
         break
+      }
       case 'raiseTile':
-        paintHeight(working, rx, ry, 1, brush, 'rect')
-        if (slopeCorrection && theaterArt?.index) createSlopesAround(working, rx, ry, theaterArt.index, brush)
+        paintHeight(working, rx, ry, 1, { w: brushW, h: brushH }, lockHeightStroke())
+        if (extra?.ctrl && theaterArt?.index) {
+          createSlopesAround(working, rx, ry, theaterArt.index, brushW, brushH, !slopeCorrection)
+        }
         break
       case 'lowerTile':
-        paintHeight(working, rx, ry, -1, brush, 'rect')
-        if (slopeCorrection && theaterArt?.index) createSlopesAround(working, rx, ry, theaterArt.index, brush)
+        paintHeight(working, rx, ry, -1, { w: brushW, h: brushH }, lockHeightStroke())
+        if (extra?.ctrl && theaterArt?.index) {
+          createSlopesAround(working, rx, ry, theaterArt.index, brushW, brushH, !slopeCorrection)
+        }
         break
       case 'flatten':
-        flattenHeight(working, rx, ry, brush)
-        if (slopeCorrection && theaterArt?.index) createSlopesAround(working, rx, ry, theaterArt.index, brush)
+        flattenHeight(working, rx, ry, { w: brushW, h: brushH }, lockHeightStroke())
+        if (slopeCorrection && theaterArt?.index) {
+          createSlopesAround(working, rx, ry, theaterArt.index, brushW, brushH)
+        }
         break
       case 'tile': {
         const shape = theaterArt?.tileShape(tileNum)
@@ -557,10 +572,12 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     setObjectPropsCollapsed(true)
     setSelected({ rx, ry, subCell: extra?.subCell })
     bump(working)
-  }, [autoLat, bridgeKind, brush, brushH, brushW, bump, doc, foundations, heightRect, objectName, oreRandom, overlayDataValue, overlayId, owner, rulesLists.terrain, slopeCorrection, theaterArt, tileNum, tool, tubeBidirectional])
+  }, [autoLat, bridgeKind, brush, brushH, brushW, bump, doc, foundations, objectName, oreRandom, overlayDataValue, overlayId, owner, rulesLists.terrain, slopeCorrection, theaterArt, tileNum, tool, tubeBidirectional])
 
   const strokeRef = useRef<{ commit: () => void } | null>(null)
+  const heightLockRef = useRef<number | null>(null)
   const handleStrokeStart = useCallback(() => {
+    heightLockRef.current = null
     pasteOnceRef.current = false
     if (tool === 'copy') {
       copyRangeRef.current = null
@@ -597,6 +614,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const handleStrokeEnd = useCallback(() => {
     strokeRef.current?.commit()
     strokeRef.current = null
+    heightLockRef.current = null
     doc.rebuildPreview()
     bump(doc)
   }, [bump, doc])
@@ -821,6 +839,12 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
                 <input type="checkbox" checked={tubeBidirectional} onChange={(event) => setTubeBidirectional(event.target.checked)} data-testid="map-tube-bidirectional" />
                 {t('mapEditor.tubeBidirectional')}
               </label>
+            )}
+            {(tool === 'raise' || tool === 'lower') && (
+              <span className="text-[11px] text-amber-200">{t('mapEditor.raiseHint')}</span>
+            )}
+            {(tool === 'raiseTile' || tool === 'lowerTile') && (
+              <span className="text-[11px] text-amber-200" data-testid="map-raise-tile-hint">{t('mapEditor.raiseTileHint')}</span>
             )}
             {(tool === 'ore' || tool === 'gems') && (
               <label className="flex items-center gap-1 text-[11px] text-gray-400">
@@ -1248,10 +1272,6 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
               <label className="mt-2 flex items-center gap-2 text-xs text-gray-400">
                 <input type="checkbox" checked={autoLat} onChange={(event) => setAutoLat(event.target.checked)} />
                 {t('mapEditor.autoLat')}
-              </label>
-              <label className="flex items-center gap-2 text-xs text-gray-400">
-                <input type="checkbox" checked={heightRect} onChange={(event) => setHeightRect(event.target.checked)} data-testid="map-height-rect" />
-                {t('mapEditor.heightRect')}
               </label>
               <label className="flex items-center gap-2 text-xs text-gray-400">
                 <input type="checkbox" checked={slopeCorrection} onChange={(event) => setSlopeCorrection(event.target.checked)} data-testid="map-slope-correction" />

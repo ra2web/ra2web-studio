@@ -1,5 +1,5 @@
 import { MAX_UNDO_TERRAIN } from './constants'
-import { fa2CenteredRectOffsets, fa2PaintRectOffsets, manhattanDiamondOffsets } from './fa2Brush'
+import { fa2CenteredRectOffsets, fa2PaintRectOffsets } from './fa2Brush'
 import { MapDocument } from './MapDocument'
 import { cellKey } from './packs'
 import type { MapCell } from './types'
@@ -93,24 +93,24 @@ function restoreTerrain(doc: MapDocument, snapshot: TerrainSnapshot): void {
   doc.overlayData = new Uint8Array(snapshot.overlayData)
 }
 
-/** FA2 HeightenTile/LowerTile 用矩形 `m_BrushSize`；菱形是原有曼哈顿笔刷。 */
-export type HeightBrushShape = 'diamond' | 'rect'
-
 export function paintHeight(
   doc: MapDocument,
   rx: number,
   ry: number,
   delta: number,
-  brush = 1,
-  shape: HeightBrushShape = 'diamond',
+  brush: number | { w: number; h: number } = 1,
+  fromHeight?: number,
 ): void {
+  const w = typeof brush === 'number' ? brush : Math.max(1, brush.w)
+  const h = typeof brush === 'number' ? brush : Math.max(1, brush.h)
+  const target = fromHeight === undefined ? undefined : fromHeight + delta
   const bump = (cx: number, cy: number) => {
     const cell = doc.getCell(cx, cy)
-    cell.height = Math.max(0, Math.min(14, cell.height + delta))
+    if (fromHeight !== undefined && cell.height !== fromHeight) return
+    cell.height = Math.max(0, Math.min(14, target ?? cell.height + delta))
     doc.setCell(cell)
   }
-  const offsets = shape === 'rect' ? fa2CenteredRectOffsets(brush) : manhattanDiamondOffsets(brush)
-  for (const { dx, dy } of offsets) bump(rx + dx, ry + dy)
+  for (const { dx, dy } of fa2CenteredRectOffsets(w, h)) bump(rx + dx, ry + dy)
 }
 
 export function paintTile(
@@ -131,16 +131,20 @@ export function paintTile(
   }
 }
 
-export function flattenHeight(doc: MapDocument, rx: number, ry: number, brush = 1): void {
-  const base = doc.getCell(rx, ry).height
-  paintHeight(doc, rx, ry, 0, brush)
-  for (let dy = -brush + 1; dy < brush; dy++) {
-    for (let dx = -brush + 1; dx < brush; dx++) {
-      if (Math.abs(dx) + Math.abs(dy) >= brush) continue
-      const cell = doc.getCell(rx + dx, ry + dy)
-      cell.height = base
-      doc.setCell(cell)
-    }
+export function flattenHeight(
+  doc: MapDocument,
+  rx: number,
+  ry: number,
+  brush: number | { w: number; h: number } = 1,
+  lockHeight?: number,
+): void {
+  const w = typeof brush === 'number' ? brush : Math.max(1, brush.w)
+  const h = typeof brush === 'number' ? brush : Math.max(1, brush.h)
+  const base = lockHeight ?? doc.getCell(rx, ry).height
+  for (const { dx, dy } of fa2CenteredRectOffsets(w, h)) {
+    const cell = doc.getCell(rx + dx, ry + dy)
+    cell.height = base
+    doc.setCell(cell)
   }
 }
 

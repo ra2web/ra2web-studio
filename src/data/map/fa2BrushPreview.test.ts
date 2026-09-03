@@ -211,8 +211,18 @@ describe('brushGhostCells / heightBrushCells', () => {
     expect(brushGhostCells(ghosts, 'structure', origin, { GAPOWR: { w: 2, h: 3 } }, 'GAPOWR')).toHaveLength(6)
   })
 
-  it('keeps FA2 centered rect for raise-tile', () => {
-    expect(heightBrushCells({ rx: 10, ry: 10 }, 'raiseTile', 2, 2, 2, false)).toHaveLength(9)
-    expect(heightBrushCells({ rx: 10, ry: 10 }, 'raise', 1, 1, 1, false)).toEqual([{ rx: 10, ry: 10 }])
+  it('uses FA2 centered rx/ry rect for raise and raise-tile', () => {
+    expect(heightBrushCells({ rx: 10, ry: 10 }, 2, 2)).toHaveLength(9)
+    expect(heightBrushCells({ rx: 10, ry: 10 }, 1, 1)).toEqual([{ rx: 10, ry: 10 }])
+    expect(heightBrushCells({ rx: 10, ry: 10 }, 3, 1)).toEqual([
+      { rx: 9, ry: 10 },
+      { rx: 10, ry: 10 },
+      { rx: 11, ry: 10 },
+    ])
+    expect(heightBrushCells({ rx: 10, ry: 10 }, 1, 3)).toEqual([
+      { rx: 10, ry: 9 },
+      { rx: 10, ry: 10 },
+      { rx: 10, ry: 11 },
+    ])
   })
 })

@@ -1,5 +1,6 @@
 import { MAX_HEIGHT } from './constants'
-import { createSlopesAt } from './fa2Slopes'
+import { fa2CenteredRectOffsets } from './fa2Brush'
+import { createSlopesAt, createSlopesInRect } from './fa2Slopes'
 import { isValidIsoCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
 import { cellKey, emptyCell } from './packs'
@@ -12,17 +13,29 @@ export type HeightTileLookup = {
   shape(tileNum: number): { cx: number; cy: number; zHeight: (subTile: number) => number; terrainType: (subTile: number) => number }
 }
 
+export type HeightAffectRect = {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
 export type ChangeTileHeightOptions = {
   nonMorphableMove?: boolean
   onlyThisTile?: boolean
   noSlopes?: boolean
+  disableSlopeCorrection?: boolean
+  affected?: HeightAffectRect
 }
 
 export type HeightBrushOptions = {
   brush?: number
-  rect?: boolean
+  brushW?: number
+  brushH?: number
   onlyThisTile?: boolean
   slopeCorrection?: boolean
+  /** 同一笔划锁定的基准高度；不传则用落点当前高度。 */
+  lockHeight?: number
 }
 
 const DEFAULT_SHAPE = {
@@ -64,6 +77,14 @@ function peekCell(doc: MapDocument, rx: number, ry: number) {
   return doc.cells.get(cellKey(rx, ry)) ?? emptyCell(rx, ry)
 }
 
+function expandAffected(rect: HeightAffectRect | undefined, rx: number, ry: number): void {
+  if (!rect) return
+  if (rx < rect.left) rect.left = rx
+  if (ry < rect.top) rect.top = ry
+  if (rx > rect.right) rect.right = rx
+  if (ry > rect.bottom) rect.bottom = ry
+}
+
 function writeHeight(doc: MapDocument, rx: number, ry: number, height: number): void {
   if (!isValidIsoCell(rx, ry, doc.width, doc.height)) return
   const cell = doc.getCell(rx, ry)
@@ -97,6 +118,7 @@ export function changeTileHeight(
   const orig = peekCell(doc, rx, ry)
   const origGround = orig.tileNum === 0xffff ? 0 : orig.tileNum
   reserved.add(key)
+  expandAffected(options.affected, rx, ry)
 
   let nonMorphable = options.nonMorphableMove === true
   if (!lookup.morphable(origGround)) nonMorphable = true
@@ -160,44 +182,16 @@ export function changeTileHeight(
   if (!options.noSlopes) {
     for (let i = -1; i < 2; i++) {
       for (let e = -1; e < 2; e++) {
-        createSlopesAt(doc, rx + i, ry + e, theater)
+        createSlopesAt(doc, rx + i, ry + e, theater, options.disableSlopeCorrection === true)
       }
     }
   }
 }
 
-function brushOffsets(brush: number, rect: boolean): Array<{ dx: number; dy: number }> {
-  const out: Array<{ dx: number; dy: number }> = []
-  if (rect) {
-    const half = Math.floor(brush / 2)
-    for (let m = -half; m < half + 1; m++) {
-      for (let n = -half; n < half + 1; n++) out.push({ dx: m, dy: n })
-    }
-    return out
-  }
-  for (let dy = -brush + 1; dy < brush; dy++) {
-    for (let dx = -brush + 1; dx < brush; dx++) {
-      if (Math.abs(dx) + Math.abs(dy) >= brush) continue
-      out.push({ dx, dy })
-    }
-  }
-  return out
-}
-
-function slopeAround(doc: MapDocument, cells: Array<{ rx: number; ry: number }>, theater: TheaterIndex): void {
-  const seen = new Set<string>()
-  for (const cell of cells) {
-    for (let i = -1; i < 2; i++) {
-      for (let e = -1; e < 2; e++) {
-        const rx = cell.rx + i
-        const ry = cell.ry + e
-        const key = cellKey(rx, ry)
-        if (seen.has(key)) continue
-        seen.add(key)
-        createSlopesAt(doc, rx, ry, theater)
-      }
-    }
-  }
+function heightBrushSize(options: HeightBrushOptions): { w: number; h: number } {
+  const w = options.brushW ?? options.brush ?? 1
+  const h = options.brushH ?? options.brush ?? 1
+  return { w, h }
 }
 
 /** FA2 `ACTIONMODE_HEIGHTEN`：morphable 刷同高格，再 ChangeTileHeight。 */
@@ -233,19 +227,20 @@ function applyHeightMode(
   theater: TheaterIndex,
   options: HeightBrushOptions,
 ): void {
-  const brush = options.brush ?? 1
+  const { w, h } = heightBrushSize(options)
   const origin = peekCell(doc, rx, ry)
   const ground = origin.tileNum === 0xffff ? 0 : origin.tileNum
-  const offsets = brushOffsets(brush, options.rect === true)
+  const offsets = fa2CenteredRectOffsets(w, h)
+  const disableSlopeCorrection = options.slopeCorrection === false
+  const affected: HeightAffectRect = { left: rx, top: ry, right: rx, bottom: ry }
   if (lookup.morphable(ground)) {
-    const oheight = origin.height
+    const oheight = options.lockHeight ?? origin.height
     const target = oheight + delta
     for (const { dx, dy } of offsets) {
       const cell = peekCell(doc, rx + dx, ry + dy)
       const tileNum = cell.tileNum === 0xffff ? 0 : cell.tileNum
       if (lookup.morphable(tileNum) && cell.height === oheight) writeHeight(doc, rx + dx, ry + dy, target)
     }
-    const touched: Array<{ rx: number; ry: number }> = []
     for (const { dx, dy } of offsets) {
       const nx = rx + dx
       const ny = ry + dy
@@ -256,16 +251,19 @@ function applyHeightMode(
           nonMorphableMove: false,
           onlyThisTile: options.onlyThisTile === true,
           noSlopes: true,
+          disableSlopeCorrection,
+          affected,
         })
-        touched.push({ rx: nx, ry: ny })
       }
     }
-    if (options.slopeCorrection !== false) slopeAround(doc, touched.length ? touched : [{ rx, ry }], theater)
+    createSlopesInRect(doc, affected, theater, disableSlopeCorrection)
     return
   }
-  changeTileHeight(doc, rx, ry, origin.height + delta, lookup, theater, {
+  changeTileHeight(doc, rx, ry, (options.lockHeight ?? origin.height) + delta, lookup, theater, {
     nonMorphableMove: false,
     onlyThisTile: options.onlyThisTile !== true,
+    disableSlopeCorrection,
+    affected,
   })
 }
 

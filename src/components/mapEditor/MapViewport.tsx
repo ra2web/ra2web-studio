@@ -57,7 +57,7 @@ type MapViewportProps = {
   hideView?: MapHideView
   onPanChange: (panX: number, panY: number) => void
   onScaleChange: (scale: number) => void
-  onPaint: (rx: number, ry: number, extra?: { subCell?: number }) => void
+  onPaint: (rx: number, ry: number, extra?: { subCell?: number; ctrl?: boolean }) => void
   onPick: (pick: MapViewportPick) => void
   onMoveObject?: (move: Fa2DragMove) => void
   onHover?: (cell: { rx: number; ry: number; subCell?: number } | null) => void
@@ -100,6 +100,18 @@ function pinchMidpoint(pointers: Iterable<PointerState>, canvas: HTMLCanvasEleme
 function cellSubCell(doc: MapDocument, rx: number, ry: number, worldX: number, worldY: number): number {
   const origin = projectCell(rx, ry, doc.getCell(rx, ry).height, doc.isoSize)
   return infantrySubCellFromWorld(worldX, worldY, origin)
+}
+
+function paintExtra(
+  event: { ctrlKey: boolean; metaKey: boolean },
+  doc: MapDocument,
+  cell: { rx: number; ry: number },
+  world: { x: number; y: number },
+): { subCell: number; ctrl: boolean } {
+  return {
+    subCell: cellSubCell(doc, cell.rx, cell.ry, world.x, world.y),
+    ctrl: event.ctrlKey || event.metaKey,
+  }
 }
 
 function pickCell(doc: MapDocument, worldX: number, worldY: number): { rx: number; ry: number } | null {
@@ -722,14 +734,14 @@ const MapViewport: React.FC<MapViewportProps> = ({
       twoPointDownRef.current = { rx: cell.rx, ry: cell.ry }
       lastPaintRef.current = `${cell.rx},${cell.ry}`
       onStrokeStart?.()
-      onPaint(cell.rx, cell.ry, { subCell: cellSubCell(doc, cell.rx, cell.ry, world.x, world.y) })
+      onPaint(cell.rx, cell.ry, paintExtra(event, doc, cell, world))
       return
     }
     if (cell) {
       paintingRef.current = true
       lastPaintRef.current = `${cell.rx},${cell.ry}`
       onStrokeStart?.()
-      onPaint(cell.rx, cell.ry, { subCell: cellSubCell(doc, cell.rx, cell.ry, world.x, world.y) })
+      onPaint(cell.rx, cell.ry, paintExtra(event, doc, cell, world))
     }
   }
 
@@ -793,7 +805,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
     const key = `${cell.rx},${cell.ry}`
     if (lastPaintRef.current === key) return
     lastPaintRef.current = key
-    onPaint(cell.rx, cell.ry, { subCell: cellSubCell(doc, cell.rx, cell.ry, world.x, world.y) })
+    onPaint(cell.rx, cell.ry, paintExtra(event, doc, cell, world))
   }
 
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -825,7 +837,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
         const world = worldFromClient(canvas, event.clientX, event.clientY, panX, panY, scale)
         const cell = pickCell(doc, world.x, world.y)
         if (cell && (cell.rx !== down.rx || cell.ry !== down.ry)) {
-          onPaint(cell.rx, cell.ry, { subCell: cellSubCell(doc, cell.rx, cell.ry, world.x, world.y) })
+          onPaint(cell.rx, cell.ry, paintExtra(event, doc, cell, world))
         }
       }
       lastPaintRef.current = null

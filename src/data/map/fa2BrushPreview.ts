@@ -8,7 +8,7 @@ import {
   OVRL_VEINHOLEBORDER,
   OVRL_VEINS,
 } from './constants'
-import { fa2CenteredRectOffsets, fa2PaintRectOffsets, manhattanDiamondOffsets } from './fa2Brush'
+import { fa2CenteredRectOffsets, fa2PaintRectOffsets } from './fa2Brush'
 import { FA2_DEFAULT_FACING, type ObjectSpriteKind } from './fa2Facing'
 import { cellAllowsOre } from './fa2Ore'
 import { fa2PlaceTileCells, usesFa2PlaceTile } from './fa2PlaceTile'
@@ -250,16 +250,14 @@ export function brushGhostCells(
   return [{ rx: origin.rx, ry: origin.ry }]
 }
 
-/** 高度类工具仍只用菱形外框。 */
+/** FA2 Heighten / HeightenTile：`m_BrushSize` 在 (rx, ry) 上的中心矩形。 */
 export function heightBrushCells(
   origin: BrushPreviewOrigin,
-  tool: MapEditorTool,
   brushW: number,
   brushH: number,
-  brush: number,
-  heightRect: boolean,
 ): Array<{ rx: number; ry: number }> {
-  const rect = heightRect || tool === 'raiseTile' || tool === 'lowerTile'
-  const offsets = rect ? fa2CenteredRectOffsets(brushW, brushH) : manhattanDiamondOffsets(brush)
-  return offsets.map(({ dx, dy }) => ({ rx: origin.rx + dx, ry: origin.ry + dy }))
+  return fa2CenteredRectOffsets(brushW, brushH).map(({ dx, dy }) => ({
+    rx: origin.rx + dx,
+    ry: origin.ry + dy,
+  }))
 }

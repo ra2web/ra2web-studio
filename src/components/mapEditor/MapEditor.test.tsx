@@ -115,7 +115,6 @@ describe('MapEditor', () => {
     expect(screen.getByTestId('map-user-script')).toBeInTheDocument()
     expect(screen.getByTestId('map-search-waypoint')).toBeInTheDocument()
     expect(screen.getByText(/搜索触发位置|Search trigger location/)).toBeInTheDocument()
-    expect(screen.getByTestId('map-height-rect')).toBeInTheDocument()
     expect(screen.getByTestId('map-auto-shore')).toBeInTheDocument()
     expect(screen.getByTestId('map-auto-level')).toBeInTheDocument()
     expect(screen.getByTestId('map-copy-whole')).toBeInTheDocument()
@@ -261,6 +260,7 @@ describe('MapEditor', () => {
       <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
     )
     fireEvent.click(screen.getByRole('button', { name: /抬高单格|Raise tile/ }))
+    expect(screen.getByTestId('map-raise-tile-hint')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('map-viewport'))
     expect(session.document.getCell(12, 12).height).toBe(origin + 1)
     expect(session.document.getCell(12, 12).tileNum).toBe(77)

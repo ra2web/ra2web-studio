@@ -1,4 +1,5 @@
 import { MAX_HEIGHT } from './constants'
+import { fa2CenteredRectOffsets } from './fa2Brush'
 import { isValidIsoCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
 import { cellKey } from './packs'
@@ -161,21 +162,41 @@ export function createSlopesAt(
   }
 }
 
-/** 刷高程后对笔刷范围及一圈邻格跑 CreateSlopesAt（FA2 Heighten 后的斜率修正）。 */
+/** FA2 Heighten/Flatten 用 `m_funcRect` 扩一圈后跑 CreateSlopesAt。 */
+export function createSlopesInRect(
+  doc: MapDocument,
+  rect: { left: number; top: number; right: number; bottom: number },
+  theater: TheaterIndex,
+  disableSlopeCorrection = false,
+  pad = 1,
+): void {
+  for (let ry = rect.top - pad; ry <= rect.bottom + pad; ry++) {
+    for (let rx = rect.left - pad; rx <= rect.right + pad; rx++) {
+      createSlopesAt(doc, rx, ry, theater, disableSlopeCorrection)
+    }
+  }
+}
+
+/** 刷高程后对 FA2 `m_BrushSize` 矩形及外一圈跑 CreateSlopesAt（HeightenTile + Ctrl）。 */
 export function createSlopesAround(
   doc: MapDocument,
   rx: number,
   ry: number,
   theater: TheaterIndex,
-  brush = 1,
+  brushW = 1,
+  brushH = brushW,
   disableSlopeCorrection = false,
 ): void {
-  const extra = 1
-  for (let dy = -brush + 1 - extra; dy < brush + extra; dy++) {
-    for (let dx = -brush + 1 - extra; dx < brush + extra; dx++) {
-      createSlopesAt(doc, rx + dx, ry + dy, theater, disableSlopeCorrection)
-    }
+  const rect = { left: rx, top: ry, right: rx, bottom: ry }
+  for (const { dx, dy } of fa2CenteredRectOffsets(brushW, brushH)) {
+    const cx = rx + dx
+    const cy = ry + dy
+    if (cx < rect.left) rect.left = cx
+    if (cy < rect.top) rect.top = cy
+    if (cx > rect.right) rect.right = cx
+    if (cy > rect.bottom) rect.bottom = cy
   }
+  createSlopesInRect(doc, rect, theater, disableSlopeCorrection)
 }
 
 /** FA2 `OnMaptoolsChangemapheight`：全图加减同一高度。 */

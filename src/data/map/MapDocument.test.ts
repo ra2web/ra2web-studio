@@ -270,10 +270,19 @@ describe('MapCommandStack', () => {
     expect(doc.getCell(7, 8).tileNum).toBe(0)
   })
 
+  it('paintHeight with fromHeight does not stack on a second pass', () => {
+    const doc = MapDocument.create({ width: 16, height: 16, theater: 'URBAN' })
+    const origin = doc.getCell(12, 12).height
+    paintHeight(doc, 12, 12, 1, 3, origin)
+    paintHeight(doc, 13, 12, 1, 3, origin)
+    expect(doc.getCell(12, 12).height).toBe(origin + 1)
+    expect(doc.getCell(13, 12).height).toBe(origin + 1)
+  })
+
   it('FA2 HeightenTile uses a rectangular brush', () => {
     const doc = MapDocument.create({ width: 16, height: 16, theater: 'URBAN' })
     const origin = doc.getCell(12, 12).height
-    paintHeight(doc, 12, 12, 1, 3, 'rect')
+    paintHeight(doc, 12, 12, 1, 3)
     expect(doc.getCell(12, 12).height).toBe(origin + 1)
     expect(doc.getCell(13, 13).height).toBe(origin + 1)
     expect(doc.getCell(14, 12).height).toBe(origin)
@@ -285,7 +294,7 @@ describe('MapCommandStack', () => {
     cell.tileNum = 99
     doc.setCell(cell)
     const origin = cell.height
-    paintHeight(doc, 12, 12, 1, 1, 'rect')
+    paintHeight(doc, 12, 12, 1, 1)
     expect(doc.getCell(12, 12).height).toBe(origin + 1)
     expect(doc.getCell(12, 12).tileNum).toBe(99)
   })
