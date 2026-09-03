@@ -36,10 +36,10 @@ describe('tmpCatalog', () => {
     expect(hackTerrainType(0x0a)).toBe(TERRAIN_WATER)
   })
 
-  it('uses FA2 swapped cblocks for every tileset except CliffSet', () => {
+  it('uses FA2 swapped cblocks for every tileset including CliffSet', () => {
     expect(fa2CblocksForSet(20, 3)).toBe(true)
     expect(fa2CblocksForSet(2, 3)).toBe(true)
-    expect(fa2CblocksForSet(3, 3)).toBe(false)
+    expect(fa2CblocksForSet(3, 3)).toBe(true)
     expect(fa2CblocksForSet(20)).toBe(true)
   })
 
@@ -98,7 +98,7 @@ describe('tmpCatalog', () => {
     ])
   })
 
-  it('uses TMP footprint when placing cliffs, else FAData 2×2 / z=+4', () => {
+  it('uses TMP footprint when placing cliffs, else FAData sizes', () => {
     const shaped = cliffFootprint({
       cx: 2,
       cy: 1,
@@ -108,8 +108,11 @@ describe('tmpCatalog', () => {
       ],
     }, 7)
     expect(shaped).toEqual({ cx: 2, cy: 1, zHeight: [1, 3] })
-    expect(cliffFootprint(undefined, 7)).toEqual({ cx: 2, cy: 1, zHeight: [4, 4] })
-    expect(cliffFootprint(undefined, 4).cx).toBe(2)
-    expect(cliffFootprint(undefined, 4).cy).toBe(2)
+    // FAData/官方地图语义：7 是 front horiz 收尾件（沿 ry 高→低），22 沿 rx 两格全高，25 是 1×1。
+    expect(cliffFootprint(undefined, 7)).toEqual({ cx: 2, cy: 1, zHeight: [4, 0] })
+    expect(cliffFootprint(undefined, 4)).toEqual({ cx: 2, cy: 2, zHeight: [4, 4, 0, 0] })
+    expect(cliffFootprint(undefined, 14)).toEqual({ cx: 2, cy: 2, zHeight: [4, 0, 4, 0] })
+    expect(cliffFootprint(undefined, 22)).toEqual({ cx: 1, cy: 2, zHeight: [4, 4] })
+    expect(cliffFootprint(undefined, 25)).toEqual({ cx: 1, cy: 1, zHeight: [4] })
   })
 })

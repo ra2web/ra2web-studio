@@ -38,11 +38,11 @@ export function hackTerrainType(terrainType: number, setIsWater = false): number
 }
 
 /**
- * FA2 `XCC_GetTMPInfo` 对所有地块集都 swap（`iTilesX = cblocks_y`）。
- * CliffSet 仍用 TMP 头 width/height，避免改 PlaceCliff 表。
+ * FA2 `XCC_GetTMPInfo`：`iTilesX = cblocks_y`，`iTilesY = cblocks_x`。
+ * PlaceCliff 用的 TILEDATA.cx/cy 也来自这里，CliffSet 同样要 swap。
  */
-export function fa2CblocksForSet(setIndex: number, cliffSet = -1): boolean {
-  return cliffSet < 0 || setIndex !== cliffSet
+export function fa2CblocksForSet(_setIndex?: number, _cliffSet = -1): boolean {
+  return true
 }
 
 /**
@@ -80,14 +80,47 @@ export function shorePieceFromShape(setOffset: number, shape: TmpTileShape, setI
   }
 }
 
+/**
+ * 无 TMP 时按 FAData/真实 TMP 头近似 CliffSet 尺寸（isotemp.mix 实测）。
+ * Studio 轴向：cx 沿 rx（子格 i），cy 沿 ry（子格 e），p = i*cy+e。
+ */
 export function cliffFootprint(shape: TmpTileShape | undefined, tileInSet: number): { cx: number; cy: number; zHeight: number[] } {
   if (shape) {
     return { cx: shape.cx, cy: shape.cy, zHeight: shape.subtiles.map((item) => item.zHeight) }
   }
-  if (tileInSet === 7 || tileInSet === 17 || tileInSet === 25 || tileInSet === 37) {
-    return { cx: 2, cy: 1, zHeight: [4, 4] }
+  switch (tileInSet) {
+    case 1: // front horiz_cornertop（沿 rx 两格，高→低）
+    case 7: // front horiz 收尾件
+      return { cx: 2, cy: 1, zHeight: [4, 0] }
+    case 17: // front vertic 收尾件（沿 ry 两格，高→低）
+    case 21: // front vertic_cornerleft
+      return { cx: 1, cy: 2, zHeight: [4, 0] }
+    case 4:
+    case 5:
+    case 6: // front horiz：i0 行（rim 列 rx）高、i1 低
+      return { cx: 2, cy: 2, zHeight: [4, 4, 0, 0] }
+    case 14:
+    case 15:
+    case 16: // front vertic：e0（rim 行 ry）高、e1 低
+      return { cx: 2, cy: 2, zHeight: [4, 0, 4, 0] }
+    case 22:
+    case 23:
+    case 24: // back horiz：1 格 rx × 2 格 ry，全高
+      return { cx: 1, cy: 2, zHeight: [4, 4] }
+    case 34:
+    case 35:
+    case 36: // back vertic：2 格 rx × 1 格 ry，全高
+      return { cx: 2, cy: 1, zHeight: [4, 4] }
+    case 25:
+    case 37: // back 收尾件
+    case 28:
+    case 29:
+    case 32:
+    case 33: // 1×1 转角件
+      return { cx: 1, cy: 1, zHeight: [4] }
+    default:
+      return { cx: 2, cy: 2, zHeight: [4, 4, 4, 4] }
   }
-  return { cx: 2, cy: 2, zHeight: [4, 4, 4, 4] }
 }
 
 export function subtileIndex(x: number, y: number, cy: number): number {
