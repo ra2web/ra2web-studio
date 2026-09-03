@@ -66,7 +66,7 @@ export type BrushPreviewInput = {
 const NO_GHOST: ReadonlySet<MapEditorTool> = new Set([
   'pan', 'select', 'copy', 'paste', 'eraseObject', 'eraseOverlay',
   'raise', 'lower', 'raiseTile', 'lowerTile', 'flatten',
-  'cliff', 'cliffFront', 'cliffBack', 'shore',
+  'cliff', 'cliffFront', 'cliffBack', 'highland', 'cliffRamp', 'shore',
   'hideTileset', 'hideField', 'tube', 'celltag',
 ])
 

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { isTwoPointPaintTool } from '../../data/map/mapTools'
 import { parseTheaterIni } from '../../data/map/theaterIndex'
 import {
   buildObjectToolTree,
   brushSizeFromId,
   bridgeToolbarHintKey,
+  CLIFF_TOOLBAR,
   FA2_BRUSH_SIZES,
   resolveTreeTileNum,
   toolUsesBrush,
@@ -16,8 +18,14 @@ describe('fa2Layout', () => {
     ])
     expect(brushSizeFromId('10x10').brush).toBe(10)
     expect(toolUsesBrush('raise')).toBe(true)
+    expect(toolUsesBrush('highland')).toBe(true)
+    expect(toolUsesBrush('cliffRamp')).toBe(true)
     expect(toolUsesBrush('select')).toBe(false)
     expect(toolUsesBrush('infantry')).toBe(false)
+    expect(CLIFF_TOOLBAR).toEqual(['cliffFront', 'cliffBack', 'highland', 'cliffRamp'])
+    expect(isTwoPointPaintTool('highland')).toBe(false)
+    expect(isTwoPointPaintTool('cliffRamp')).toBe(false)
+    expect(isTwoPointPaintTool('cliffFront')).toBe(true)
   })
 
   it('builds an FA2-style object tree with nothing, ground and overlay leaves', () => {

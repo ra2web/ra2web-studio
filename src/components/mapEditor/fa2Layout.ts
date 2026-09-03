@@ -29,7 +29,14 @@ export const TERRAIN_TOOLBAR: MapEditorTool[] = [
   'lowerTile',
 ]
 
-export const CLIFF_TOOLBAR: MapEditorTool[] = ['cliffFront', 'cliffBack']
+export const CLIFF_TOOLBAR: MapEditorTool[] = ['cliffFront', 'cliffBack', 'highland', 'cliffRamp']
+
+export function cliffToolbarLabelKey(id: MapEditorTool): string {
+  if (id === 'highland') return 'mapEditor.toolHighland'
+  if (id === 'cliffRamp') return 'mapEditor.toolCliffRamp'
+  if (id === 'cliffBack') return 'mapEditor.toolCliffBack'
+  return 'mapEditor.toolCliffFront'
+}
 
 const BRUSH_TOOLS: ReadonlySet<MapEditorTool> = new Set([
   'raise',
@@ -41,6 +48,8 @@ const BRUSH_TOOLS: ReadonlySet<MapEditorTool> = new Set([
   'veins',
   'overlay',
   'eraseOverlay',
+  'highland',
+  'cliffRamp',
 ])
 
 export function toolUsesBrush(tool: MapEditorTool): boolean {

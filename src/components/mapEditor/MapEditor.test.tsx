@@ -84,6 +84,8 @@ describe('MapEditor', () => {
     expect(fireEvent.contextMenu(screen.getByTestId('map-editor'))).toBe(false)
     expect(screen.getByTestId('map-theater-missing')).toBeInTheDocument()
     expect(screen.getByText(/抬高地形|Raise ground/)).toBeInTheDocument()
+    expect(screen.getByText(/悬崖高地|Cliff highland/)).toBeInTheDocument()
+    expect(screen.getByText(/悬崖开坡|Cliff ramp/)).toBeInTheDocument()
     expect(screen.getByText(/抬高单格|Raise tile/)).toBeInTheDocument()
     expect(screen.getByText(/降低单格|Lower tile/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /触发器|Triggers/ })).toBeInTheDocument()
@@ -105,6 +107,17 @@ describe('MapEditor', () => {
     expect(screen.getByTestId('map-brush-bar')).toBeInTheDocument()
     expect(screen.getByTestId('map-tileset-preview')).toBeInTheDocument()
     expect(screen.getByTestId('map-brush-size')).toBeDisabled()
+  })
+
+  it('selects highland and cliff-ramp from the cliff toolbar', () => {
+    renderWithProviders(
+      <MapEditor session={makeSession()} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByTestId('map-tool-highland'))
+    expect(screen.getByText(/拖涂一块地|Paint a blob/)).toBeInTheDocument()
+    expect(screen.getByTestId('map-brush-size')).not.toBeDisabled()
+    fireEvent.click(screen.getByTestId('map-tool-cliffRamp'))
+    expect(screen.getByText(/点在崖壁上|Click a cliff face/)).toBeInTheDocument()
   })
 
   it('exposes FA2 map tools, globals and user scripts', () => {

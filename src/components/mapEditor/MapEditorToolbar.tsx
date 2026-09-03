@@ -4,6 +4,7 @@ import { useLocale } from '../../i18n/LocaleContext'
 import type { MapEditorTool } from '../../data/map/mapTools'
 import {
   CLIFF_TOOLBAR,
+  cliffToolbarLabelKey,
   FA2_BRUSH_SIZES,
   TERRAIN_TOOLBAR,
   toolUsesBrush,
@@ -115,8 +116,14 @@ const MapEditorToolbar: React.FC<MapEditorToolbarProps> = ({
         </label>
         <span className="mx-1 h-4 w-px bg-gray-700" />
         {CLIFF_TOOLBAR.map((id) => (
-          <button key={id} type="button" className={toolButtonClass(tool === id)} onClick={() => onTool(id)}>
-            {t(id === 'cliffFront' ? 'mapEditor.toolCliffFront' : 'mapEditor.toolCliffBack')}
+          <button
+            key={id}
+            type="button"
+            className={toolButtonClass(tool === id)}
+            data-testid={`map-tool-${id}`}
+            onClick={() => onTool(id)}
+          >
+            {t(cliffToolbarLabelKey(id) as never)}
           </button>
         ))}
         <button type="button" className={toolButtonClass(false)} data-testid="map-auto-level" onClick={onAutoLevel}>

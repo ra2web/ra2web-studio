@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal } from 'react-dom'
 import { EMPTY_OVERLAY } from '../../data/map/constants'
 import { applyShoreAt, placeCliffLine } from '../../data/map/cliffShore'
+import { paintCliffRamp, smoothRampArea } from '../../data/map/fa2CliffRamp'
+import { paintHighland } from '../../data/map/fa2Highland'
 import { copyRegion, copyWholeMap, normalizeCopyRect, pasteRegion, pasteWholeMap, type MapClipboard, type MapCopyRect } from '../../data/map/copyPaste'
 import { manhattanDiamondOffsets } from '../../data/map/fa2Brush'
 import { buildBrushGhosts, brushGhostCells, heightBrushCells } from '../../data/map/fa2BrushPreview'
@@ -137,6 +139,8 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const copyRangeRef = useRef<{ start: { rx: number; ry: number }; end: { rx: number; ry: number } } | null>(null)
   const clipboardRef = useRef<MapClipboard | null>(null)
   const pasteOnceRef = useRef(false)
+  const highlandBlobRef = useRef(new Map<string, { rx: number; ry: number }>())
+  const [highlandPreview, setHighlandPreview] = useState<Array<{ rx: number; ry: number }>>([])
   const waypointNumberRef = useRef<number | null>(null)
   const waypointEraseRef = useRef(false)
   const [waypointErase, setWaypointErase] = useState(false)
@@ -300,14 +304,19 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     if (tool === 'structure' || tool === 'basenode' || brushGhosts.length > 0) {
       return brushGhostCells(brushGhosts, tool, origin, foundations, objectName)
     }
-    if (tool === 'raise' || tool === 'lower' || tool === 'flatten' || tool === 'raiseTile' || tool === 'lowerTile') {
-      return heightBrushCells(origin, brushW, brushH)
+    if (tool === 'raise' || tool === 'lower' || tool === 'flatten' || tool === 'raiseTile' || tool === 'lowerTile' || tool === 'highland' || tool === 'cliffRamp') {
+      const current = heightBrushCells(origin, brushW, brushH)
+      if (tool === 'highland' && highlandPreview.length > 0) {
+        const seen = new Set(highlandPreview.map((cell) => `${cell.rx},${cell.ry}`))
+        return [...highlandPreview, ...current.filter((cell) => !seen.has(`${cell.rx},${cell.ry}`))]
+      }
+      return current
     }
     const offsets = toolUsesBrush(tool)
       ? manhattanDiamondOffsets(brush)
       : [{ dx: 0, dy: 0 }]
     return offsets.map(({ dx, dy }) => ({ rx: origin.rx + dx, ry: origin.ry + dy }))
-  }, [brush, brushGhosts, brushH, brushW, foundations, hover, objectName, selected, tool])
+  }, [brush, brushGhosts, brushH, brushW, foundations, highlandPreview, hover, objectName, selected, tool])
 
   const handlePaint = useCallback((rx: number, ry: number, extra?: { subCell?: number; ctrl?: boolean }) => {
     const working = doc
@@ -516,6 +525,25 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
         bridgeStartRef.current = null
         setBridgeStart(null)
         break
+      case 'highland': {
+        for (const cell of heightBrushCells({ rx, ry }, brushW, brushH)) {
+          highlandBlobRef.current.set(`${cell.rx},${cell.ry}`, cell)
+        }
+        setHighlandPreview([...highlandBlobRef.current.values()])
+        setSelected({ rx, ry, subCell: extra?.subCell })
+        return
+      }
+      case 'cliffRamp': {
+        if (!theaterArt?.index) break
+        // 连续拖刷：崖格开坡（开过即变坡草，天然幂等），非崖格持续平整周边。
+        if (!paintCliffRamp(working, rx, ry, theaterArt.index, doc.theater, {
+          width: Math.max(2, brushW),
+          shapeOf: (tileInSet) => theaterArt.cliffShape(tileInSet),
+        })) {
+          smoothRampArea(working, rx, ry, theaterArt.index, Math.max(2, brushW))
+        }
+        break
+      }
       case 'cliff':
       case 'cliffFront':
       case 'cliffBack':
@@ -580,6 +608,8 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   const handleStrokeStart = useCallback(() => {
     heightLockRef.current = null
     pasteOnceRef.current = false
+    highlandBlobRef.current.clear()
+    setHighlandPreview([])
     if (tool === 'copy') {
       copyRangeRef.current = null
       strokeRef.current = {
@@ -613,12 +643,22 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
     strokeRef.current = stackRef.current.beginTerrain(doc, tool)
   }, [doc, tool])
   const handleStrokeEnd = useCallback(() => {
+    if (tool === 'highland') {
+      const cells = [...highlandBlobRef.current.values()]
+      if (cells.length > 0) {
+        paintHighland(doc, cells, theaterArt?.index ?? null, doc.theater, {
+          shapeOf: theaterArt ? (tileInSet) => theaterArt.cliffShape(tileInSet) : undefined,
+        })
+      }
+      highlandBlobRef.current.clear()
+      setHighlandPreview([])
+    }
     strokeRef.current?.commit()
     strokeRef.current = null
     heightLockRef.current = null
     doc.rebuildPreview()
     bump(doc)
-  }, [bump, doc])
+  }, [bump, doc, theaterArt, tool])
 
   const handlePick = useCallback((pick: MapViewportPick) => {
     if (pick.longPress) return
@@ -846,6 +886,12 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             )}
             {(tool === 'raise' || tool === 'lower') && (
               <span className="text-[11px] text-amber-200">{t('mapEditor.raiseHint')}</span>
+            )}
+            {tool === 'highland' && (
+              <span className="text-[11px] text-amber-200">{t('mapEditor.highlandHint')}</span>
+            )}
+            {tool === 'cliffRamp' && (
+              <span className="text-[11px] text-amber-200">{t('mapEditor.cliffRampHint')}</span>
             )}
             {(tool === 'raiseTile' || tool === 'lowerTile') && (
               <span className="text-[11px] text-amber-200" data-testid="map-raise-tile-hint">{t('mapEditor.raiseTileHint')}</span>
