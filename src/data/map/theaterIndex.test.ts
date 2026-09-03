@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { forEachIsoCell } from './isoCoords'
 import { MapDocument } from './MapDocument'
 import { applyLatAt } from './lat'
-import { parseTheaterIni, tmpFileName, tmpVariantFileName, cellTmpVariantIndex, TheaterRules, marbleTileNum, theaterIniNames } from './theaterIndex'
+import { parseTheaterIni, tmpFileName, tmpVariantFileName, cellTmpVariantIndex, TheaterRules, marbleTileNum, marbleUsesHeightBase, theaterIniNames } from './theaterIndex'
 
 const SAMPLE_INI = `
 [General]
@@ -108,6 +108,9 @@ TilesInSet=1
 
   it('remaps MarbleMadness tile sets', () => {
     const index = parseTheaterIni(`
+[General]
+HeightBase=2
+
 [TileSet0000]
 FileName=CLEAR
 SetName=Clear
@@ -118,9 +121,118 @@ MarbleMadness=1
 FileName=MM
 SetName=Marble
 TilesInSet=1
+
+[TileSet0002]
+FileName=HEIGHT
+SetName=HeightBase
+TilesInSet=16
 `)
     expect(index.sets[0].marbleMadnessSet).toBe(1)
     expect(marbleTileNum(index, 0)).toBe(1)
+    expect(marbleTileNum(index, 0, 6)).toBe(1)
+    expect(marbleUsesHeightBase(index, 0)).toBe(false)
+  })
+
+  it('falls back to HeightBase + height when a set has no MarbleMadness mapping', () => {
+    const index = parseTheaterIni(`
+[General]
+HeightBase=1
+
+[TileSet0000]
+FileName=CLEAR
+SetName=Clear
+TilesInSet=1
+
+[TileSet0001]
+FileName=HEIGHT
+SetName=HeightBase
+TilesInSet=16
+`)
+    expect(marbleTileNum(index, 0, 0)).toBe(1)
+    expect(marbleTileNum(index, 0, 1)).toBe(2)
+    expect(marbleTileNum(index, 0, 6)).toBe(7)
+    expect(marbleUsesHeightBase(index, 0)).toBe(true)
+  })
+
+  it('keeps the original tileNum when HeightBase is missing', () => {
+    const index = parseTheaterIni(`
+[TileSet0000]
+FileName=CLEAR
+SetName=Clear
+TilesInSet=1
+`)
+    expect(marbleTileNum(index, 0, 6)).toBe(0)
+    expect(marbleUsesHeightBase(index, 0)).toBe(false)
+  })
+
+  it('treats MarbleMadness=0 as no mapping like FA2 atoi/if(madnessid)', () => {
+    const index = parseTheaterIni(`
+[General]
+HeightBase=1
+
+[TileSet0000]
+FileName=CLEAR
+SetName=Clear
+TilesInSet=1
+MarbleMadness=0
+
+[TileSet0001]
+FileName=HYTE
+SetName=Newest MM Height
+TilesInSet=16
+`)
+    expect(marbleTileNum(index, 0, 6)).toBe(7)
+    expect(marbleUsesHeightBase(index, 0)).toBe(true)
+  })
+
+  it('maps temperate Clear to HeightBase hyte tiles like ra2 local.mix', () => {
+    const index = parseTheaterIni(`
+[General]
+ClearTile=0
+CliffSet=1
+HeightBase=2
+
+[TileSet0000]
+FileName=Clear
+SetName=Lat Grass
+TilesInSet=1
+
+[TileSet0001]
+FileName=Cliff
+SetName=Cliff Set
+TilesInSet=2
+MarbleMadness=3
+
+[TileSet0002]
+FileName=hyte
+SetName=Newest MM Height
+TilesInSet=15
+
+[TileSet0003]
+FileName=Mclif
+SetName=ZMM Cliff Set
+TilesInSet=2
+`)
+    expect(marbleTileNum(index, 0, 0)).toBe(3)
+    expect(marbleTileNum(index, 0, 1)).toBe(4)
+    expect(marbleTileNum(index, 0, 6)).toBe(9)
+    expect(marbleUsesHeightBase(index, 0)).toBe(true)
+    expect(marbleTileNum(index, 1, 6)).toBe(18)
+    expect(marbleUsesHeightBase(index, 1)).toBe(false)
+  })
+
+  it('keeps the original tileNum when HeightBase is out of range', () => {
+    const index = parseTheaterIni(`
+[General]
+HeightBase=9
+
+[TileSet0000]
+FileName=CLEAR
+SetName=Clear
+TilesInSet=1
+`)
+    expect(marbleTileNum(index, 0, 6)).toBe(0)
+    expect(marbleUsesHeightBase(index, 0)).toBe(false)
   })
 
   it('reads Morphable from theater.ini like FA2 Loading.cpp', () => {

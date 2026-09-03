@@ -8,10 +8,11 @@ import MapEditor, { type MapEditorSession } from './MapEditor'
 import NewMapDialog from './NewMapDialog'
 
 vi.mock('./MapViewport', () => ({
-  default: ({ onPaint, onPick, onMoveObject }: {
+  default: ({ onPaint, onPick, onMoveObject, onHover }: {
     onPaint: (rx: number, ry: number, extra?: { subCell?: number }) => void
     onPick: (pick: { rx: number; ry: number; clientX: number; clientY: number; longPress: boolean; doubleClick?: boolean; subCell?: number }) => void
     onMoveObject?: (move: { kind: string; id: string; rx: number; ry: number; toRx: number; toRy: number; copy: boolean }) => void
+    onHover?: (cell: { rx: number; ry: number; subCell?: number } | null) => void
   }) => (
     <div>
       <button type="button" data-testid="map-viewport" onClick={() => onPaint(12, 12)}>viewport</button>
@@ -19,6 +20,7 @@ vi.mock('./MapViewport', () => ({
       <button type="button" data-testid="map-viewport-pick" onClick={() => onPick({ rx: 12, ry: 12, clientX: 0, clientY: 0, longPress: false, subCell: 0 })}>pick</button>
       <button type="button" data-testid="map-viewport-dblclick" onClick={() => onPick({ rx: 12, ry: 12, clientX: 0, clientY: 0, longPress: false, doubleClick: true, subCell: 0 })}>dblclick</button>
       <button type="button" data-testid="map-viewport-longpress" onClick={() => onPick({ rx: 12, ry: 12, clientX: 0, clientY: 0, longPress: true })}>longpress</button>
+      <button type="button" data-testid="map-viewport-hover" onClick={() => onHover?.({ rx: 12, ry: 12, subCell: 0 })}>hover</button>
       <button
         type="button"
         data-testid="map-viewport-drag"
@@ -458,6 +460,18 @@ describe('MapEditor', () => {
     fireEvent.click(screen.getByTestId('map-viewport-drag'))
     expect(session.document.units[0]).toMatchObject({ id: 'u1', rx: 9, ry: 10 })
     expect(onChange).toHaveBeenCalled()
+  })
+
+  it('shows FA2 hover status x / y - height without selecting a cell', () => {
+    const session = makeSession()
+    session.document.setCell({ ...session.document.getCell(12, 12), height: 4 })
+    renderWithProviders(
+      <MapEditor session={session} onChange={vi.fn()} onSave={vi.fn()} onExit={vi.fn()} />,
+    )
+    expect(screen.getByTestId('map-cell-status')).toHaveTextContent(/未选中格子|No cell selected/)
+    fireEvent.click(screen.getByTestId('map-viewport-hover'))
+    expect(screen.getByTestId('map-cell-status')).toHaveTextContent('12 / 12 - 4')
+    expect(screen.getByTestId('map-cell-status')).not.toHaveTextContent('tile=')
   })
 })
 

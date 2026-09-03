@@ -24,6 +24,7 @@ import {
   THEATER_ASSETS,
   TheaterRules,
   marbleTileNum,
+  marbleUsesHeightBase as marbleTileUsesHeightBase,
   parseTheaterIni,
   theaterIniNames,
   tmpFileName,
@@ -136,10 +137,15 @@ export class TheaterArt {
     return image.radarLeft
   }
 
-  /** FA2 Marble Madness：把普通瓦片集映射到对应 Marble 集。 */
-  marbleTile(tileNum: number): number {
+  /** FA2 Framework Mode：有 MarbleMadness 换集，否则 HeightBase + height。 */
+  marbleTile(tileNum: number, height = 0): number {
     if (!this.index) return tileNum
-    return marbleTileNum(this.index, tileNum)
+    return marbleTileNum(this.index, tileNum, height)
+  }
+
+  marbleUsesHeightBase(tileNum: number): boolean {
+    if (!this.index) return false
+    return marbleTileUsesHeightBase(this.index, tileNum)
   }
 
   request(tileNum: number, subTile: number, variant = 0): void {

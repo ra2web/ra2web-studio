@@ -119,6 +119,9 @@ playwright-report/
 test-results/
 blob-report/
 
+# Local game/editor assets (copyrighted MIX; do not commit)
+local-res/
+
 # Local development
 .env.local
 .env.development.local

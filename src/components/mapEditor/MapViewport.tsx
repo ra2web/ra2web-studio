@@ -18,6 +18,12 @@ import type { TheaterArt, TilePixels } from '../../data/map/TheaterArt'
 import type { ObjectSpriteKind } from '../../data/map/fa2Facing'
 import type { BuildingFoundation } from '../../data/map/rulesObjects'
 import { emptyHideView, isCellHidden, type MapHideView } from '../../data/map/fa2Hide'
+import {
+  FA2_CELL_DROP_COLOR,
+  FA2_CELL_NEIGHBOR_COLOR,
+  cellHighlightColor,
+} from '../../data/map/fa2CellCursor'
+import { paintFrameworkCell } from '../../data/map/fa2FrameworkDraw'
 import { followWorldAtClient, worldFromCanvasClient, zoomAroundClient } from '../../data/map/viewportZoom'
 import { fa2MapBoundRects, strokeFa2MapBounds } from '../../data/map/fa2MapBounds'
 
@@ -45,6 +51,7 @@ type MapViewportProps = {
   panY: number
   scale: number
   selected?: MapSelection | null
+  hover?: { rx: number; ry: number; subCell?: number } | null
   objectLabel?: (name: string, kind: ObjectSpriteKind, missing: boolean) => string
   brushCells?: Array<{ rx: number; ry: number }>
   brushGhosts?: BrushGhost[]
@@ -163,6 +170,39 @@ function diamondVerts(origin: { px: number; py: number }): Array<{ x: number; y:
     { x: origin.px, y: origin.py + hh * 2 },
     { x: origin.px - hw, y: origin.py + hh },
   ]
+}
+
+function strokeFa2CellCursor(
+  ctx: CanvasRenderingContext2D,
+  rx: number,
+  ry: number,
+  height: number,
+  isoSize: number,
+  scale: number,
+) {
+  const raised = projectCell(rx, ry, height, isoSize)
+  if (height > 0) {
+    const flatVerts = diamondVerts(projectCell(rx, ry, 0, isoSize))
+    const raisedVerts = diamondVerts(raised)
+    ctx.strokeStyle = FA2_CELL_DROP_COLOR
+    ctx.lineWidth = 1 / scale
+    ctx.setLineDash([4 / scale, 4 / scale])
+    ctx.beginPath()
+    for (const index of [1, 2, 3]) {
+      ctx.moveTo(flatVerts[index].x, flatVerts[index].y)
+      ctx.lineTo(raisedVerts[index].x, raisedVerts[index].y)
+    }
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
+  pathDiamond(ctx, raised)
+  ctx.strokeStyle = FA2_CELL_NEIGHBOR_COLOR
+  ctx.lineWidth = 3.5 / scale
+  ctx.stroke()
+  pathDiamond(ctx, raised)
+  ctx.strokeStyle = cellHighlightColor(height)
+  ctx.lineWidth = 2 / scale
+  ctx.stroke()
 }
 
 function strokeBrushOutline(
@@ -333,6 +373,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
   panY,
   scale,
   selected,
+  hover,
   objectLabel,
   brushCells = [],
   brushGhosts = [],
@@ -420,13 +461,12 @@ const MapViewport: React.FC<MapViewportProps> = ({
     forEachIsoCell(doc.width, doc.height, ({ rx, ry }) => {
       const cell = doc.getCell(rx, ry)
       if (isCellHidden(rx, ry, cell.tileNum, hideView, theaterArt?.index)) return
-      const tileNum = marbleMadness && theaterArt ? theaterArt.marbleTile(cell.tileNum) : cell.tileNum
       const overlay = doc.getOverlay(rx, ry)
       cells.push({
         rx,
         ry,
         origin: projectCell(rx, ry, cell.height, doc.isoSize),
-        tileNum,
+        tileNum: cell.tileNum,
         subTile: cell.subTile,
         overlayId: overlay.id,
         overlayValue: overlay.value,
@@ -435,6 +475,17 @@ const MapViewport: React.FC<MapViewportProps> = ({
     })
 
     for (const item of cells) {
+      if (marbleMadness) {
+        paintFrameworkCell(wctx, {
+          rx: item.rx,
+          ry: item.ry,
+          height: item.height,
+          tileNum: item.tileNum,
+          isoSize: doc.isoSize,
+          index: theaterArt?.index,
+        })
+        continue
+      }
       const variant = theaterArt?.cellVariant(item.rx, item.ry, item.tileNum, item.subTile) ?? 0
       const key = `${item.tileNum}:${item.subTile}:${variant}`
       const pixels = theaterArt?.peek(item.tileNum, item.subTile, variant)
@@ -599,20 +650,35 @@ const MapViewport: React.FC<MapViewportProps> = ({
     strokeBrushOutline(ctx, brushCells, doc, scale, (rx, ry) => (
       tileGhostHeight(brushGhosts, rx, ry) ?? doc.getCell(rx, ry).height
     ))
-    if (selected && !brushCells.some((cell) => cell.rx === selected.rx && cell.ry === selected.ry)) {
+    const hoverCell = hover && isValidIsoCell(hover.rx, hover.ry, doc.width, doc.height) ? hover : null
+    if (hoverCell) {
+      strokeFa2CellCursor(
+        ctx,
+        hoverCell.rx,
+        hoverCell.ry,
+        doc.getCell(hoverCell.rx, hoverCell.ry).height,
+        doc.isoSize,
+        scale,
+      )
+    }
+    const hoverOnSelected = Boolean(
+      hoverCell && selected && hoverCell.rx === selected.rx && hoverCell.ry === selected.ry,
+    )
+    if (selected && !hoverOnSelected && !brushCells.some((cell) => cell.rx === selected.rx && cell.ry === selected.ry)) {
       const origin = projectCell(selected.rx, selected.ry, doc.getCell(selected.rx, selected.ry).height, doc.isoSize)
       pathDiamond(ctx, origin)
       ctx.strokeStyle = '#38bdf8'
       ctx.lineWidth = 2 / scale
       ctx.stroke()
-      if (selected.subCell != null) {
-        const offset = infantrySubPosOffset(selected.subCell)
-        ctx.beginPath()
-        ctx.arc(origin.px + offset.x, origin.py + offset.y + 10, 7, 0, Math.PI * 2)
-        ctx.strokeStyle = '#fbbf24'
-        ctx.lineWidth = 1.5 / scale
-        ctx.stroke()
-      }
+    }
+    if (selected?.subCell != null && !brushCells.some((cell) => cell.rx === selected.rx && cell.ry === selected.ry)) {
+      const origin = projectCell(selected.rx, selected.ry, doc.getCell(selected.rx, selected.ry).height, doc.isoSize)
+      const offset = infantrySubPosOffset(selected.subCell)
+      ctx.beginPath()
+      ctx.arc(origin.px + offset.x, origin.py + offset.y + 10, 7, 0, Math.PI * 2)
+      ctx.strokeStyle = '#fbbf24'
+      ctx.lineWidth = 1.5 / scale
+      ctx.stroke()
     }
     if (dragPreview) {
       const fromH = doc.getCell(dragPreview.fromRx, dragPreview.fromRy).height
@@ -649,7 +715,7 @@ const MapViewport: React.FC<MapViewportProps> = ({
       ctx.stroke()
     }
     ctx.restore()
-  }, [artRevision, brushCells, brushGhosts, doc, dragPreview, foundations, objectLabel, panX, panY, scale, selected, selectionRect, theaterArt])
+  }, [artRevision, brushCells, brushGhosts, doc, dragPreview, foundations, hover, objectLabel, panX, panY, scale, selected, selectionRect, theaterArt])
 
   React.useEffect(() => {
     paintWorld()

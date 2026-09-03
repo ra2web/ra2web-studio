@@ -45,6 +45,23 @@ describe('VirtualFileSystem nested MIX', () => {
     expect(await vfs.openFile('missing.tem')).toBeNull()
   })
 
+  it('opens FA2 marble.mix files by hash when the archive has no local mix database', async () => {
+    const bytes = MixArchiveBuilder.build([
+      { filename: 'hyte01.tem', bytes: encodeText('height-0') },
+      { filename: 'mclif01.tem', bytes: encodeText('cliff-mm') },
+    ])
+    const marble = new File([bytes], 'marble.mix')
+    Object.defineProperty(marble, 'arrayBuffer', {
+      value: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    })
+    Object.defineProperty(marble, 'size', { value: bytes.byteLength })
+    const info = await MixParser.parseFile(marble)
+    expect(info.files.some((entry) => entry.filename.toLowerCase() === 'hyte01.tem')).toBe(false)
+    const vfs = new VirtualFileSystem([{ name: 'marble.mix', file: marble, info, priority: 1 }])
+    expect((await vfs.openFile('hyte01.tem'))?.readAsString()).toBe('height-0')
+    expect((await vfs.openFile('mclif01.tem'))?.readAsString()).toBe('cliff-mm')
+  })
+
   it('prefers md nested mixes over vanilla mixes in the same parent archive', async () => {
     const vanilla = buildMixBytes([
       { filename: 'isotem.pal', bytes: encodeText('vanilla-pal') },

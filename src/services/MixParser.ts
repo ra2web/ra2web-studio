@@ -228,6 +228,17 @@ export class MixParser {
     }
   }
 
+  /** Hash lookup without logging a miss. FA2 marble.mix has no local mix database. */
+  static async openIfPresent(mixFile: File, filename: string): Promise<VirtualFile | null> {
+    try {
+      if (filename.includes('/') || mixFile.size < this.MIN_MIX_HEADER_BYTES) return null
+      const mix = await this.loadRootMix(mixFile)
+      return mix.containsFile(filename) ? mix.openFile(filename) : null
+    } catch {
+      return null
+    }
+  }
+
   static async extractFile(mixFile: File, filename: string): Promise<VirtualFile | null> {
     try {
       console.log('[MixParser] extractFile request', { mix: mixFile.name, filename })

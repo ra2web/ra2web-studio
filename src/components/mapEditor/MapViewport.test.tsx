@@ -2,6 +2,7 @@ import { act, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { MapDocument } from '../../data/map/MapDocument'
 import { projectCell } from '../../data/map/isoCoords'
+import { parseTheaterIni } from '../../data/map/theaterIndex'
 import { worldFromCanvasClient } from '../../data/map/viewportZoom'
 import { renderWithProviders } from '../../test/render'
 import { installCanvasStubs } from '../../test/mocks/canvasStub'
@@ -543,5 +544,187 @@ describe('MapViewport touch', () => {
     expect(request).toHaveBeenCalledWith(7, 0, 0)
     expect(requestOverlay).toHaveBeenCalledWith(102, 0)
     expect(requestObject).toHaveBeenCalled()
+  })
+
+  it('strokes FA2 height cursor colors on the hover cell', () => {
+    const colors: string[] = []
+    const proto = HTMLCanvasElement.prototype as { getContext: (type: string) => CanvasRenderingContext2D | null }
+    const origGetContext = proto.getContext
+    proto.getContext = function (this: HTMLCanvasElement, type: string) {
+      const ctx = origGetContext.call(this, type) as (CanvasRenderingContext2D & { __cursorSpy?: boolean }) | null
+      if (ctx && !ctx.__cursorSpy) {
+        ctx.__cursorSpy = true
+        const origStroke = ctx.stroke.bind(ctx)
+        ctx.stroke = (...args: Parameters<CanvasRenderingContext2D['stroke']>) => {
+          colors.push(String(ctx.strokeStyle))
+          return origStroke(...args)
+        }
+      }
+      return ctx
+    }
+    try {
+      const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+      doc.setCell({ ...doc.getCell(12, 12), height: 6 })
+      renderWithProviders(
+        <div style={{ width: 2000, height: 2000 }}>
+          <MapViewport
+            document={doc}
+            tool="select"
+            brush={1}
+            panX={0}
+            panY={0}
+            scale={1}
+            hover={{ rx: 12, ry: 12 }}
+            onPanChange={vi.fn()}
+            onScaleChange={vi.fn()}
+            onPaint={vi.fn()}
+            onPick={vi.fn()}
+          />
+        </div>,
+      )
+      expect(colors).toContain('#ff3232')
+      expect(colors).toContain('#3c3cff')
+      expect(colors).toContain('#3c3c3c')
+    } finally {
+      proto.getContext = origGetContext
+    }
+  })
+
+  it('paints height colors in marble madness without requesting TMP tiles', () => {
+    const fills: string[] = []
+    const proto = HTMLCanvasElement.prototype as { getContext: (type: string) => CanvasRenderingContext2D | null }
+    const origGetContext = proto.getContext
+    proto.getContext = function (this: HTMLCanvasElement, type: string) {
+      const ctx = origGetContext.call(this, type) as (CanvasRenderingContext2D & { __frameworkSpy?: boolean }) | null
+      if (ctx && !ctx.__frameworkSpy) {
+        ctx.__frameworkSpy = true
+        const origFill = ctx.fill.bind(ctx)
+        ctx.fill = (...args: Parameters<CanvasRenderingContext2D['fill']>) => {
+          fills.push(String(ctx.fillStyle))
+          return origFill(...args)
+        }
+      }
+      return ctx
+    }
+    try {
+      const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+      doc.setCell({ ...doc.getCell(12, 12), tileNum: 0, subTile: 2, height: 6 })
+      const peek = vi.fn(() => undefined)
+      const request = vi.fn()
+      renderWithProviders(
+        <div style={{ width: 2000, height: 2000 }}>
+          <MapViewport
+            document={doc}
+            tool="select"
+            brush={1}
+            panX={0}
+            panY={0}
+            scale={1}
+            marbleMadness
+            theaterArt={{
+              peek,
+              request,
+              peekOverlay: vi.fn(() => undefined),
+              requestOverlay: vi.fn(),
+              peekObject: vi.fn(() => undefined),
+              requestObject: vi.fn(),
+              cellVariant: () => 0,
+              marbleTile: (_tileNum: number, height: number) => 100 + height,
+              marbleUsesHeightBase: () => true,
+            } as never}
+            onPanChange={vi.fn()}
+            onScaleChange={vi.fn()}
+            onPaint={vi.fn()}
+            onPick={vi.fn()}
+          />
+        </div>,
+      )
+      expect(request).not.toHaveBeenCalled()
+      expect(peek).not.toHaveBeenCalled()
+      expect(fills).toContain('#ff3232')
+    } finally {
+      proto.getContext = origGetContext
+    }
+  })
+
+  it('labels mapped cliff tiles in marble madness without requesting TMP', () => {
+    const labels: string[] = []
+    const proto = HTMLCanvasElement.prototype as { getContext: (type: string) => CanvasRenderingContext2D | null }
+    const origGetContext = proto.getContext
+    proto.getContext = function (this: HTMLCanvasElement, type: string) {
+      const ctx = origGetContext.call(this, type) as (CanvasRenderingContext2D & { __labelSpy?: boolean }) | null
+      if (ctx && !ctx.__labelSpy) {
+        ctx.__labelSpy = true
+        const origFillText = ctx.fillText.bind(ctx)
+        ctx.fillText = (text: string, ...rest: [number, number, number?]) => {
+          labels.push(text)
+          return origFillText(text, ...rest)
+        }
+      }
+      return ctx
+    }
+    try {
+      const index = parseTheaterIni(`
+[General]
+CliffSet=1
+HeightBase=2
+
+[TileSet0000]
+FileName=Clear
+SetName=Clear
+TilesInSet=1
+
+[TileSet0001]
+FileName=Cliff
+SetName=Cliff Set
+TilesInSet=20
+MarbleMadness=3
+
+[TileSet0002]
+FileName=hyte
+SetName=HeightBase
+TilesInSet=15
+
+[TileSet0003]
+FileName=Mclif
+SetName=ZMM Cliff
+TilesInSet=20
+`)
+      const cliffStart = index.sets[1].startTileNum
+      const doc = MapDocument.create({ width: 16, height: 16, theater: 'TEMPERATE' })
+      doc.setCell({ ...doc.getCell(12, 12), tileNum: cliffStart + 17, subTile: 0, height: 0 })
+      const request = vi.fn()
+      renderWithProviders(
+        <div style={{ width: 2000, height: 2000 }}>
+          <MapViewport
+            document={doc}
+            tool="select"
+            brush={1}
+            panX={0}
+            panY={0}
+            scale={1}
+            marbleMadness
+            theaterArt={{
+              index,
+              peek: vi.fn(() => undefined),
+              request,
+              peekOverlay: vi.fn(() => undefined),
+              requestOverlay: vi.fn(),
+              peekObject: vi.fn(() => undefined),
+              requestObject: vi.fn(),
+              cellVariant: () => 0,
+            } as never}
+            onPanChange={vi.fn()}
+            onScaleChange={vi.fn()}
+            onPaint={vi.fn()}
+            onPick={vi.fn()}
+          />
+        </div>,
+      )
+      expect(request).not.toHaveBeenCalled()
+      expect(labels).toContain('C18')
+    } finally {
+      proto.getContext = origGetContext
+    }
   })
 })

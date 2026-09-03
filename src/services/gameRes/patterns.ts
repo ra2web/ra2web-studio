@@ -76,6 +76,7 @@ export function getArchivePriority(name: string, bucket: ResourceBucket): number
   if (lower === 'language.mix') return 1_000_040
   if (lower === 'multi.mix') return 1_000_030
   if (lower === 'cache.mix' || lower === 'cachemd.mix') return 1_000_020
+  if (lower === 'marble.mix') return 1_000_015
   if (lower === 'local.mix' || lower === 'localmd.mix') return 1_000_010
   return 1_000_000
 }

@@ -107,12 +107,14 @@ class CanvasContextStub {
   fill() {}
   stroke() {}
   strokeRect(..._args: any[]) {}
+  setLineDash(..._args: any[]) {}
   fillText(..._args: any[]) {}
   strokeText(..._args: any[]) {}
   lineJoin: CanvasLineJoin = 'miter'
   miterLimit = 10
   font = '10px sans-serif'
   textAlign: CanvasTextAlign = 'start'
+  textBaseline: CanvasTextBaseline = 'alphabetic'
   strokeStyle: any = '#000'
   lineWidth = 1
 

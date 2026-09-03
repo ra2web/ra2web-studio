@@ -908,6 +908,7 @@ export const en = {
     yuriRevenge: "Yuri's Revenge (include YuriCountry)",
     specialFlags: 'SpecialFlags',
     marbleMadness: 'Marble Madness preview',
+    marbleMissing: 'Marble Madness is a procedural framework view: height colors plus set labels on mapped cliffs/shores/water. marble.mix is not required.',
     tab_basic: 'Basic',
     tab_houses: 'Houses',
     tab_triggers: 'Triggers',

@@ -920,6 +920,7 @@ export const zh = {
     yuriRevenge: '尤里的复仇（写入 YuriCountry）',
     specialFlags: 'SpecialFlags',
     marbleMadness: 'Marble Madness 预览',
+    marbleMissing: 'Marble Madness 是程序化框架图：按高度着色，有映射的悬崖/岸/水显示集号。不需要 marble.mix。',
     tab_basic: '基本',
     tab_houses: '阵营',
     tab_triggers: '触发器',

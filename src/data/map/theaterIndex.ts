@@ -77,13 +77,42 @@ export function tileNumToSet(index: TheaterIndex, tileNum: number): TheaterTileS
   return index.sets.find((set) => tileNum >= set.startTileNum && tileNum < set.startTileNum + set.tilesInSet)
 }
 
-export function marbleTileNum(index: TheaterIndex, tileNum: number): number {
+export function theaterGeneralValue(index: TheaterIndex, name: string): number | undefined {
+  const direct = index.general[name]
+  if (direct !== undefined) return direct
+  const needle = name.toLowerCase()
+  for (const [key, value] of Object.entries(index.general)) {
+    if (key.toLowerCase() === needle) return value
+  }
+  return undefined
+}
+
+function heightBaseSet(index: TheaterIndex): TheaterTileSetInfo | undefined {
+  const heightBase = theaterGeneralValue(index, 'HeightBase')
+  if (heightBase === undefined || !Number.isFinite(heightBase)) return undefined
+  const dest = index.sets[heightBase]
+  return dest && dest.tilesInSet > 0 ? dest : undefined
+}
+
+/** FA2 IsoView：`if (madnessid)` 换集，否则 HeightBase + height（草地/公路变成高度色块）。 */
+export function marbleTileNum(index: TheaterIndex, tileNum: number, height = 0): number {
   const set = tileNumToSet(index, tileNum)
-  if (!set || set.marbleMadnessSet < 0) return tileNum
-  const dest = index.sets[set.marbleMadnessSet]
+  if (set && set.marbleMadnessSet > 0) {
+    const dest = index.sets[set.marbleMadnessSet]
+    if (!dest) return tileNum
+    const offset = tileNum - set.startTileNum
+    return dest.startTileNum + Math.min(offset, Math.max(0, dest.tilesInSet - 1))
+  }
+  const dest = heightBaseSet(index)
   if (!dest) return tileNum
-  const offset = tileNum - set.startTileNum
-  return dest.startTileNum + Math.min(offset, Math.max(0, dest.tilesInSet - 1))
+  return dest.startTileNum + Math.min(Math.max(0, height), dest.tilesInSet - 1)
+}
+
+/** HeightBase 回退格 FA2 会把 bSubTile 置 0；有 MarbleMadness 映射的悬崖保持原 subTile。 */
+export function marbleUsesHeightBase(index: TheaterIndex, tileNum: number): boolean {
+  const set = tileNumToSet(index, tileNum)
+  if (set && set.marbleMadnessSet > 0) return false
+  return heightBaseSet(index) !== undefined
 }
 
 export function tmpFileName(set: TheaterTileSetInfo, tileInSet: number, ext: string): string {
@@ -133,7 +162,7 @@ export class TheaterRules {
   constructor(public readonly index: TheaterIndex) {}
 
   getGeneralValue(name: string): number {
-    const value = this.index.general[name]
+    const value = theaterGeneralValue(this.index, name)
     return value === undefined ? -1 : value
   }
 

@@ -11,6 +11,7 @@ import { autoLevel, heightenGround, lookupFromTheater, lowerGround } from '../..
 import { applyIniEdit, isPackedIniSection, listIniKeys, listIniSections } from '../../data/map/fa2IniEdit'
 import { Fa2Tube, nextTubeId } from '../../data/map/fa2Tube'
 import { runUserScript, createBrowserUserScriptUi } from '../../data/map/fa2UserScript'
+import { formatFa2CellStatus } from '../../data/map/fa2CellCursor'
 import { emptyHideView, hideFieldAt, hideTileSetAt, showAllFields, showAllTileSets } from '../../data/map/fa2Hide'
 import { applyLatAt } from '../../data/map/lat'
 import { addMapHouse, deleteMapHouse, prepareHouses } from '../../data/map/fa2Houses'
@@ -714,11 +715,14 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
   })
 
   const selectedInfo = useMemo(() => {
-    if (!selected) return t('mapEditor.noSelection')
-    const cell = doc.getCell(selected.rx, selected.ry)
-    const overlay = doc.getOverlay(selected.rx, selected.ry)
-    return `${selected.rx},${selected.ry}  h=${cell.height}  tile=${cell.tileNum}  ov=${overlay.id === EMPTY_OVERLAY ? '-' : overlay.id}`
-  }, [doc, selected, t, revision])
+    const focus = hover ?? selected
+    if (!focus) return t('mapEditor.noSelection')
+    const cell = doc.getCell(focus.rx, focus.ry)
+    const status = formatFa2CellStatus(focus.rx, focus.ry, cell.height)
+    if (!selected) return status
+    const overlay = doc.getOverlay(focus.rx, focus.ry)
+    return `${status}  tile=${cell.tileNum}  ov=${overlay.id === EMPTY_OVERLAY ? '-' : overlay.id}`
+  }, [doc, hover, selected, t, revision])
 
   const bridgeHintKey = useMemo(() => bridgeToolbarHintKey({
     tool,
@@ -889,6 +893,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
             panY={panY}
             scale={scale}
             selected={selected}
+            hover={hover}
             objectLabel={formatPlacedName}
             selectionRect={selectionRect}
             marbleMadness={marbleMadness}
@@ -927,7 +932,7 @@ const MapEditor: React.FC<MapEditorProps> = ({ session, onChange, onSave, onExit
           />
           </div>
           )}
-          <div className="pointer-events-none absolute left-2 top-2 rounded bg-black/60 px-2 py-1 text-xs">{selectedInfo}</div>
+          <div className="pointer-events-none absolute left-2 top-2 rounded bg-black/60 px-2 py-1 text-xs" data-testid="map-cell-status">{selectedInfo}</div>
           {selected && selectedHasObject && (
             <div className="absolute right-2 top-2 z-20 max-h-[70%] w-56 overflow-y-auto rounded border border-gray-700 bg-gray-900/95 p-2 shadow-lg" data-testid="map-object-props">
               <div className="mb-1 flex items-center gap-1">

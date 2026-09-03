@@ -144,6 +144,11 @@ export class VirtualFileSystem {
       if (!nested.mix.containsFile(filename)) continue
       return nested.mix.openFile(filename)
     }
+    for (const archive of this.archivesByPriority) {
+      if (owners.includes(archive)) continue
+      const hashed = await MixParser.openIfPresent(archive.file, filename)
+      if (hashed) return hashed
+    }
     return null
   }
 
